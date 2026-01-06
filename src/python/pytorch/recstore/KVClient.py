@@ -106,7 +106,14 @@ class RecStoreClient:
             return
 
         print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
-        print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
+        
+        num_embeddings, embedding_dim = shape
+        print(f"[DEBUG] Calling init_embedding_table for '{name}' with num_embeddings={num_embeddings}, embedding_dim={embedding_dim}")
+        success = self.ops.init_embedding_table(name, int(num_embeddings), int(embedding_dim))
+        print(f"[DEBUG] init_embedding_table returned: {success}")
+        if not success:
+            raise RuntimeError(f"Failed to initialize embedding table '{name}' on backend.")
+        
         self._tensor_meta[name] = {'shape': shape, 'dtype': dtype}
         self._full_data_shape[name] = shape
         self._data_name_list.add(name)
@@ -244,14 +251,35 @@ class RecStoreClient:
             out = out.to(device)
         return out
 
-    # def update(self, name: str, ids: torch.Tensor, grads: torch.Tensor):
-    #     """
-    #     Pushes gradients to update the given IDs of a named tensor.
-    #     This is an additional method from original client, kept for utility.
-    #     """
-    #     if name not in self._tensor_meta:
-    #         raise RuntimeError(f"Tensor '{name}' has not been initialized.")
-    #     self.ops.emb_update(ids, grads)
+    def update(self, name: str, ids: torch.Tensor, grads: torch.Tensor):
+        """
+        Pushes gradients to update the given IDs of a named tensor via embupdate.
+        This performs SGD-style update: param = param - lr * grad
+        Note: The learning rate is handled by the optimizer, grads should already be scaled.
+        """
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor '{name}' has not been initialized.")
+        
+        # Ensure ids and grads are on the correct device and dtype
+        if not isinstance(ids, torch.Tensor):
+            raise TypeError("ids must be a torch.Tensor")
+        if ids.dtype != torch.int64:
+            ids = ids.to(dtype=torch.int64)
+        if not ids.is_contiguous():
+            ids = ids.contiguous()
+        if ids.device.type != 'cpu':
+            ids = ids.to('cpu')
+        
+        if not isinstance(grads, torch.Tensor):
+            raise TypeError("grads must be a torch.Tensor")
+        if grads.dtype != torch.float32:
+            grads = grads.to(dtype=torch.float32)
+        if not grads.is_contiguous():
+            grads = grads.contiguous()
+        if grads.device.type != 'cpu':
+            grads = grads.to('cpu')
+        
+        self.ops.emb_update_table(name, ids, grads)
 
     def get_data_meta(self, name: str) -> Tuple[torch.dtype, Tuple[int, ...], None]:
         """Get meta data (data_type, data_shape, partition_policy)"""

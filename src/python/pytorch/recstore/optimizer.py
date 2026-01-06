@@ -15,7 +15,7 @@ def _get_kv_client_if_needed(params: List[Any]):
     return None
 
 def _process_dist_embedding_module(mod: DistEmbedding, lr: float):
-    """Handles the optimization step for a DistEmbedding module."""
+    """Handles the optimization step for a DistEmbedding module using gradient accumulation."""
     if not mod._trace:
         return
 
@@ -31,12 +31,14 @@ def _process_dist_embedding_module(mod: DistEmbedding, lr: float):
     )
     summed_grads.index_add_(0, inverse_indices, all_grads)
 
+    scaled_grads = lr * summed_grads
+    
     current_weights = mod.weight[unique_ids]
-    updated_weights = current_weights - lr * summed_grads
+    updated_weights = current_weights - scaled_grads
     mod.weight[unique_ids] = updated_weights
 
 def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
-    """Handles the optimization step for a generic module with _config_names and _trace."""
+    """Handles the optimization step for a generic module with _config_names and _trace using embupdate."""
     if not mod._trace:
         return
 
@@ -60,9 +62,7 @@ def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
         unique_ids_cpu = unique_ids.cpu()
         summed_grads_cpu = summed_grads.cpu()
 
-        current_weights = kv_client.pull(name=config_name, ids=unique_ids_cpu)
-        updated_weights = current_weights - lr * summed_grads_cpu
-        kv_client.push(name=config_name, ids=unique_ids_cpu, data=updated_weights)
+        kv_client.update(name=config_name, ids=unique_ids_cpu, grads=summed_grads_cpu)
 
 # --- Core Classes ---
 

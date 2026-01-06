@@ -167,16 +167,38 @@ private:
   Status UpdateParameter(ServerContext* context,
                          const UpdateParameterRequest* request,
                          UpdateParameterResponse* reply) override {
-    // mock impl.
-    // TODO: implement in CachePS
-    reply->set_success(true);
+    try {
+      const std::string& table_name = request->table_name();
+      const ParameterCompressReader* reader =
+          reinterpret_cast<const ParameterCompressReader*>(
+              request->gradients().data());
+      int size = reader->item_size();
+
+      std::vector<std::vector<float>> grads_vector;
+      grads_vector.reserve(size);
+      for (int i = 0; i < size; i++) {
+        const auto* item = reader->item(i);
+        std::vector<float> grad(item->data(), item->data() + item->dim);
+        grads_vector.push_back(std::move(grad));
+      }
+
+      bool success =
+          cache_ps_->UpdateParameter(table_name, reader, &grads_vector, 0);
+
+      FB_LOG_EVERY_MS(INFO, 2000)
+          << "UpdateParameter: table=" << table_name << ", keys=" << size;
+
+      reply->set_success(success);
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "UpdateParameter error: " << e.what();
+      reply->set_success(false);
+    }
     return Status::OK;
   }
 
   Status InitEmbeddingTable(ServerContext* context,
                             const InitEmbeddingTableRequest* request,
                             InitEmbeddingTableResponse* reply) override {
-    // mock impl.
     try {
       if (request->has_config_payload()) {
         auto payload            = request->config_payload();
@@ -187,12 +209,16 @@ private:
             << "InitEmbeddingTable: table=" << request->table_name()
             << ", num_embeddings=" << num_embeddings
             << ", embedding_dim=" << embedding_dim;
-        // cache_ps_->InitTable(request->table_name(), num_embeddings,
-        // embedding_dim);
+
+        bool init_success = cache_ps_->InitTable(
+            request->table_name(), num_embeddings, embedding_dim);
+        reply->set_success(init_success);
+      } else {
+        LOG(WARNING) << "InitEmbeddingTable called without config_payload";
+        reply->set_success(false);
       }
-      reply->set_success(true);
     } catch (const std::exception& e) {
-      LOG(ERROR) << "InitEmbeddingTable parse error: " << e.what();
+      LOG(ERROR) << "InitEmbeddingTable error: " << e.what();
       reply->set_success(false);
     }
     return Status::OK;
@@ -305,6 +331,7 @@ FACTORY_REGISTER(BaseParameterServer, GRPCParameterServer, GRPCParameterServer);
 
 } // namespace recstore
 
+#ifndef RECSTORE_NO_SERVER_MAIN
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   xmh::Reporter::StartReportThread(2000);
@@ -317,3 +344,4 @@ int main(int argc, char** argv) {
   ps.Run();
   return 0;
 }
+#endif

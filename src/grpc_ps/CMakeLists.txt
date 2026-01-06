@@ -49,6 +49,7 @@ target_link_libraries(grpc_ps_server PUBLIC
     protobuf::libprotobuf
     stdc++fs
     kv_engine
+    sparse_tensor
     gflags
     glog
     TBB::tbb
@@ -225,6 +226,40 @@ if(brpc_FOUND)
     )
     target_link_libraries(dist_brpc_ps_client_test PUBLIC
         dist_brpc_ps_client
+    )
+
+    add_executable(ps_server
+        ps_server.cpp
+        grpc_ps_server.cpp
+        brpc_ps_server.cpp
+    )
+    target_compile_definitions(ps_server PRIVATE RECSTORE_NO_SERVER_MAIN=1)
+    target_include_directories(ps_server PUBLIC ${BRPC_INCLUDE_PATH})
+    target_link_libraries(ps_server PUBLIC
+        base
+        base_ps
+        ps_proto
+        # gRPC side
+        gRPC::grpc++_reflection
+        gRPC::grpc++
+        protobuf::libprotobuf
+        # bRPC side
+        ${BRPC_LIB}
+        ${CUSTOM_PROTOBUF_LIB}
+        ${SYSTEM_OPENSSL_SSL_LIB}
+        ${SYSTEM_OPENSSL_CRYPTO_LIB}
+        ZLIB::ZLIB
+        Threads::Threads
+        dl
+        # common deps
+        stdc++fs
+        kv_engine
+        sparse_tensor
+        gflags
+        glog
+        leveldb
+        TBB::tbb
+        ${REPORT_LIB}
     )
 endif()
 

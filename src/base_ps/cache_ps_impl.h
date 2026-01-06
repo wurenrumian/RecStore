@@ -141,10 +141,12 @@ public:
   bool InitTable(const std::string& table_name,
                  uint64_t num_embeddings,
                  uint64_t embedding_dim) {
-    // TODO: optimizer type from config
-    optimizer_ = std::make_unique<SGD>(0.01);
+    if (!optimizer_) {
+      // TODO: optimizer type from config
+      optimizer_ = std::make_unique<SGD>(0.01);
+    }
+
     EmbeddingTableConfig config{num_embeddings, embedding_dim};
-    // base_kv_ should be initialized before this call
     optimizer_->Init({table_name}, config, base_kv_.get());
     return true;
   }
@@ -153,6 +155,11 @@ public:
                        const ParameterCompressReader* reader,
                        const std::vector<std::vector<float>>* grads,
                        unsigned tid) {
+    if (!optimizer_) {
+      LOG(ERROR) << "Optimizer not initialized. Please call InitTable first.";
+      return false;
+    }
+
     std::vector<uint64_t> keys_vec;
     // std::vector<base::ConstArray<float>> values;
     for (int i = 0; i < reader->item_size(); i++) {
@@ -163,6 +170,7 @@ public:
     // base::ConstArray<uint64_t> keys(keys_vec);
     // base_kv_->BatchPut(sink, keys, &values, tid);
     optimizer_->Update(table_name, keys_vec, *grads, tid);
+    return true;
   }
 
 private:

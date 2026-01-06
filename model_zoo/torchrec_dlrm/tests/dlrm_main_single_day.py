@@ -419,10 +419,34 @@ def main(argv: List[str]) -> None:
     
     model = model.to(device)
     
-    if args.adagrad:
-        optimizer = torch.optim.Adagrad(model.parameters(), lr=args.learning_rate)
+    dense_params = []
+    sparse_modules = []
+    
+    for name, module in model.named_modules():
+        if hasattr(module, '_config_names') and hasattr(module, '_trace'):
+            sparse_modules.append(module)
+        elif not name.startswith(('embedding_bag_collection', 'ebc')):
+            for param in module.parameters(recurse=False):
+                if param.requires_grad:
+                    dense_params.append(param)
+    
+    if not dense_params:
+        for name, param in model.named_parameters():
+            if param.requires_grad and not name.startswith(('embedding_bag_collection', 'ebc')):
+                dense_params.append(param)
+    
+    # Create optimizers
+    from python.pytorch.recstore.optimizer import SparseSGD
+    
+    sparse_optimizer = SparseSGD(sparse_modules, lr=args.learning_rate)
+    
+    if dense_params:
+        if args.adagrad:
+            dense_optimizer = torch.optim.Adagrad(dense_params, lr=args.learning_rate)
+        else:
+            dense_optimizer = torch.optim.SGD(dense_params, lr=args.learning_rate)
     else:
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate)
+        dense_optimizer = None
     
     criterion = torch.nn.BCEWithLogitsLoss()
     auroc = metrics.AUROC(task="binary")
@@ -468,7 +492,10 @@ def main(argv: List[str]) -> None:
                 sparse_features = sparse_features.to(device)
                 labels = labels.to(device)
                 
-                optimizer.zero_grad()
+                if dense_optimizer is not None:
+                    dense_optimizer.zero_grad()
+                sparse_optimizer.zero_grad()
+                
                 if use_cuda_timing:
                     fwd_start.record()
                 else:
@@ -498,7 +525,10 @@ def main(argv: List[str]) -> None:
                     bwd_ms = (t_bwd_end - t_bwd_start) * 1000.0
                 forward_time_total += fwd_ms
                 backward_time_total += bwd_ms
-                optimizer.step()
+                
+                if dense_optimizer is not None:
+                    dense_optimizer.step()
+                sparse_optimizer.step()
                 prof.step()
                 
                 train_loss += loss.item()

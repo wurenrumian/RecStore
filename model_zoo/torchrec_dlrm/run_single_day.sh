@@ -261,7 +261,7 @@ torchrun --nnodes 1 \
     --nproc_per_node 1 \
     --rdzv_backend c10d \
     --rdzv_endpoint localhost \
-    --rdzv_id 54321 \
+    --rdzv_id run-$(date +%s) \
     --role trainer $script_to_run \
     --single_day_mode \
     --in_memory_binary_criteo_path $processed_dataset_path \

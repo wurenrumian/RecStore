@@ -4,7 +4,10 @@
 void SGD::Init(const std::vector<std::string> table_name,
                const EmbeddingTableConfig& config,
                BaseKV* base_kv) {
+  LOG(INFO) << "SGD::Init called with " << table_name.size() << " table(s)";
   for (const auto& name : table_name) {
+    LOG(INFO) << "  Initializing table: '" << name << "' with shape ["
+              << config.num_embeddings << ", " << config.embedding_dim << "]";
     SparseTensor* param_tensor  = new SparseTensor();
     std::vector<uint64_t> shape = {config.num_embeddings, config.embedding_dim};
     TAG_TYPE tag                = 0; // PARAMETER tag
@@ -12,6 +15,8 @@ void SGD::Init(const std::vector<std::string> table_name,
         const_cast<std::string&>(name), PARAMETER, tag, shape, base_kv);
     tensor_map_[name] = param_tensor;
   }
+  LOG(INFO) << "SGD::Init completed. tensor_map_ now has " << tensor_map_.size()
+            << " entries";
 }
 
 void SGD::Update(std::string table,
@@ -22,6 +27,11 @@ void SGD::Update(std::string table,
   auto it = tensor_map_.find(table);
 
   if (it == tensor_map_.end()) {
+    LOG(ERROR) << "Table not found in SGD optimizer: '" << table << "'";
+    LOG(ERROR) << "Available tables (" << tensor_map_.size() << "):";
+    for (const auto& pair : tensor_map_) {
+      LOG(ERROR) << "  - '" << pair.first << "'";
+    }
     throw std::runtime_error("Table not found: " + table);
   }
 

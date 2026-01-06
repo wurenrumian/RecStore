@@ -318,6 +318,7 @@ FACTORY_REGISTER(BaseParameterServer, BRPCParameterServer, BRPCParameterServer);
 
 } // namespace recstore
 
+#ifndef RECSTORE_NO_SERVER_MAIN
 int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   xmh::Reporter::StartReportThread(2000);
@@ -333,3 +334,4 @@ int main(int argc, char** argv) {
 
   return 0;
 }
+#endif
