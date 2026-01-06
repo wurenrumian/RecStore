@@ -141,10 +141,12 @@ public:
   bool InitTable(const std::string& table_name,
                  uint64_t num_embeddings,
                  uint64_t embedding_dim) {
-    // TODO: optimizer type from config
-    optimizer_ = std::make_unique<SGD>(0.01);
+    if (!optimizer_) {
+      // TODO: optimizer type from config
+      optimizer_ = std::make_unique<SGD>(0.01);
+    }
+    
     EmbeddingTableConfig config{num_embeddings, embedding_dim};
-    // base_kv_ should be initialized before this call
     optimizer_->Init({table_name}, config, base_kv_.get());
     return true;
   }
