@@ -9,7 +9,7 @@
 #include "base/base.h"
 #include "base/factory.h"
 #include "base/json.h"
-#include "base_ps/base_ps_server.h"
+#include "ps/base/base_ps_server.h"
 #include "recstore_config.h"
 #include "report_client.h"
 

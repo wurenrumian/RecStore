@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "base_ps/cache_ps_impl.h"
+#include "ps/base/cache_ps_impl.h"
 #include "ps_brpc.pb.h"
 
 namespace recstore {

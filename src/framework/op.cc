@@ -1,5 +1,5 @@
 #include "framework/op.h"
-#include "grpc_ps/grpc_ps_client.h"
+#include "ps/grpc/grpc_ps_client.h"
 #include "base/factory.h"
 #include <iostream>
 #include <stdexcept>
@@ -121,7 +121,7 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 
 #ifndef USE_FAKE_KVCLIENT
 
-#  include "grpc_ps/grpc_ps_client.h"
+#  include "ps/grpc/grpc_ps_client.h"
 namespace recstore {
 
 BasePSClient* create_ps_client_from_config(const json& config) {

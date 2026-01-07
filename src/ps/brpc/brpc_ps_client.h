@@ -15,8 +15,8 @@
 #include "base/flatc.h"
 #include "base/json.h"
 #include "base/tensor.h"
-#include "base_ps/base_client.h"
-#include "base_ps/parameters.h"
+#include "ps/base/base_client.h"
+#include "ps/base/parameters.h"
 #include "ps_brpc.pb.h"
 
 using json = nlohmann::json;

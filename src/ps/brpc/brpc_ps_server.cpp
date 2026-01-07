@@ -18,12 +18,12 @@
 #include "base/flatc.h"
 #include "base/log.h"
 #include "base/timer.h"
-#include "base_ps/base_ps_server.h"
-#include "base_ps/cache_ps_impl.h"
-#include "base_ps/parameters.h"
+#include "ps/base/base_ps_server.h"
+#include "ps/base/cache_ps_impl.h"
+#include "ps/base/parameters.h"
 #include "ps_brpc.pb.h"
 #include "recstore_config.h"
-#include "report_client.h"
+#include "../report_client.h"
 
 using recstoreps_brpc::CommandRequest;
 using recstoreps_brpc::CommandResponse;

@@ -9,24 +9,24 @@
 #include "base/hash.h"
 #include "base/json.h"
 #include "base/log.h"
-#include "base_ps/base_client.h"
-#include "brpc_ps_client.h"
+#include "ps/base/base_client.h"
+#include "grpc_ps_client.h"
 
 using json = nlohmann::json;
 
 namespace recstore {
 
 /**
- * @brief 分布式 bRPC 参数服务器客户端
+ * @brief 分布式grpc参数服务器客户端
  *
- * 支持多对多的连接模式，通过 hash 函数将 key 路由到对应的服务器。
- * 配置通过 JSON 文件指定服务器列表和 hash 分区方法。
+ * 支持多对多的连接模式，通过hash函数将key路由到对应的服务器。
+ * 配置通过JSON文件指定服务器列表和hash分区方法。
  */
-class DistributedBRPCParameterClient : public BasePSClient {
+class DistributedGRPCParameterClient : public BasePSClient {
 public:
-  explicit DistributedBRPCParameterClient(json config);
+  explicit DistributedGRPCParameterClient(json config);
 
-  ~DistributedBRPCParameterClient();
+  ~DistributedGRPCParameterClient();
 
   // 实现 BasePSClient 的纯虚函数
   int GetParameter(const base::ConstArray<uint64_t>& keys,
@@ -40,19 +40,19 @@ public:
 
   void Command(PSCommand command) override;
 
-  int UpdateParameter(const std::string& table_name,
-                      const base::ConstArray<uint64_t>& keys,
-                      const std::vector<std::vector<float>>* grads);
-
-  int InitEmbeddingTable(const std::string& table_name,
-                         const recstore::EmbeddingTableConfig& config);
-
   // Prefetch 接口实现
   uint64_t PrefetchParameter(const base::ConstArray<uint64_t>& keys) override;
   bool IsPrefetchDone(uint64_t prefetch_id) override;
   void WaitForPrefetch(uint64_t prefetch_id) override;
   bool GetPrefetchResult(uint64_t prefetch_id,
                          std::vector<std::vector<float>>* values) override;
+
+  int UpdateParameter(const std::string& table_name,
+                      const base::ConstArray<uint64_t>& keys,
+                      const std::vector<std::vector<float>>* grads);
+
+  int InitEmbeddingTable(const std::string& table_name,
+                         const recstore::EmbeddingTableConfig& config);
 
   // 扩展接口
   bool GetParameter(const base::ConstArray<uint64_t>& keys,
@@ -98,8 +98,8 @@ private:
   };
   std::vector<ServerConfig> server_configs_;
 
-  // bRPC 客户端实例
-  std::vector<std::unique_ptr<BRPCParameterClient>> clients_;
+  // grpc客户端实例
+  std::vector<std::unique_ptr<GRPCParameterClient>> clients_;
 
   // 分片到客户端的映射
   std::unordered_map<int, int> shard_to_client_index_;

@@ -13,7 +13,7 @@
 #include "base/flatc.h"
 #include "base/log.h"
 #include "base/timer.h"
-#include "base_ps/parameters.h"
+#include "ps/base/parameters.h"
 #include "folly/executors/CPUThreadPoolExecutor.h"
 #include "ps.grpc.pb.h"
 #include "ps.pb.h"

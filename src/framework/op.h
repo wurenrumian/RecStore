@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/tensor.h"
-#include "base_ps/base_client.h"
+#include "ps/base/base_client.h"
 #include <string>
 #include <mutex>
 #include <unordered_map>

@@ -6,7 +6,7 @@
 #include "base/array.h"
 #include "base/factory.h"
 #include "base/timer.h"
-#include "base_ps/base_client.h"
+#include "ps/base/base_client.h"
 #include "brpc_ps_client.h"
 
 static bool

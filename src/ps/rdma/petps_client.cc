@@ -1,8 +1,8 @@
 #include "petps_client.h"
 
 #include "petps_magic.h"
-#include "base_ps/Postoffice.h"
-#include "base_ps/shard_manager.h"
+#include "ps/base/Postoffice.h"
+#include "ps/base/shard_manager.h"
 
 DECLARE_int32(value_size);
 DECLARE_int32(max_kv_num_per_request);

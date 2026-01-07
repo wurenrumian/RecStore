@@ -6,7 +6,7 @@
 #include <cmath>
 #include <stdexcept>
 #include "sparse_tensor.h"
-#include "../base_ps/base_client.h"
+#include "ps/base/base_client.h"
 
 using recstore::EmbeddingTableConfig;
 

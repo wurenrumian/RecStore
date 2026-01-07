@@ -7,9 +7,7 @@ include_directories(${PROJECT_BINARY_DIR})
 
 add_subdirectory(base)
 
-add_subdirectory(base_ps)
-add_subdirectory(grpc_ps)
-add_subdirectory(rdma_ps)
+add_subdirectory(ps)
 
 add_subdirectory(memory)
 add_subdirectory(storage)

@@ -12,14 +12,14 @@
 #include "base/array.h"
 #include "base/base.h"
 #include "base/timer.h"
-#include "base_ps/base_ps_server.h"
-#include "base_ps/cache_ps_impl.h"
-#include "base_ps/parameters.h"
+#include "ps/base/base_ps_server.h"
+#include "ps/base/cache_ps_impl.h"
+#include "ps/base/parameters.h"
 #include "base/flatc.h"
 #include "ps.grpc.pb.h"
 #include "ps.pb.h"
 #include "recstore_config.h"
-#include "report_client.h"
+#include "../report_client.h"
 
 using grpc::Server;
 using grpc::ServerBuilder;

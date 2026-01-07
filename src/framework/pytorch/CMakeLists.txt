@@ -23,7 +23,7 @@ target_include_directories(recstore_torch_ops PRIVATE
     ${PROJECT_SOURCE_DIR}/src
     ${TORCH_INCLUDE_DIRS}
     ${Python_INCLUDE_DIRS}
-    ${PROJECT_SOURCE_DIR}/src/grpc_ps
+    ${PROJECT_SOURCE_DIR}/src/ps/grpc
 )
 
 # Link the compiled library against the libraries provided by PyTorch.
