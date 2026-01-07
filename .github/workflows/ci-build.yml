@@ -85,7 +85,7 @@ jobs:
       - name: Pack artifacts
         run: |
           set -euo pipefail
-          bash ci/pack/pack_artifact.sh build/packed-grpc-server.tar.gz build/bin/grpc_ps_server
+          bash ci/pack/pack_artifact.sh build/packed-ps-server.tar.gz build/bin/ps_server
           bash ci/pack/pack_artifact.sh build/packed-recstore-ops.tar.gz build/lib/lib_recstore_ops.so
 
       - name: Upload packed artifacts (bundle)
@@ -94,7 +94,7 @@ jobs:
         with:
           name: packed-bundle
           path: |
-            build/packed-grpc-server.tar.gz
+            build/packed-ps-server.tar.gz
             build/packed-recstore-ops.tar.gz
 
       - name: Upload build artifacts
@@ -150,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p runner/extracted
-          tar -xzf runner/packed-grpc-server.tar.gz -C runner/extracted
+          tar -xzf runner/packed-ps-server.tar.gz -C runner/extracted
           tar -xzf runner/packed-recstore-ops.tar.gz -C runner/extracted
           echo "Extracted contents:" && find runner/extracted -maxdepth 2 -type f -print
 
@@ -183,13 +183,13 @@ jobs:
           echo "===== recstore_config.json (after fix) ====="
           cat recstore_config.json || true
 
-      - name: Run grpc_ps_server
+      - name: Run ps_server
         run: |
           set -euo pipefail
           export GLOG_logtostderr=1
           export GLOG_v=1
           PKG_ROOT=runner/extracted/package
-          python3 ci/pack/runner.py "${PKG_ROOT}" bin/grpc_ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/grpc_ps_server_run.log --inject-rpath --keep-alive
+          python3 ci/pack/runner.py "${PKG_ROOT}" bin/ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/ps_server_run.log --inject-rpath --keep-alive
 
       # - name: Show grpc_ps_server log
       #   if: always()
@@ -203,10 +203,10 @@ jobs:
           set -euo pipefail
           bash ci/test/test_op.sh --mock
 
-      - name: Stop grpc_ps_server
+      - name: Stop ps_server
         run: |
           set -euo pipefail
-          pkill -f grpc_ps_server || true
+          pkill -f ps_server || true
 
       - name: Upload run logs
         if: always()
