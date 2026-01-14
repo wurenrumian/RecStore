@@ -395,10 +395,24 @@ def main(argv: List[str]) -> None:
     prefetch_enabled = args.enable_prefetch
     if prefetch_enabled:
         try:
-            from .prefetcher import PrefetchingIterator  # relative import when run as module
-        except Exception:
-            from prefetcher import PrefetchingIterator
-        train_dataloader = PrefetchingIterator(train_dataloader, embedding_bag_collection, prefetch_count=args.prefetch_depth)
+            from python.pytorch.recstore.Dataset import RecStoreDataset
+        except ImportError:
+            from src.python.pytorch.recstore.Dataset import RecStoreDataset
+
+        def key_extractor(batch):
+            # batch is (dense, sparse, labels)
+            _, sparse, _ = batch
+            ids_map = {}
+            for key in sparse.keys():
+                ids_map[key] = sparse[key].values()
+            return ids_map
+
+        train_dataloader = RecStoreDataset(
+            train_dataloader, 
+            embedding_bag_collection.kv_client, 
+            key_extractor=key_extractor,
+            prefetch_count=args.prefetch_depth
+        )
     
     if args.interaction_type == InteractionType.DCN:
         model = DLRM_DCN(
@@ -482,10 +496,13 @@ def main(argv: List[str]) -> None:
                 bwd_end = torch.cuda.Event(enable_timing=True)
             
             for batch_idx, batch in enumerate(tqdm(train_dataloader, desc="Training")):
-                if prefetch_enabled and len(batch) == 4:
-                    dense_features, sparse_features, labels, handles = batch
-                    # deliver handles to EBC so it consumes prefetched results
-                    embedding_bag_collection.set_prefetch_handles(handles)
+                if prefetch_enabled:
+                     # RecStoreDataset yields (batch_data, handles)
+                     # batch_data is (dense, sparse, labels)
+                     batch_data, handles = batch
+                     dense_features, sparse_features, labels = batch_data
+                     # deliver handles to EBC so it consumes prefetched results
+                     embedding_bag_collection.set_prefetch_handles(handles)
                 else:
                     dense_features, sparse_features, labels = batch
                 dense_features = dense_features.to(device)

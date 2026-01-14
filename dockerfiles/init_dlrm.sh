@@ -18,16 +18,15 @@ cd ${DLRM_PATH}
 # rm -rf dlrm_venv
 
 # Create new virtual environment
-python3 -m venv dlrm_venv
-source ${DLRM_PATH}/dlrm_venv/bin/activate
-pip install --upgrade pip
+# python3 -m venv dlrm_venv
+# source ${DLRM_PATH}/dlrm_venv/bin/activate
+# pip install --upgrade pip
 
 # Install PyTorch nightly for CUDA 11.8
 # https://docs.pytorch.org/torchrec/setup-torchrec.html
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu118
-pip install fbgemm-gpu==1.0 --index-url https://download.pytorch.org/whl/cu118
+pip install fbgemm-gpu==1.0 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 pip install torchmetrics==1.0.3
-pip install torchrec==1.0 --index-url https://download.pytorch.org/whl/cu118
+pip install torchrec==1.0 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 
 # Usage

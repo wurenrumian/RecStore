@@ -212,7 +212,7 @@ fi
 fi
 echo "=========================================="
 
-source ${VENV_BASH}
+# source ${VENV_BASH}
 
 if [[ ! -f "$script_to_run" ]]; then
     echo "Error: Script not found at $script_to_run" >&2
@@ -257,7 +257,7 @@ if [ "$mode" = "RecStore" ]; then
         extra_args+=(--trace_file "$trace_file")
     fi
 fi
-torchrun --nnodes 1 \
+python -m torch.distributed.run --nnodes 1 \
     --nproc_per_node 1 \
     --rdzv_backend c10d \
     --rdzv_endpoint localhost \

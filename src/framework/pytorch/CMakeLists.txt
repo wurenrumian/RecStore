@@ -66,3 +66,12 @@ add_test(
 set_tests_properties(dist_emb_unittest PROPERTIES
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/python/pytorch
 )
+
+add_test(
+    NAME ebc_precision_test
+    COMMAND ${Python_EXECUTABLE} -m unittest recstore.unittest.test_ebc_precision_wrapper
+)
+
+set_tests_properties(ebc_precision_test PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/python/pytorch
+)

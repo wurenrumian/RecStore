@@ -8,7 +8,10 @@ from collections import defaultdict
 
 
 def find_changed_source_files(changed_files_str):
-    changed = changed_files_str.split('\n') if changed_files_str else []
+    if not changed_files_str:
+        return []
+    
+    changed = changed_files_str.replace('\n', ' ').split()
     return [f for f in changed if f.startswith('src/')]
 
 
