@@ -21,6 +21,10 @@ fi
 export LD_LIBRARY_PATH="${REPO_ROOT}/build/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH="${PY_PKG_ROOT}:${PYTHONPATH:-}"
 
+if [[ "${CI:-false}" == "true" ]] || [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  echo "CI environment detected: tests will assume ps_server is already running"
+fi
+
 echo "[1/3] Running pytorch_client_test"
 (
   cd "${PY_CLIENT_DIR}"
