@@ -186,6 +186,11 @@ jobs:
             echo "Copied runtime deps (*.so*) to build/lib"
           fi
 
+      - name: Install torchrec and dependencies
+        run: |
+          set -euo pipefail
+          bash dockerfiles/init_dlrm.sh
+
       - name: Fix config to reduce resource usage
         run: |
           set -euo pipefail

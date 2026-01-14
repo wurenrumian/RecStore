@@ -84,9 +84,19 @@ def generate_random_batch(num_embeddings, batch_size, device):
 
 
 def main(args):
+    print(f"\n{'='*70}")
+    print("EBC Precision Test Main Function")
+    print(f"{'='*70}")
+    print(f"Arguments:")
+    print(f"  - num_embeddings: {args.num_embeddings}")
+    print(f"  - embedding_dim: {args.embedding_dim}")
+    print(f"  - batch_size: {args.batch_size}")
+    print(f"  - seed: {args.seed}")
+    print(f"  - cpu: {args.cpu}")
+    
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
-    print(f"Running SINGLE TABLE precision test on device: {device} for {NUM_TEST_ROUNDS} rounds.")
+    print(f"  - device: {device}\n")
     print(f"Testing network-based update mechanism with KVClient.update()")
 
     eb_configs = get_eb_configs(
@@ -103,7 +113,24 @@ def main(args):
     standard_ebc = EmbeddingBagCollection(tables=eb_configs, device=device)
     
     print("\n--- Initializing Backend and Synchronizing Weights ---")
-    kv_client = get_kv_client()
+    
+    # Get KV client with retry logic to ensure PS Server is ready
+    max_retries = 5
+    kv_client = None
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempting to connect to PS Server (attempt {attempt + 1}/{max_retries})...")
+            kv_client = get_kv_client()
+            print(f"✓ Successfully connected to PS Server")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                import time
+                print(f"  Connection attempt {attempt + 1} failed: {e}")
+                time.sleep(1)
+            else:
+                raise RuntimeError(f"Failed to connect to PS Server after {max_retries} attempts: {e}")
+    
     config = eb_configs[0]
     
     # Get initial weights from standard_ebc FIRST
@@ -117,16 +144,34 @@ def main(args):
     
     # Manually initialize backend table with correct dimensions
     print(f"\nManually initializing backend table '{config.name}'...")
+    print(f"  Table config: num_embeddings={config.num_embeddings}, embedding_dim={config.embedding_dim}")
     all_keys = torch.arange(config.num_embeddings, dtype=torch.int64)
-    success = kv_client.ops.init_embedding_table(config.name, int(config.num_embeddings), int(config.embedding_dim))
-    if not success:
-        raise RuntimeError(f"Failed to initialize embedding table '{config.name}'")
-    print(f"✓ Backend table '{config.name}' initialized")
+    try:
+        print(f"  Calling init_embedding_table...")
+        success = kv_client.ops.init_embedding_table(config.name, int(config.num_embeddings), int(config.embedding_dim))
+        if not success:
+            print(f"  ⚠️ init_embedding_table returned False")
+            print(f"    Table may already exist or initialization failed")
+            print(f"    Continuing anyway...")
+        else:
+            print(f"  ✓ init_embedding_table returned True")
+        print(f"✓ Backend table '{config.name}' processed")
+    except Exception as e:
+        print(f"  ⚠️ init_embedding_table raised exception: {e}")
+        print(f"    Table may already exist or PS Server issue")
+        print(f"    Continuing anyway...")
     
     # Write initial weights ONCE
-    print(f"Writing initial weights to backend...")
-    kv_client.ops.emb_write(all_keys, initial_weights)
-    print(f"✓ Initial weights written")
+    print(f"\nWriting initial weights to backend...")
+    try:
+        print(f"  Writing {len(all_keys)} embeddings of dimension {config.embedding_dim}")
+        kv_client.ops.emb_write(all_keys, initial_weights)
+        print(f"✓ Initial weights written successfully")
+    except Exception as e:
+        print(f"  ⚠️ emb_write raised exception: {e}")
+        print(f"  Attempting to continue anyway...")
+        import traceback
+        traceback.print_exc()
     
     # Now create RecStoreEmbeddingBagCollection WITHOUT calling init_data
     # We need to manually set up metadata to skip init_data

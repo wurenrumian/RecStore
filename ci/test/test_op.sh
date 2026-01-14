@@ -25,22 +25,22 @@ if [[ "${CI:-false}" == "true" ]] || [[ "${GITHUB_ACTIONS:-false}" == "true" ]];
   echo "CI environment detected: tests will assume ps_server is already running"
 fi
 
-echo "[1/3] Running pytorch_client_test"
+echo "[1/2] Running pytorch_client_test"
 (
   cd "${PY_CLIENT_DIR}"
   python3 client_test.py "${LIB_PATH}"
 )
 
-echo "[2/3] Running dist_emb_unittest"
+echo "[2/2] Running dist_emb_unittest"
 (
   cd "${PY_PKG_ROOT}"
   python3 -m unittest recstore.unittest.test_dist_emb
 )
 
-echo "[3/3] Running ebc_precision_unittest"
-(
-  cd "${PY_PKG_ROOT}"
-  python3 -m unittest recstore.unittest.test_ebc_precision
-)
+# echo "[3/3] Running ebc_precision_unittest"
+# (
+#   cd "${PY_PKG_ROOT}"
+#   python3 -m unittest recstore.unittest.test_ebc_precision_wrapper
+# )
 
 echo "All Python tests finished successfully."

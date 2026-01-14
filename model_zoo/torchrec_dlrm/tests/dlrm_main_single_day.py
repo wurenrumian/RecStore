@@ -47,7 +47,7 @@ if DLRM_PATH not in sys.path:
     sys.path.insert(0, DLRM_PATH)
 
 from dlrm import DLRM, DLRM_DCN, DLRM_Projection, DLRMTrain
-from python.pytorch.torchrec.EmbeddingBag import RecStoreEmbeddingBagCollection
+from python.pytorch.torchrec_kv.EmbeddingBag import RecStoreEmbeddingBagCollection
 
 try:
     from data.custom_dataloader import get_dataloader
