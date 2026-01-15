@@ -5,6 +5,7 @@
 
 #include "base/factory.h"
 #include "base_kv.h"
+#include "storage/nvm/pet_kv/shm_common.h"
 #include "memory/persist_malloc.h"
 
 class KVEngineMap : public BaseKV {
@@ -71,12 +72,26 @@ public:
            unsigned tid) override {
     base::PetKVData shmkv_data;
     char* sync_data = shm_malloc_->New(value.size());
+    if (sync_data == nullptr) {
+      LOG(ERROR) << "shm malloc failed (OOM?), key: " << key
+                 << " size: " << value.size();
+      return;
+    }
     shmkv_data.SetShmMallocOffset(shm_malloc_->GetMallocOffset(sync_data));
     memcpy(sync_data, value.data(), value.size());
     _mm_mfence();
     asm volatile("" ::: "memory");
     std::unique_lock<std::shared_mutex> _(lock_);
-    hash_table_->insert({key, shmkv_data.data_value});
+    auto iter = hash_table_->find(key);
+    if (iter != hash_table_->end()) {
+      base::PetKVData old_data;
+      old_data.data_value = iter->second;
+      shm_malloc_->Free(
+          shm_malloc_->GetMallocData(old_data.shm_malloc_offset()));
+      iter->second = shmkv_data.data_value;
+    } else {
+      hash_table_->insert({key, shmkv_data.data_value});
+    }
   }
 
   void BatchGet(base::ConstArray<uint64> keys,
