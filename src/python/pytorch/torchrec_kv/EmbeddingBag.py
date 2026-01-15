@@ -545,6 +545,7 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
                 "avg_wait_ms": 0.0,
                 "avg_issue_to_wait_ms": 0.0,
                 "total_prefetched_ids": self._prefetch_total_ids,
+                "embeddings_per_sec_during_wait": 0.0,
             }
         else:
             avg_wait = sum(self._prefetch_wait_latencies) / n
