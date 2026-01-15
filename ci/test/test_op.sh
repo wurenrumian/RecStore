@@ -13,8 +13,8 @@ if [ ! -f "${LIB_PATH}" ]; then
     exit 1
 fi
 
-if [[ "$@" != *"--mock"* ]]; then
-  echo "Not in mock mode; skipping Python execution."
+if [[ "$@" == *"--mock"* ]]; then
+  echo "In mock mode; skipping Python execution."
   exit 0
 fi
 

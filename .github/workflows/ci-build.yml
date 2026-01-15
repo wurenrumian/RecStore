@@ -189,7 +189,7 @@ jobs:
       - name: Install torchrec and dependencies
         run: |
           set -euo pipefail
-          bash dockerfiles/init_dlrm.sh
+          bash dockerfiles/init_dlrm.sh --mirror=0
 
       - name: Fix config to reduce resource usage
         run: |
@@ -220,7 +220,7 @@ jobs:
       - name: Run ci/test/test_op.sh
         run: |
           set -euo pipefail
-          bash ci/test/test_op.sh --mock
+          bash ci/test/test_op.sh
 
       - name: Stop ps_server
         run: |

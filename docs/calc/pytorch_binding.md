@@ -78,15 +78,15 @@ int64_t emb_prefetch_torch(const torch::Tensor& keys)
 
 返回预取 ID (uint64_t 转换为 int64_t)
 
-**工作流程**
+**工作流程** （`src/framework/pytorch/op_torch.cc:emb_prefetch_torch`）
 
-| 步骤 | 代码位置 | 代码/操作 | 说明 |
-|------|---------|----------|------|
-| 1 | `src/framework/pytorch/op_torch.cc:emb_prefetch_torch` | 验证 keys 张量 | 输入检查 |
-| 2 | 同上 | `if (keys.is_cuda()) cpu_keys = keys.cpu()` | GPU → CPU |
-| 3 | 同上 | `base::RecTensor rec_keys = ToRecTensor(cpu_keys, UINT64)` | 转换为 RecTensor |
-| 4 | 同上 | `uint64_t pid = op->EmbPrefetch(rec_keys, rec_vals)` | 发起异步预取 |
-| 5 | 同上 | 返回 `static_cast<int64_t>(pid)` | 返回预取 ID |
+| 步骤 | 代码/操作 | 说明 |
+|------|----------|------|
+| 1 | 验证 keys 张量 | 输入检查 |
+| 2 | `if (keys.is_cuda()) cpu_keys = keys.cpu()` | GPU → CPU |
+| 3 | `base::RecTensor rec_keys = ToRecTensor(cpu_keys, UINT64)` | 转换为 RecTensor |
+| 4 | `uint64_t pid = op->EmbPrefetch(rec_keys, rec_vals)` | 发起异步预取 |
+| 5 | 返回 `static_cast<int64_t>(pid)` | 返回预取 ID |
 
 ### 等待预取结果
 

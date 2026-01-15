@@ -84,11 +84,23 @@ public:
            unsigned tid) override {
     base::PetKVData shmkv_data;
     char* sync_data = shm_malloc_->New(value.size());
+    if (sync_data == nullptr) {
+      LOG(ERROR) << "shm malloc failed (OOM?), key: " << key
+                 << " size: " << value.size();
+      return;
+    }
     shmkv_data.SetShmMallocOffset(shm_malloc_->GetMallocOffset(sync_data));
     memcpy(sync_data, value.data(), value.size());
     _mm_mfence();
     asm volatile("" ::: "memory");
-    Key_t hash_key = key;
+    Key_t hash_key  = key;
+    Value_t old_val = hash_table_->Get(hash_key);
+    if (old_val != NONE) {
+      base::PetKVData old_shm_data;
+      old_shm_data.data_value = old_val;
+      shm_malloc_->Free(
+          shm_malloc_->GetMallocData(old_shm_data.shm_malloc_offset()));
+    }
     hash_table_->Insert(hash_key, shmkv_data.data_value);
   }
 

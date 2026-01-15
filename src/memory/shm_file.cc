@@ -10,23 +10,35 @@ namespace base {
 
 bool ShmFile::InitializeFsDax(const std::string& filename, int64 size) {
   ClearFsDax();
-  if (!fs::exists(filename)) {
+
+  bool file_exists = fs::exists(filename);
+  if (!file_exists) {
     fs::create_directory(fs::path(filename).parent_path());
     LOG(INFO) << "Create ShmFile: " << filename << ", size: " << size;
+  }
 
-    system(folly::sformat("fallocate -l {} {}", size, filename).c_str());
+  fd_ = open(filename.c_str(), O_RDWR | O_CREAT, 0666);
+  if (fd_ < 0) {
+    LOG(ERROR) << "Failed to open file " << filename << ": " << strerror(errno);
+    return false;
+  }
+
+  if (!file_exists) {
+    int ret = posix_fallocate(fd_, 0, size);
+    if (ret != 0) {
+      LOG(ERROR) << "posix_fallocate failed: " << strerror(ret);
+      close(fd_);
+      fd_ = -1;
+      return false;
+    }
   }
 
   size_ = fs::file_size(filename);
 
   if (size_ != size) {
     LOG(ERROR) << "Size Error: " << size_ << " vs " << size;
-    return false;
-  }
-
-  fd_ = open(filename.c_str(), 0666);
-  if (fd_ < 0) {
-    LOG(ERROR) << "Failed to open file " << filename << ": " << strerror(errno);
+    close(fd_);
+    fd_ = -1;
     return false;
   }
 

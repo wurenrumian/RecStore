@@ -71,6 +71,11 @@ public:
            unsigned tid) override {
     base::PetKVData shmkv_data;
     char* sync_data = shm_malloc_.New(value.size());
+    if (sync_data == nullptr) {
+      LOG(ERROR) << "shm malloc failed (OOM?), key: " << key
+                 << " size: " << value.size();
+      return;
+    }
     shmkv_data.SetShmMallocOffset(shm_malloc_.GetMallocOffset(sync_data));
     std::memcpy(sync_data, value.data(), value.size());
     Key_t hash_key = key;
