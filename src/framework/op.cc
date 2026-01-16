@@ -149,49 +149,54 @@ BasePSClient* create_ps_client_from_config(const json& config) {
   return client;
 }
 
+json GetGlobalConfig() {
+  try {
+    auto current_path = std::filesystem::current_path();
+    RECSTORE_LOG(2,
+                 "[INFO] Current working directory: " + current_path.string());
+
+    std::filesystem::path config_path;
+    bool config_found = false;
+
+    for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
+      if (std::filesystem::exists(p / "recstore_config.json")) {
+        config_path  = p / "recstore_config.json";
+        config_found = true;
+        RECSTORE_LOG(2, "[INFO] Found config file at: " + config_path.string());
+        break;
+      }
+    }
+
+    if (!config_found) {
+      throw std::runtime_error(
+          "Could not find 'recstore_config.json' in current or any parent "
+          "directory starting from: " +
+          current_path.string());
+    }
+
+    std::ifstream test_file(config_path);
+    if (!test_file.good()) {
+      throw std::runtime_error(
+          "Config file not found: " + config_path.string() +
+          ". Please ensure recstore_config.json exists "
+          "in the project root directory.");
+    }
+    test_file.close();
+
+    return load_config_from_file(config_path);
+  } catch (const std::exception& e) {
+    RECSTORE_LOG(0, "[ERROR] Failed to load config: " + std::string(e.what()));
+    return json::object();
+  }
+}
+
 KVClientOp::KVClientOp() {
   if (!ps_client_) {
     try {
-      auto current_path = std::filesystem::current_path();
-      RECSTORE_LOG(
-          2, "[INFO] Current working directory: " + current_path.string());
+      json config = GetGlobalConfig();
+      ps_client_  = create_ps_client_from_config(config);
 
-      std::filesystem::path config_path;
-      bool config_found = false;
-
-      for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
-        if (std::filesystem::exists(p / "recstore_config.json")) {
-          config_path  = p / "recstore_config.json";
-          config_found = true;
-          RECSTORE_LOG(2,
-                       "[INFO] Found config file at: " + config_path.string());
-          break;
-        }
-      }
-
-      if (!config_found) {
-        throw std::runtime_error(
-            "Could not find 'recstore_config.json' in current or any parent "
-            "directory starting from: " +
-            current_path.string());
-      }
-
-      std::ifstream test_file(config_path);
-      if (!test_file.good()) {
-        throw std::runtime_error(
-            "Config file not found: " + config_path.string() +
-            ". Please ensure recstore_config.json exists "
-            "in the project root directory.");
-      }
-      test_file.close();
-
-      json config = load_config_from_file(config_path);
-
-      ps_client_ = create_ps_client_from_config(config);
-
-      RECSTORE_LOG(2,
-                   "[INFO] PS client initialized successfully from config: " +
-                       config_path.string());
+      RECSTORE_LOG(2, "[INFO] PS client initialized successfully.");
     } catch (const std::exception& e) {
       RECSTORE_LOG(
           0,
@@ -202,6 +207,44 @@ KVClientOp::KVClientOp() {
 }
 
 BasePSClient* KVClientOp::ps_client_ = nullptr;
+
+void KVClientOp::SetPSConfig(const std::string& host, int port) {
+  if (ps_client_) {
+    delete ps_client_;
+    ps_client_ = nullptr;
+  }
+
+  json file_config = GetGlobalConfig();
+  int final_port   = port;
+  if (final_port <= 0) {
+    if (file_config.contains("client") &&
+        file_config["client"].contains("port")) {
+      final_port = file_config["client"]["port"].get<int>();
+    } else if (file_config.contains("cache_ps") &&
+               file_config["cache_ps"].contains("servers") &&
+               file_config["cache_ps"]["servers"].is_array() &&
+               !file_config["cache_ps"]["servers"].empty()) {
+      final_port = file_config["cache_ps"]["servers"][0]["port"].get<int>();
+    } else {
+      final_port = 15000;
+    }
+  }
+
+  std::string final_host = host;
+  if (final_host.empty()) {
+    final_host = "127.0.0.1";
+  }
+
+  json config;
+  config["host"]  = final_host;
+  config["port"]  = final_port;
+  config["shard"] = 0;
+
+  ps_client_ = new GRPCParameterClient(config);
+  RECSTORE_LOG(2,
+               "[INFO] Re-initialized PS client with host="
+                   << final_host << " port=" << final_port);
+}
 
 void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   if (ps_client_ == nullptr) {

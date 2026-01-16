@@ -174,6 +174,26 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
+        --ps-host)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                ps_host="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+        --ps-port)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                ps_port="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
         *)
             echo "Error: Unknown option $1" >&2
             show_help
@@ -255,6 +275,12 @@ if [ "$mode" = "RecStore" ]; then
     extra_args+=(--fuse-k "$fuse_k")
     if [ -n "$trace_file" ]; then
         extra_args+=(--trace_file "$trace_file")
+    fi
+    if [ -n "$ps_host" ]; then
+        extra_args+=(--ps-host "$ps_host")
+    fi
+    if [ -n "$ps_port" ]; then
+        extra_args+=(--ps-port "$ps_port")
     fi
 fi
 python -m torch.distributed.run --nnodes 1 \

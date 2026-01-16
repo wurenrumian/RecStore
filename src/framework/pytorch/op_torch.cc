@@ -317,6 +317,23 @@ void emb_write_torch(const torch::Tensor& keys, const torch::Tensor& values) {
   RECSTORE_LOG(3, "[DEBUG] emb_write_torch: EmbWrite done");
 }
 
+void set_ps_config_torch(const std::string& host, int64_t port) {
+  RECSTORE_LOG(
+      2,
+      "[INFO] set_ps_config_torch called: host=" << host << " port=" << port);
+  auto op    = GetKVClientOp();
+  auto kv_op = std::dynamic_pointer_cast<KVClientOp>(op);
+  if (kv_op) {
+    kv_op->SetPSConfig(host, static_cast<int>(port));
+  } else {
+    RECSTORE_LOG(
+        0,
+        "[ERROR] Failed to cast CommonOp to KVClientOp. Cannot set PS config.");
+    throw std::runtime_error(
+        "Failed to set PS config: storage backend is not KVClientOp");
+  }
+}
+
 TORCH_LIBRARY(recstore_ops, m) {
   m.def("emb_read", emb_read_torch);
   m.def("emb_update", emb_update_torch);
@@ -325,6 +342,7 @@ TORCH_LIBRARY(recstore_ops, m) {
   m.def("emb_write", emb_write_torch);
   m.def("emb_prefetch", emb_prefetch_torch);
   m.def("emb_wait_result", emb_wait_result_torch);
+  m.def("set_ps_config", set_ps_config_torch);
 }
 
 } // namespace framework

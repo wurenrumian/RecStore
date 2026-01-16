@@ -309,6 +309,14 @@ class RecStoreClient:
         """
         raise NotImplementedError("count_nonzero is not implemented for the ops-based client.")
 
+    def set_ps_config(self, host: str, port: int):
+        """
+        Dynamically configure the PS Client host and port.
+        This forces re-initialization of the backend PS client.
+        """
+        print(f"[RecStoreClient] Setting PS config to {host}:{port}")
+        self.ops.set_ps_config(host, int(port))
+
 def get_kv_client() -> RecStoreClient:
     """
     Factory function to get the singleton instance of the RecStoreClient.

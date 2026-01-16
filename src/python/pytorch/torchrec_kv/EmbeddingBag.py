@@ -91,12 +91,16 @@ class _RecStoreEBCFunction(Function):
 
 class RecStoreEmbeddingBagCollection(torch.nn.Module):
     def __init__(self, embedding_bag_configs: List[Dict[str, Any]], lr: float = 0.01,
-                 enable_fusion: bool = True, fusion_k: int = 30):
+                 enable_fusion: bool = True, fusion_k: int = 30,
+                 ps_host: str = None, ps_port: int = None):
         super().__init__()
         self._embedding_bag_configs = [
             EmbeddingBagConfig(**c) for c in embedding_bag_configs
         ]
         self.kv_client: RecStoreClient = get_kv_client()
+        if ps_host is not None and ps_port is not None:
+            self.kv_client.set_ps_config(ps_host, ps_port)
+
         self._lr = lr
         self._enable_fusion = enable_fusion
         self._fusion_k = fusion_k

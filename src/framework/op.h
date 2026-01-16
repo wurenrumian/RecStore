@@ -138,6 +138,7 @@ public:
   void WaitForWrite(uint64_t write_id) override;
   void SaveToFile(const std::string& path) override;
   void LoadFromFile(const std::string& path) override;
+  void SetPSConfig(const std::string& host, int port);
 
 private:
   int64_t embedding_dim_;

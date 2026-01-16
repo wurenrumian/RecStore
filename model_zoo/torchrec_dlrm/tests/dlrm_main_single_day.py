@@ -264,9 +264,21 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=None,
         help="Profiler chrome trace file path",
     )
+    parser.add_argument(
+        "--ps-host",
+        type=str,
+        default=None,
+        help="PS server host",
+    )
+    parser.add_argument(
+        "--ps-port",
+        type=int,
+        default=None,
+        help="PS server port",
+    )
     
     args = parser.parse_args(argv)
-    
+
     if args.single_day_mode:
         if args.in_memory_binary_criteo_path is None:
             raise ValueError("--in_memory_binary_criteo_path must be specified for single day mode")
@@ -390,6 +402,8 @@ def main(argv: List[str]) -> None:
         eb_configs,
         enable_fusion=args.fuse_emb_tables,
         fusion_k=args.fuse_k,
+        ps_host=args.ps_host,
+        ps_port=args.ps_port,
     )
     print(f"Embedding fusion enabled: {args.fuse_emb_tables}; fusion_k={args.fuse_k}")
     prefetch_enabled = args.enable_prefetch
