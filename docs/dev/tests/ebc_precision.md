@@ -40,3 +40,21 @@
 | **独立初始化** | 只有 Rank 0 负责初始化 Table，其他 Rank 等待 Barrier。 | 避免重复建表导致的 Race Condition。 |
 | **局部视角验证** | 每个 Rank 只 `pull` 自己负责的那一段 Key 进行比对。 | `ids = range(rank*N, (rank+1)*N)`<br>`verify(pull(ids), local_slice)` |
 | **并发 Update** | 所有 Rank 同时发送梯度更新。 | Server 端应能正确处理并发请求，不发生锁冲突或数据错乱。 |
+
+## 运行测试
+
+可以通过命令行参数连接到远程 Parameter Server 进行测试：
+
+```bash
+python3 src/python/pytorch/recstore/unittest/test_ebc_precision.py \
+    --ps-host 192.168.1.100 \
+    --ps-port 15000
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--ps-host` | PS 服务器 IP 地址 (可选，默认连接本地或跳过) |
+| `--ps-port` | PS 服务器端口 (可选) |
+
+???+ note 注意
+    多进程测试 (`test_ebc_precision_multiprocess.py`) 同样支持这两个参数，会自动将配置传递给所有 Worker 进程。

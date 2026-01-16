@@ -47,7 +47,11 @@ plugins:
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.details
@@ -61,29 +65,39 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - 首页: index.md
-  - 配置: config.md
-  - 参数服务器:
-    - 总览: parameter_server/index.md
-    - 基础抽象: parameter_server/base.md
-    - gRPC 实现: parameter_server/grpc.md
-    - bRPC 实现: parameter_server/brpc.md
-    - 协议定义: parameter_server/proto.md
-    - RDMA 模块: parameter_server/rdma.md
-  - 存储层:
-    - 架构总览: storage/index.md
-    - CachePS 层: storage/cacheps.md
-    - BaseKV 抽象: storage/basekv.md
-    - KV 引擎实现: storage/kv_engines.md
-    - 内存管理: storage/memory.md
-  - 计算层:
-    - 架构总览: calc/index.md
-    - CommonOp 接口: calc/op_interface.md
-    - KVClient 客户端: calc/kvclient.md
-    - PyTorch C++ 扩展: calc/pytorch_binding.md
-    - EmbeddingBag 模块: calc/embedding_modules.md
-    - 优化器与梯度更新: calc/optimizer.md
+  - 首页:
+    - 介绍: index.md
+    - 快速开始:
+      - 搭建指南: quickstart.md
+      - 常见问题: faq.md
+  - 配置:
+      - 项目配置: config.md
+  - 架构:
+    - 计算层:
+      - 架构总览: calc/index.md
+      - CommonOp 接口: calc/op_interface.md
+      - KVClient 客户端: calc/kvclient.md
+      - PyTorch C++ 扩展: calc/pytorch_binding.md
+      - EmbeddingBag 模块: calc/embedding_modules.md
+      - 优化器与梯度更新: calc/optimizer.md
+    - 参数服务器:
+      - 总览: parameter_server/index.md
+      - 基础抽象: parameter_server/base.md
+      - gRPC 实现: parameter_server/grpc.md
+      - bRPC 实现: parameter_server/brpc.md
+      - 协议定义: parameter_server/proto.md
+      - RDMA 模块: parameter_server/rdma.md
+    - 存储层:
+      - 架构总览: storage/index.md
+      - CachePS 层: storage/cacheps.md
+      - BaseKV 抽象: storage/basekv.md
+      - KV 引擎实现: storage/kv_engines.md
+      - 内存管理: storage/memory.md
   - 开发:
+    - 免配置运行: dev/zero_config_run.md
+    - 性能分析: dev/performance.md
+    - 功能实现:
+      - 添加算子: dev/feature/add_operator.md
     - 测试文档:
       - 概览: dev/testing.md
       - Python客户端: dev/tests/client_test.md

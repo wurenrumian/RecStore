@@ -6,24 +6,30 @@
 
 ## 架构分层
 
-```
-GRPCPSClient / BRPCPSClient
-         ↓
-    CachePS (ps/base/cache_ps_impl.h)
-         ↓
-    BaseKV (storage/kv_engine/base_kv.h)
-         ↓
-KV Engine 实现层
-├─ KVEngineMap (内存 HashMap)
-├─ KVEngineExtendibleHash (DRAM索引 + SSD值)
-├─ KVEngineCCEH (SSD索引 + SSD值)
-├─ KVEngineHybrid (混合存储)
-└─ KVEnginePetKV (PetKV引擎)
-         ↓
-    内存管理层
-├─ PersistLoopShmMalloc
-├─ R2ShmMalloc
-└─ PersistSimpleMalloc
+```mermaid
+graph TD
+    Client[PSClient] -- "GetParameter/UpdateParameter/..." --> Server[ParameterService<br>src/ps/grpc/grpc_ps_server.cpp]
+    Server --> CachePS[CachePS<br>ps/base/cache_ps_impl.h]
+    CachePS --> BaseKV[BaseKV<br>storage/kv_engine/base_kv.h]
+    
+    BaseKV --> EngineGroup
+
+    subgraph EngineGroup[KV Engine 实现]
+        direction TB
+        KVEngineExtendibleHash
+        KVEngineCCEH
+        KVEngineHybrid
+        KVEnginePetKV
+    end
+    
+    EngineGroup --> MemMgr
+
+    subgraph MemMgr[内存管理]
+        direction TB
+        PLSM[PersistLoopShmMalloc]
+        R2SM[R2ShmMalloc]
+        PSM[PersistSimpleMalloc]
+    end
 ```
 
 ## 模块说明
@@ -58,32 +64,6 @@ KV Engine 实现层
 | 4 | KVEngine.Get(key, value, tid) | 根据索引定位值位置，读取原始字节串 |
 | 5 | 从索引查找值的内存地址 | 解析指针/偏移，触发内存或存储读取 |
 | 6 | 读取数据到输出缓冲区 | 转换为 ParameterPack，返回给上层 |
-
-## 配置示例
-
-```json
-{
-  "num_threads": 16,
-  "base_kv_config": {
-    "path": "/data/recstore",
-    "index_type": "DRAM",
-    "value_type": "SSD", 
-    "capacity": 1000000,
-    "value_size": 128,
-    "value_memory_management": "PersistLoopShmMalloc"
-  }
-}
-```
-
-配置项说明：
-
-| 字段 | 说明 |
-|------|------|
-| index_type | 索引存储位置: "DRAM" 或 "SSD" |
-| value_type | 值存储位置: "DRAM", "SSD", "HYBRID" |
-| capacity | 预估条目数 |
-| value_size | 每个值的字节数 |
-| value_memory_management | 内存管理器类型 |
 
 ## 引擎选择
 

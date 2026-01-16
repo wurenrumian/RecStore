@@ -33,7 +33,9 @@ emb_bag = RecStoreEmbeddingBagCollection(
     ],
     lr=0.01,
     enable_fusion=True,
-    fusion_k=30
+    fusion_k=30,
+    ps_host=None,
+    ps_port=None
 )
 ```
 
@@ -45,6 +47,8 @@ emb_bag = RecStoreEmbeddingBagCollection(
 | lr | 优化器学习率 |
 | enable_fusion | 是否启用融合预取 (默认 True) |
 | fusion_k | 融合 ID 的位移量 (默认 30) |
+| ps_host | (可选) 远程 PS 服务器地址 |
+| ps_port | (可选) 远程 PS 服务器端口 |
 
 **EmbeddingBagConfig**
 

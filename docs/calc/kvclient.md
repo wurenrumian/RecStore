@@ -23,6 +23,22 @@ client = RecStoreClient(library_path="/path/to/lib_recstore_ops.so", role="defau
 * 重复初始化时直接返回已有实例
 * 支持多个角色的客户端区分
 
+### 动态配置
+
+支持在运行时重新配置 PS 服务器连接地址（例如用于多机训练）：
+
+???+ note "注意"
+    调用此方法会强制重新初始化底层的 C++ PS 客户端。
+
+```python
+def set_ps_config(host: str, port: int)
+```
+
+| 参数 | 说明 |
+|------|------|
+| host | PS 服务器主机 IP |
+| port | PS 服务器端口 |
+
 ## 数据管理 API
 
 ### 初始化嵌入表

@@ -28,12 +28,6 @@ bRPC 服务实现，接口与 gRPC 版本类似。
 | UpdateParameter | 更新参数 |
 | InitEmbeddingTable | 初始化嵌入表 |
 
-### 关键优化
-
-- 使用 `butil::IOBuf` 实现零拷贝传输
-- 异步回调模型，使用 `google::protobuf::Closure`
-- 连接池复用，减少连接建立开销
-
 ## 客户端实现
 
 ### BRPCPSClient

@@ -13,6 +13,7 @@ virtual void EmbInit(const RecTensor& keys, const RecTensor& init_values) = 0;
 virtual void EmbInit(const RecTensor& keys, const InitStrategy& strategy) = 0;
 virtual bool InitEmbeddingTable(const std::string& table_name, 
                                 const EmbeddingTableConfig& config) = 0;
+virtual void SetPSConfig(const std::string& host, int port) = 0;
 ```
 
 | 方法 | 说明 |
@@ -20,6 +21,7 @@ virtual bool InitEmbeddingTable(const std::string& table_name,
 | EmbInit(keys, values) | 用提供的值初始化嵌入 |
 | EmbInit(keys, strategy) | 根据策略 (Normal/Uniform/Xavier/Zero) 初始化 |
 | InitEmbeddingTable | 创建新的嵌入表 |
+| SetPSConfig | 动态设置 PS 连接配置 (Host/Port) |
 
 **InitStrategy 支持**
 
