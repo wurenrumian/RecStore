@@ -273,7 +273,18 @@ public:
           int shard        = server_config["shard"];
 
           std::string server_address = host + ":" + std::to_string(port);
-          auto cache_ps = std::make_unique<CachePS>(config_["cache_ps"]);
+
+          nlohmann::json shard_config = config_["cache_ps"];
+          if (shard_config.contains("base_kv_config") &&
+              shard_config["base_kv_config"].contains("path")) {
+            std::string original_path = shard_config["base_kv_config"]["path"];
+            shard_config["base_kv_config"]["path"] =
+                original_path + "_" + std::to_string(shard);
+            LOG(INFO) << "Shard " << shard << " using data path: "
+                      << shard_config["base_kv_config"]["path"];
+          }
+
+          auto cache_ps = std::make_unique<CachePS>(shard_config);
           ParameterServiceImpl service(cache_ps.get());
 
           grpc::EnableDefaultHealthCheckService(true);
