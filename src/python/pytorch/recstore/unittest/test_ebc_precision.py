@@ -22,6 +22,7 @@ NUM_TEST_ROUNDS = 10
 def get_eb_configs(
     num_embeddings: int,
     embedding_dim: int,
+    table_name: str = "default",
 ) -> list:
     """
     Generates a list of EmbeddingBagConfig objects for a single table.
@@ -29,7 +30,7 @@ def get_eb_configs(
     return [
         EmbeddingBagConfig(
             # Use a single default table to align with server expectations.
-            name="default",
+            name=table_name,
             embedding_dim=embedding_dim,
             num_embeddings=num_embeddings,
             feature_names=["feature_0"],
@@ -93,6 +94,14 @@ def main(args):
     print(f"  - batch_size: {args.batch_size}")
     print(f"  - seed: {args.seed}")
     print(f"  - cpu: {args.cpu}")
+    
+    ps_host = getattr(args, 'ps_host', None)
+    ps_port = getattr(args, 'ps_port', None)
+    
+    if ps_host and ps_port:
+        print(f"  - ps_host: {ps_host}")
+        print(f"  - ps_port: {ps_port}")
+        get_kv_client().set_ps_config(ps_host, ps_port)
     
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() and not args.cpu else "cpu"
@@ -316,6 +325,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for generated data.")
     parser.add_argument("--seed", type=int, default=int(torch.rand(1)[0]), help="Random seed for reproducibility.")
     parser.add_argument("--cpu", action="store_true", help="Force test to run on CPU.")
+    parser.add_argument("--ps-host", type=str, help="Hostname or IP of the PS Server.")
+    parser.add_argument("--ps-port", type=int, help="Port of the PS Server.")
     
     args = parser.parse_args()
     main(args)

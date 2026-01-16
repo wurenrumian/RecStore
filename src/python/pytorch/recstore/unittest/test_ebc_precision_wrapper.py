@@ -225,6 +225,47 @@ class TestEBCPrecision(unittest.TestCase):
             "--cpu",
             "--seed", "42"
         ]
+
+        try:
+            port = 15000
+            host = "127.0.0.1"
+            
+            # Determine config file path
+            # Priority: 1. _server_runner used config (if started/managed here)
+            #           2. recstore_config.json in RECSTORE_PATH
+            config_path = os.path.join(RECSTORE_PATH, 'recstore_config.json')
+            
+            if _server_runner and _server_runner.config_path:
+                 config_path = _server_runner.config_path
+            
+            if os.path.exists(config_path):
+                import json
+                with open(config_path, 'r') as f:
+                    cdata = json.load(f)
+                    
+                    # Logic to find port
+                    found = False
+                    if "client" in cdata:
+                        if "port" in cdata["client"]:
+                            port = cdata["client"]["port"]
+                            found = True
+                        if "host" in cdata["client"]:
+                            host = cdata["client"]["host"]
+                    
+                    if not found and "cache_ps" in cdata and "servers" in cdata["cache_ps"]:
+                        servers = cdata["cache_ps"]["servers"]
+                        if isinstance(servers, list) and len(servers) > 0:
+                            p = servers[0].get("port")
+                            h = servers[0].get("host")
+                            if p is not None: port = p
+                            if h is not None: host = h
+            
+            cmd.extend(["--ps-host", str(host), "--ps-port", str(port)])
+            print(f"  Passed PS Config: {host}:{port}")
+
+        except Exception as e:
+            print(f"  Warning: Could not determine specific PS config: {e}")
+
         
         print(f"Executing command: {' '.join(cmd)}")
         

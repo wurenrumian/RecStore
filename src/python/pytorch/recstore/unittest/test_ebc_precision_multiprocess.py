@@ -39,7 +39,7 @@ def generate_rank_batch(num_embeddings_per_rank, batch_size, device, rank, total
         lengths=lengths,
     )
 
-def worker(rank, world_size, args, barrier):
+def worker(rank, world_size, args, barrier, table_name):
     torch.manual_seed(args.seed)
     
     device = "cpu"
@@ -54,11 +54,16 @@ def worker(rank, world_size, args, barrier):
     eb_configs = get_eb_configs(
         num_embeddings=total_embeddings,
         embedding_dim=args.embedding_dim,
+        table_name=table_name,
     )
     
     standard_ebc = EmbeddingBagCollection(tables=eb_configs, device=device)
     
     kv_client = get_kv_client()
+    if args.ps_host and args.ps_port:
+        print(f"[Rank {rank}] Configuring PS Client to {args.ps_host}:{args.ps_port}")
+        kv_client.set_ps_config(args.ps_host, args.ps_port)
+        
     config = eb_configs[0]
     
     barrier.wait()
@@ -167,8 +172,12 @@ def main(args):
     barrier = mp.Barrier(world_size)
     processes = []
     
+    # Generate unique table name here to share across ranks
+    import time
+    table_name = f"table_mp_{int(time.time())}_{os.getpid()}"
+    
     for rank in range(world_size):
-        p = mp.Process(target=worker, args=(rank, world_size, args, barrier))
+        p = mp.Process(target=worker, args=(rank, world_size, args, barrier, table_name))
         p.start()
         processes.append(p)
         
@@ -193,6 +202,8 @@ def main_wrapper():
         parser.add_argument("--seed", type=int, default=42, help="Seed.")
         parser.add_argument("--cpu", action="store_true", help="Force CPU.")
         parser.add_argument("--world-size", type=int, default=2, help="Number of processes.")
+        parser.add_argument("--ps-host", type=str, default=None, help="PS Host")
+        parser.add_argument("--ps-port", type=int, default=None, help="PS Port")
         
         args = parser.parse_args()
         main(args)
