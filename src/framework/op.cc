@@ -167,15 +167,33 @@ json GetGlobalConfig() {
 
     return load_config_from_file(config_path);
   } catch (const std::exception& e) {
-    LOG(ERROR) << "[ERROR] Failed to load config: " << std::string(e.what());
+    LOG(ERROR) << "Failed to load config: " << std::string(e.what());
     return json::object();
   }
 }
 
+void ConfigureLogging() {
+  static std::once_flag log_init_flag;
+  std::call_once(log_init_flag, []() {
+    std::cerr << "[Debug] ConfigureLogging called. Setting flags." << std::endl;
+    FLAGS_log_dir         = "/tmp";
+    FLAGS_alsologtostderr = false;
+    FLAGS_logtostderr     = false;
+    FLAGS_stderrthreshold = google::ERROR;
+
+    google::SetLogDestination(google::INFO, "/tmp/recstore_op_layer_INFO_");
+    google::SetLogDestination(
+        google::WARNING, "/tmp/recstore_op_layer_WARNING_");
+    google::SetLogDestination(google::ERROR, "/tmp/recstore_op_layer_ERROR_");
+
+    // if (!google::IsGoogleLoggingInitialized()) {
+    google::InitGoogleLogging("recstore_op_layer");
+    // }
+  });
+}
+
 KVClientOp::KVClientOp() {
-  FLAGS_log_dir         = "/tmp";
-  FLAGS_alsologtostderr = false;
-  FLAGS_logtostderr     = false;
+  ConfigureLogging();
 
   if (!ps_client_) {
     try {
@@ -184,8 +202,7 @@ KVClientOp::KVClientOp() {
 
       LOG(INFO) << "PS client initialized successfully.";
     } catch (const std::exception& e) {
-      LOG(ERROR) << "[ERROR] Failed to initialize PS client: "
-                 << std::string(e.what());
+      LOG(ERROR) << "Failed to initialize PS client: " << std::string(e.what());
       throw;
     }
   }

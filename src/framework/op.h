@@ -10,6 +10,7 @@
 using base::RecTensor;
 
 namespace recstore {
+void ConfigureLogging();
 enum class InitStrategyType { Normal, Uniform, Xavier, Zero };
 
 struct InitStrategy {
