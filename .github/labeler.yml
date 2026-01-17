@@ -1,0 +1,34 @@
+Compute:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/python/**'
+    - 'src/framework/**'
+    - 'model_zoo/**'
+
+Network:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/ps/grpc/**'
+    - 'src/ps/proto/**'
+    - 'src/ps/brpc/**'
+    - 'src/ps/rdma/**'
+
+Storage:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'src/ps/base/**'
+    - 'src/storage/**'
+    - 'src/memory/**'
+
+Documentation:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'docs/**'
+    - '**/*.md'
+
+CI/CD:
+- changed-files:
+  - any-glob-to-any-file:
+    - '.github/**'
+    - 'dockerfiles/**'
+    - 'ci/**'

@@ -173,6 +173,10 @@ json GetGlobalConfig() {
 }
 
 KVClientOp::KVClientOp() {
+  FLAGS_log_dir         = "/tmp";
+  FLAGS_alsologtostderr = false;
+  FLAGS_logtostderr     = false;
+
   if (!ps_client_) {
     try {
       json config = GetGlobalConfig();

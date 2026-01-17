@@ -46,8 +46,7 @@ graph TD
 
 在 `src/python/pytorch/recstore/KVClient.py` 中，我们加载 C++ 动态库并通过 `torch.ops.recstore_ops` 调用注册好的算子。
 
-```python
-# src/python/pytorch/recstore/KVClient.py
+```python title="src/python/pytorch/recstore/KVClient.py"
 class RecStoreClient:
     def __init__(self):
         torch.ops.load_library("lib_recstore_ops.so")
@@ -62,8 +61,7 @@ class RecStoreClient:
 
 在相关代码 (例如 `src/python/pytorch/recstore/optimizer.py` 中)，根据业务需求准备数据并调用 Client。
 
-```python
-# src/python/pytorch/recstore/optimizer.py
+```python title="src/python/pytorch/recstore/optimizer.py"
 
 def _process_generic_module(mod, lr, kv_client):
     all_ids = ...
@@ -80,8 +78,7 @@ OP 层负责连接 Python 和 C++，主要实现在 `src/framework/pytorch/op_to
 
 使用 `TORCH_LIBRARY` 宏将 C++ 函数暴露给 Python 层。
 
-```cpp
-// src/framework/pytorch/op_torch.cc
+```cpp title="src/framework/pytorch/op_torch.cc"
 
 TORCH_LIBRARY(recstore_ops, m) {
     // ... 其他算子
@@ -93,8 +90,7 @@ TORCH_LIBRARY(recstore_ops, m) {
 
 编写 Wrapper 函数处理类型检查、数据转换，并转发调用。
 
-```cpp
-// src/framework/pytorch/op_torch.cc
+```cpp title="src/framework/pytorch/op_torch.cc"
 
 void emb_update_table_torch(const std::string& table_name,
                             const torch::Tensor& keys,
@@ -118,8 +114,7 @@ void emb_update_table_torch(const std::string& table_name,
 
 在 `framework/op.cc` 中，`KVClientOp` 作为 facade，调用具体的 `ps_client_` 实现。
 
-```cpp
-// src/framework/op.cc
+```cpp title="src/framework/op.cc"
 
 void KVClientOp::EmbUpdate(const std::string& table_name,
                            const base::RecTensor& keys,
@@ -133,8 +128,7 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
 
 在 `src/ps/grpc/dist_grpc_ps_client.cpp` 中负责序列化数据并发送网络请求。
 
-```cpp
-// src/ps/grpc/dist_grpc_ps_client.cpp
+```cpp title="src/ps/grpc/dist_grpc_ps_client.cpp"
 
 void DistGRPCPSClient::UpdateParameter(const std::string& table_name,
                                        const std::vector<uint64_t>& keys,
@@ -185,8 +179,7 @@ service ParameterService {
 
 服务端收到 RPC 请求后，在 `src/ps/grpc/grpc_ps_server.cpp` 中进行解析和分发。
 
-```cpp
-// src/ps/grpc/grpc_ps_server.cpp
+```cpp title="src/ps/grpc/grpc_ps_server.cpp"
 
 Status ParameterServiceImpl::UpdateParameter(ServerContext* context, 
                                              const UpdateParameterRequest* request, 
@@ -208,8 +201,7 @@ Status ParameterServiceImpl::UpdateParameter(ServerContext* context,
 
 最后，在 `src/ps/base/cache_ps_impl.h` 中实现具体的存储或计算逻辑。对于 update 操作，这里会调用优化器。
 
-```cpp
-// src/ps/base/cache_ps_impl.h
+```cpp title="src/ps/base/cache_ps_impl.h"
 
 bool CachePS::UpdateParameter(const std::string& table, 
                               const ParameterCompressReader* reader, ...) {
@@ -234,8 +226,7 @@ bool CachePS::UpdateParameter(const std::string& table,
 
 使用 `unittest` 框架，结合 `ps_server_helper` 可以在测试时自动拉起本地 PS Server。
 
-```python
-# src/python/pytorch/recstore/unittest/test_new_op.py
+```python title="src/python/pytorch/recstore/unittest/test_new_op.py"
 
 import unittest
 import torch
