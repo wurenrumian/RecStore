@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 
   std::ifstream config_file(cfg_path);
   if (!config_file.good()) {
-    std::cerr << "Failed to open config file: " << cfg_path << std::endl;
+    LOG(ERROR) << "Failed to open config file: " << cfg_path;
     return 1;
   }
 
@@ -63,14 +63,12 @@ int main(int argc, char** argv) {
   } else if (type_upper == "BRPC") {
     key = "BRPCParameterServer";
   } else {
-    std::cerr << "Unknown ps_type: " << ps_type << ", expected GRPC or BRPC"
-              << std::endl;
+    LOG(ERROR) << "Unknown ps_type: " << ps_type << ", expected GRPC or BRPC";
     return 2;
   }
 
-  std::cout << "Using ps_type: " << type_upper << " (key=" << key << ")"
-            << std::endl;
-  std::cout << "Parameter server config: " << config.dump(2) << std::endl;
+  LOG(INFO) << "Using ps_type: " << type_upper << " (key=" << key << ")";
+  LOG(INFO) << "Parameter server config: " << config.dump(2);
 
   std::unique_ptr<BaseParameterServer> server(
       base::Factory<BaseParameterServer>::NewInstance(key));
