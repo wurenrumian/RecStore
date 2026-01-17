@@ -18,8 +18,8 @@ class PSServerRunner:
         self,
         server_path: str = "./build/bin/ps_server",
         config_path: Optional[str] = None,
-        log_dir: str = "./logs",
-        timeout: int = 60,
+        log_dir: str = "/tmp",
+        timeout: int = 120,
         num_shards: int = 2,
         verbose: bool = False,
         startup_delay: float = 2.0
@@ -42,8 +42,18 @@ class PSServerRunner:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
     def _create_log_file(self):
+        import getpass
+        try:
+            user = getpass.getuser()
+        except:
+            user = "unknown"
+            
+        script_name = os.path.basename(sys.argv[0])
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_path = self.log_dir / f"ps_server_{timestamp}.log"
+        
+        log_filename = f"ps_server_{user}_{script_name}_{timestamp}.log"
+        log_path = self.log_dir / log_filename
+        
         self.log_file = open(log_path, 'w', buffering=1)
         return log_path
     
@@ -63,9 +73,15 @@ class PSServerRunner:
                 line = line.rstrip()
                 self._log(f"[{stream_name}] {line}")
                 
-                if "Server shard" in line and "listening on" in line:
+                if "listening on" in line:
                     try:
-                        shard_id = int(line.split("shard")[1].split()[0])
+                        if "Server shard" in line:
+                            shard_id = int(line.split("shard")[1].split()[0])
+                        elif "Server listening on" in line:
+                            shard_id = 0 # Default to shard 0 for single server mode
+                        else:
+                            continue
+                            
                         self.shard_ready.add(shard_id)
                         self._log(f"✓ Detected shard {shard_id} ready")
                         
@@ -89,7 +105,7 @@ class PSServerRunner:
         
         cmd = [str(self.server_path)]
         if self.config_path:
-            cmd.extend(["--config", str(self.config_path)])
+            cmd.extend(["--config_path", str(self.config_path)])
             self._log(f"Config: {self.config_path}")
         
         try:
@@ -199,8 +215,8 @@ class PSServerRunner:
 def ps_server_context(
     server_path: str = "./build/bin/ps_server",
     config_path: Optional[str] = None,
-    log_dir: str = "./logs",
-    timeout: int = 60,
+    log_dir: str = "/tmp",
+    timeout: int = 120,
     num_shards: int = 2,
     verbose: bool = False,
     startup_delay: float = 2.0
@@ -223,7 +239,7 @@ def run_with_server(
     test_func: Callable,
     server_path: str = "./build/bin/ps_server",
     config_path: Optional[str] = None,
-    log_dir: str = "./logs",
+    log_dir: str = "/tmp",
     timeout: int = 30,
     num_shards: int = 2,
     verbose: bool = False
@@ -274,8 +290,8 @@ Examples:
     )
     parser.add_argument(
         "--log-dir",
-        default="./logs",
-        help="Directory for server logs (default: ./logs)"
+        default="/tmp",
+        help="Directory for server logs (default: /tmp)"
     )
     parser.add_argument(
         "--timeout",
