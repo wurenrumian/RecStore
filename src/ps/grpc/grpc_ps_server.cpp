@@ -269,35 +269,58 @@ public:
 
       for (auto& server_config : servers) {
         server_threads.emplace_back([this, server_config]() {
-          std::string host = server_config["host"];
-          int port         = server_config["port"];
-          int shard        = server_config["shard"];
+          try {
+            std::string host = server_config["host"];
+            int port         = server_config["port"];
+            int shard        = server_config["shard"];
 
-          std::string server_address = host + ":" + std::to_string(port);
+            std::string server_address = host + ":" + std::to_string(port);
 
-          nlohmann::json shard_config = config_["cache_ps"];
-          if (shard_config.contains("base_kv_config") &&
-              shard_config["base_kv_config"].contains("path")) {
-            std::string original_path = shard_config["base_kv_config"]["path"];
-            shard_config["base_kv_config"]["path"] =
-                original_path + "_" + std::to_string(shard);
-            LOG(INFO) << "Shard " << shard << " using data path: "
-                      << shard_config["base_kv_config"]["path"];
+            nlohmann::json shard_config = config_["cache_ps"];
+            if (shard_config.contains("base_kv_config") &&
+                shard_config["base_kv_config"].contains("path")) {
+              std::string original_path =
+                  shard_config["base_kv_config"]["path"];
+              shard_config["base_kv_config"]["path"] =
+                  original_path + "_" + std::to_string(shard);
+              LOG(INFO) << "Shard " << shard << " using data path: "
+                        << shard_config["base_kv_config"]["path"];
+            }
+
+            auto cache_ps = std::make_unique<CachePS>(shard_config);
+            ParameterServiceImpl service(cache_ps.get());
+
+            grpc::EnableDefaultHealthCheckService(true);
+            grpc::reflection::InitProtoReflectionServerBuilderPlugin();
+            ServerBuilder builder;
+            builder.AddListeningPort(
+                server_address, grpc::InsecureServerCredentials());
+            builder.RegisterService(&service);
+            std::unique_ptr<Server> server(builder.BuildAndStart());
+            if (!server) {
+              std::string err_msg = fmt::format(
+                  "FATAL: Failed to start gRPC server shard {} on {}. "
+                  "Port might be in use or invalid configuration. "
+                  "Check if port {} is already occupied.",
+                  shard,
+                  server_address,
+                  port);
+              std::cerr << err_msg << std::endl;
+              LOG(FATAL) << err_msg;
+              return;
+            }
+            std::cout << "Server shard " << shard << " listening on "
+                      << server_address << std::endl;
+            server->Wait();
+          } catch (const std::exception& e) {
+            std::cerr << "FATAL: Uncaught exception in shard thread: "
+                      << e.what() << std::endl;
+            LOG(FATAL) << "Uncaught exception in shard thread: " << e.what();
+          } catch (...) {
+            std::cerr << "FATAL: Unknown exception in shard thread"
+                      << std::endl;
+            LOG(FATAL) << "Unknown exception in shard thread";
           }
-
-          auto cache_ps = std::make_unique<CachePS>(shard_config);
-          ParameterServiceImpl service(cache_ps.get());
-
-          grpc::EnableDefaultHealthCheckService(true);
-          grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-          ServerBuilder builder;
-          builder.AddListeningPort(
-              server_address, grpc::InsecureServerCredentials());
-          builder.RegisterService(&service);
-          std::unique_ptr<Server> server(builder.BuildAndStart());
-          std::cout << "Server shard " << shard << " listening on "
-                    << server_address << std::endl;
-          server->Wait();
         });
       }
 
@@ -328,6 +351,19 @@ public:
           server_address, grpc::InsecureServerCredentials());
       builder.RegisterService(&service);
       std::unique_ptr<Server> server(builder.BuildAndStart());
+      if (!server) {
+        std::string err_msg = fmt::format(
+            "FATAL: Failed to start gRPC server on {}. "
+            "Port might be in use or invalid configuration.",
+            server_address);
+        std::cerr << err_msg << std::endl;
+        LOG(FATAL) << err_msg;
+        metrics_running = false;
+        if (metrics_thread.joinable()) {
+          metrics_thread.join();
+        }
+        return;
+      }
       std::cout << "Server listening on " << server_address << std::endl;
       server->Wait();
 

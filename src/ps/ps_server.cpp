@@ -72,8 +72,19 @@ int main(int argc, char** argv) {
 
   std::unique_ptr<BaseParameterServer> server(
       base::Factory<BaseParameterServer>::NewInstance(key));
-  server->Init(config);
-  server->Run();
+  try {
+    server->Init(config);
+    server->Run();
+  } catch (const std::exception& e) {
+    std::cerr << "FATAL: Uncaught exception in ps_server: " << e.what()
+              << std::endl;
+    LOG(FATAL) << "Uncaught exception in ps_server: " << e.what();
+    return 1;
+  } catch (...) {
+    std::cerr << "FATAL: Unknown exception in ps_server" << std::endl;
+    LOG(FATAL) << "Unknown exception in ps_server";
+    return 1;
+  }
 
   return 0;
 }
