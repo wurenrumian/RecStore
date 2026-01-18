@@ -36,7 +36,7 @@ class RecStoreClient:
         self._gdata_name_list = set()
         self._role = role
         self._initialized = True
-        print(f"RecStoreClient initialized. Loaded library from: {library_path}")
+        # print(f"RecStoreClient initialized. Loaded library from: {library_path}")
 
     @property
     def role(self) -> str:
@@ -105,7 +105,7 @@ class RecStoreClient:
             print(f"Tensor '{name}' already exists. Skipping initialization.")
             return
 
-        print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
+        # print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
         
         num_embeddings, embedding_dim = shape
         # print(f"[DEBUG] Calling init_embedding_table for '{name}' with num_embeddings={num_embeddings}, embedding_dim={embedding_dim}")

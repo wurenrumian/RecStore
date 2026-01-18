@@ -1,7 +1,7 @@
 name: Documentation Update
 
 on:
-  pull_request:
+  pull_request_target:
     paths:
       - 'src/**'
       - 'model_zoo/**'

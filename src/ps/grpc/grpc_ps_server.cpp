@@ -249,8 +249,9 @@ public:
 
     if (num_shards > 1) {
       // 多服务器启动逻辑
-      std::cout << "启动分布式参数服务器，分片数量: " << num_shards
-                << std::endl;
+      std::cout
+          << "Starting distributed parameter server (gRPC), number of shards: "
+          << num_shards << std::endl;
 
       if (!config_["cache_ps"].contains("servers")) {
         LOG(FATAL) << "配置了 num_shards > 1 但缺少 servers 配置";

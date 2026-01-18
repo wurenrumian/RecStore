@@ -8,6 +8,7 @@ import argparse
 import itertools
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterator, List, Optional
@@ -502,12 +503,15 @@ def main(argv: List[str]) -> None:
             num_batches = 0
             forward_time_total = 0.0
             backward_time_total = 0.0
+            opt_time_total = 0.0
             use_cuda_timing = torch.cuda.is_available() and device.type == 'cuda'
             if use_cuda_timing:
                 fwd_start = torch.cuda.Event(enable_timing=True)
                 fwd_end = torch.cuda.Event(enable_timing=True)
                 bwd_start = torch.cuda.Event(enable_timing=True)
                 bwd_end = torch.cuda.Event(enable_timing=True)
+                opt_start = torch.cuda.Event(enable_timing=True)
+                opt_end = torch.cuda.Event(enable_timing=True)
             
             for batch_idx, batch in enumerate(tqdm(train_dataloader, desc="Training")):
                 if prefetch_enabled:
@@ -544,22 +548,37 @@ def main(argv: List[str]) -> None:
                 else:
                     t_bwd_start = time.time()
                 loss.backward()
+
                 if use_cuda_timing:
                     bwd_end.record()
-                    torch.cuda.synchronize()
-                    fwd_ms = fwd_start.elapsed_time(fwd_end)
-                    bwd_ms = bwd_start.elapsed_time(bwd_end)
                 else:
-                    import time
                     t_bwd_end = time.time()
-                    fwd_ms = (t_fwd_end - t_fwd_start) * 1000.0
-                    bwd_ms = (t_bwd_end - t_bwd_start) * 1000.0
-                forward_time_total += fwd_ms
-                backward_time_total += bwd_ms
+
                 
+                if use_cuda_timing:
+                    opt_start.record()
+                else:
+                    t_opt_start = time.time()
+
                 if dense_optimizer is not None:
                     dense_optimizer.step()
                 sparse_optimizer.step()
+
+                if use_cuda_timing:
+                    opt_end.record()
+                    torch.cuda.synchronize()
+                    fwd_ms = fwd_start.elapsed_time(fwd_end)
+                    bwd_ms = bwd_start.elapsed_time(bwd_end)
+                    opt_ms = opt_start.elapsed_time(opt_end)
+                else:
+                    t_opt_end = time.time()
+                    fwd_ms = (t_fwd_end - t_fwd_start) * 1000.0
+                    bwd_ms = (t_bwd_end - t_bwd_start) * 1000.0
+                    opt_ms = (t_opt_end - t_opt_start) * 1000.0
+                
+                forward_time_total += fwd_ms
+                backward_time_total += bwd_ms
+                opt_time_total += opt_ms
                 prof.step()
                 
                 train_loss += loss.item()
@@ -568,14 +587,15 @@ def main(argv: List[str]) -> None:
                 num_batches += 1
                 
                 if batch_idx:
-                    print(f"Batch {batch_idx}: Loss={loss.item():.4f} AUROC={auroc_score.item():.4f} FWD(ms)={fwd_ms:.2f} BWD(ms)={bwd_ms:.2f}")
+                    print(f"Batch {batch_idx}: Loss={loss.item():.4f} AUROC={auroc_score.item():.4f} FWD(ms)={fwd_ms:.2f} BWD(ms)={bwd_ms:.2f} OPT(ms)={opt_ms:.2f}")
             
             avg_train_loss = train_loss / num_batches
             avg_train_auroc = train_auroc / num_batches
             
             avg_fwd = forward_time_total / num_batches if num_batches else 0.0
             avg_bwd = backward_time_total / num_batches if num_batches else 0.0
-            print(f"Epoch {epoch + 1} - Training Loss: {avg_train_loss:.4f}, Training AUROC: {avg_train_auroc:.4f}, AvgFWD(ms): {avg_fwd:.2f}, AvgBWD(ms): {avg_bwd:.2f}")
+            avg_opt = opt_time_total / num_batches if num_batches else 0.0
+            print(f"Epoch {epoch + 1} - Training Loss: {avg_train_loss:.4f}, Training AUROC: {avg_train_auroc:.4f}, AvgFWD(ms): {avg_fwd:.2f}, AvgBWD(ms): {avg_bwd:.2f}, AvgOPT(ms): {avg_opt:.2f}")
             
             model.eval()
             val_loss = 0.0

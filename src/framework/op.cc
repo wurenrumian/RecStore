@@ -167,15 +167,31 @@ json GetGlobalConfig() {
 
     return load_config_from_file(config_path);
   } catch (const std::exception& e) {
-    LOG(ERROR) << "[ERROR] Failed to load config: " << std::string(e.what());
+    LOG(ERROR) << "Failed to load config: " << std::string(e.what());
     return json::object();
   }
 }
 
+void ConfigureLogging() {
+  static std::once_flag log_init_flag;
+  std::call_once(log_init_flag, []() {
+    std::cerr << "[Debug] ConfigureLogging called. Setting flags." << std::endl;
+    FLAGS_log_dir         = "/tmp";
+    FLAGS_alsologtostderr = false;
+    FLAGS_logtostderr     = false;
+    FLAGS_stderrthreshold = google::ERROR;
+
+    google::SetLogDestination(google::INFO, "/tmp/recstore_op_layer_INFO_");
+    google::SetLogDestination(
+        google::WARNING, "/tmp/recstore_op_layer_WARNING_");
+    google::SetLogDestination(google::ERROR, "/tmp/recstore_op_layer_ERROR_");
+
+    google::InitGoogleLogging("recstore_op_layer");
+  });
+}
+
 KVClientOp::KVClientOp() {
-  FLAGS_log_dir         = "/tmp";
-  FLAGS_alsologtostderr = false;
-  FLAGS_logtostderr     = false;
+  ConfigureLogging();
 
   if (!ps_client_) {
     try {
@@ -184,8 +200,7 @@ KVClientOp::KVClientOp() {
 
       LOG(INFO) << "PS client initialized successfully.";
     } catch (const std::exception& e) {
-      LOG(ERROR) << "[ERROR] Failed to initialize PS client: "
-                 << std::string(e.what());
+      LOG(ERROR) << "Failed to initialize PS client: " << std::string(e.what());
       throw;
     }
   }
@@ -236,21 +251,20 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
                              "KVClientOp::SetPSClient() first.");
   }
 
-  LOG(ERROR) << "[op.cc] EmbRead: keys.shape=" << keys.shape(0)
-             << ", values.shape=[" << values.shape(0) << ", " << values.shape(1)
-             << "]";
-  LOG(ERROR) << "[op.cc] EmbRead: keys.data=" << keys.data_as<uint64_t>()
-             << ", values.data=" << values.data_as<float>();
+  LOG(INFO) << "EmbRead: keys.shape=" << keys.shape(0) << ", values.shape=["
+            << values.shape(0) << ", " << values.shape(1) << "]";
+  LOG(INFO) << "EmbRead: keys.data=" << keys.data_as<uint64_t>()
+            << ", values.data=" << values.data_as<float>();
   if (keys.shape(0) > 0) {
     std::ostringstream oss;
-    oss << "[op.cc] EmbRead: keys start with: ";
+    oss << "EmbRead: keys start with: ";
     for (int i = 0; i < std::min((int64_t)10, keys.shape(0)); ++i)
       oss << keys.data_as<uint64_t>()[i] << ", ";
     LOG(ERROR) << oss.str();
   }
   if (values.shape(0) > 0) {
     std::ostringstream oss;
-    oss << "[op.cc] EmbRead: values start with: ";
+    oss << "EmbRead: values start with: ";
     for (int i = 0; i < std::min((int64_t)10, values.shape(0)); ++i) {
       oss << "[";
       for (int j = 0; j < std::min((int64_t)10, values.shape(1)); ++j) {
@@ -277,14 +291,10 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   const size_t total = static_cast<size_t>(L) * static_cast<size_t>(D);
   std::fill_n(values_data, total, 0.0f);
 
-  // std::cout << "[EmbRead] Reading " << L << " embeddings of dimension " <<
-  // base::EMBEDDING_DIMENSION_D << std::endl;
-
   bool success = ps_client_->GetParameter(keys_array, values_data);
   if (!success) {
     throw std::runtime_error("Failed to read embeddings from PS client.");
   }
-  // std::cout << "[EmbRead] Read operation complete." << std::endl;
 }
 
 void KVClientOp::EmbUpdate(const base::RecTensor& keys,
@@ -366,8 +376,6 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
   const uint64_t* keys_data = keys.data_as<uint64_t>();
   base::ConstArray<uint64_t> keys_array(keys_data, L);
   const float* values_data = values.data_as<float>();
-  // std::cout << "[EmbRead] Reading " << L << " embeddings of dimension " <<
-  // base::EMBEDDING_DIMENSION_D << std::endl;
 
   const int64_t total_values = L * D;
   if (values_shape[0] * values_shape[1] != total_values) {
@@ -423,7 +431,6 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
   if (!success) {
     throw std::runtime_error("Failed to write embeddings to PS client.");
   }
-  // std::cout << "[EmbRead] Read operation complete." << std::endl;
 }
 
 void KVClientOp::EmbInit(const base::RecTensor& keys,
@@ -457,17 +464,7 @@ bool KVClientOp::IsWriteDone(uint64_t write_id) {
   throw std::runtime_error("Not impl");
 }
 
-namespace testing {
-
-// void ClearEmbeddingTableForTesting() {
-//     bool success = GetGRPCClientInstance().ClearPS();
-//     if (!success) {
-//         throw std::runtime_error("Failed to clear remote Parameter Server
-//         state during testing.");
-//     }
-// }
-
-} // namespace testing
+namespace testing {} // namespace testing
 
 } // namespace recstore
 

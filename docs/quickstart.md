@@ -15,8 +15,7 @@ RecStore 推荐使用 Docker 进行环境配置。在开始之前，请确保你
 
 ```bash
 # 1. 安装 Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh ./get-docker.sh
+curl -fsSL https://get.docker.com | sudo sh
 
 # 2. 安装 NVIDIA Container Toolkit
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \

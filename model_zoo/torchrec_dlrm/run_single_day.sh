@@ -255,6 +255,15 @@ for file in "${required_files[@]}"; do
 done
 
 echo "✓ All required data files found"
+
+if [ -f "$processed_dataset_path/day_0_labels.npy" ]; then
+    detected_size=$(python3 -c "import numpy as np; print(np.load('${processed_dataset_path}/day_0_labels.npy', mmap_mode='r').shape[0])")
+    if [ -n "$detected_size" ]; then
+        echo "Auto-detected dataset size: $detected_size"
+        dataset_size=$detected_size
+    fi
+fi
+
 echo ""
 
 start_time=$(date +%s.%N)
