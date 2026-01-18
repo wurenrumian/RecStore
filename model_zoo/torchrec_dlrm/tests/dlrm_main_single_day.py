@@ -537,11 +537,12 @@ def main(argv: List[str]) -> None:
                     import time
                     t_fwd_start = time.time()
                 outputs = model(dense_features, sparse_features)
+                loss = criterion(outputs, labels.float())
+                
                 if use_cuda_timing:
                     fwd_end.record()
                 else:
                     t_fwd_end = time.time()
-                loss = criterion(outputs, labels.float())
                 
                 if use_cuda_timing:
                     bwd_start.record()

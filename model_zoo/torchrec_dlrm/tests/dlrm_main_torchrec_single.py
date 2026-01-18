@@ -40,6 +40,8 @@ if DLRM_PATH not in sys.path:
 
 
 from dlrm_torchrec_model import create_dlrm_model, DLRM
+import dlrm_torchrec_model
+print(f"DEBUG: dlrm_torchrec_model imported from: {dlrm_torchrec_model.__file__}")
 
 try:
     from data.custom_dataloader import get_dataloader
@@ -381,14 +383,32 @@ def main(argv: List[str]) -> None:
             else:
                 t_fwd_start = time.time()
                 
+            if batch_idx == 0:
+                 print(f"DEBUG: Batch {batch_idx} Input Stats:")
+                 print(f"  Dense Mean: {dense_features.mean().item()} Std: {dense_features.std().item()}")
+                 print(f"  Dense First 5: {dense_features[:5, 0].cpu().numpy()}") # First feature of first 5 samples
+                 
+                 # Check sparse values if possible, KJT is complex but we can check values()
+                 print(f"  Sparse Values Mean: {sparse_features.values().float().mean().item()} Std: {sparse_features.values().float().std().item()}")
+            
             outputs = model(dense_features, sparse_features)
+            
+            if batch_idx == 0:
+                 probs = torch.sigmoid(outputs)
+                 print(f"DEBUG: Batch {batch_idx} Output Stats (Logits):")
+                 print(f"  Mean: {outputs.mean().item()}")
+                 print(f"  Std: {outputs.std().item()}")
+                 print(f"  Min: {outputs.min().item()}")
+                 print(f"  Max: {outputs.max().item()}")
+                 print(f"  First 5 probs: {probs[:5].flatten().detach().cpu().numpy()}")
+                 print(f"  First 5 labels: {labels[:5].flatten().detach().cpu().numpy()}")
+            
+            loss = criterion(outputs, labels.float())
             
             if use_cuda_timing:
                 fwd_end.record()
             else:
                 t_fwd_end = time.time()
-            
-            loss = criterion(outputs, labels.float())
             
             # Backward
             if use_cuda_timing:
@@ -428,7 +448,7 @@ def main(argv: List[str]) -> None:
             opt_time_total += opt_ms
             
             train_loss += loss.item()
-            auroc_score = auroc(outputs.squeeze(), labels)
+            auroc_score = auroc(torch.sigmoid(outputs.squeeze()), labels)
             train_auroc += auroc_score.item()
             num_batches += 1
             

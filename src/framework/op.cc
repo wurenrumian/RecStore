@@ -260,7 +260,7 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
     oss << "EmbRead: keys start with: ";
     for (int i = 0; i < std::min((int64_t)10, keys.shape(0)); ++i)
       oss << keys.data_as<uint64_t>()[i] << ", ";
-    LOG(ERROR) << oss.str();
+    LOG(INFO) << oss.str();
   }
   if (values.shape(0) > 0) {
     std::ostringstream oss;
@@ -272,7 +272,7 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
       }
       oss << "] ";
     }
-    LOG(ERROR) << oss.str();
+    LOG(INFO) << oss.str();
   }
   validate_keys(keys);
   validate_embeddings(values, "Values");

@@ -196,7 +196,11 @@ class DLRM(nn.Module):
         # Final prediction through top MLP
         logits = self.over_arch(interactions)
         
-        return torch.sigmoid(logits)
+        # Always print for debugging now
+        print(f"DEBUG MODEL: DenseEmb Std: {dense_embedded.std().item()} SparseEmb Std: {sparse_values.std().item()} Interaction Std: {interactions.std().item()} Logits Std: {logits.std().item()}")
+        print(f"DEBUG MODEL SHAPES: DenseEmb: {dense_embedded.shape} SparseValues: {sparse_values.shape} Interactions: {interactions.shape}")
+        
+        return logits
 
 
 def create_dlrm_model(
