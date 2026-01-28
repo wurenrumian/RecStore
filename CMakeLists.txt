@@ -175,6 +175,7 @@ set(Torch_DIR "${PROJECT_SOURCE_DIR}/third_party/libtorch/libtorch/share/cmake/T
 set(folly_DIR "${PROJECT_SOURCE_DIR}/third_party/folly/folly-install-fPIC/usr/local/lib/cmake/folly")
 set(FOLLY_ROOT_DIR "${folly_DIR}")
 
+set(FMT_DEBUG_POSTFIX "" CACHE STRING "Debug library postfix." FORCE)
 add_subdirectory(third_party/fmt)
 find_package(folly REQUIRED)
 find_package(gflags REQUIRED)
@@ -226,7 +227,7 @@ message(STATUS "CMAKE_CUDA_FLAGS: ${CMAKE_CUDA_FLAGS}")
 add_subdirectory(${PROJECT_SOURCE_DIR}/src)
 
 set(YCSB_SRC_DIR ${CMAKE_SOURCE_DIR}/third_party/ycsb)
-set(YCSB_BIN_DIR ${CMAKE_BINARY_DIR}/third_party/ycsb-build)
+set(YCSB_BIN_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/ycsb-build)
 if (EXISTS "${YCSB_SRC_DIR}/CMakeLists.txt")
-  add_subdirectory(${YCSB_SRC_DIR} ${YCSB_BIN_DIR})
+  add_subdirectory(${YCSB_SRC_DIR})
 endif()

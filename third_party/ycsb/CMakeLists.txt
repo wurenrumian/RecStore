@@ -39,6 +39,8 @@ include(FindThreads)
 add_executable(ycsb ${YCSB_CORE_SRC})
 target_include_directories(ycsb PRIVATE ${PROJECT_SOURCE_DIR})
 
+target_link_libraries(ycsb PRIVATE fmt::fmt)
+
 if (BIND_ROCKSDB)
     message(STATUS "BIND_ROCKSDB - ON")
     set(WITH_ZLIB ON)
@@ -197,6 +199,7 @@ if(WITH_BZ2)
 else()
     message(STATUS "WITH_BZ2 - OFF")
 endif()
+
 
 add_subdirectory(HdrHistogram_c)
 include_directories(HdrHistogram_c/include)
