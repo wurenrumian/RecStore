@@ -194,6 +194,16 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
+        --embedding-storage)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                embedding_storage="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
         *)
             echo "Error: Unknown option $1" >&2
             show_help
@@ -285,13 +295,20 @@ if [ "$mode" = "RecStore" ]; then
     if [ -n "$trace_file" ]; then
         extra_args+=(--trace_file "$trace_file")
     fi
-    if [ -n "$ps_host" ]; then
-        extra_args+=(--ps-host "$ps_host")
-    fi
     if [ -n "$ps_port" ]; then
         extra_args+=(--ps-port "$ps_port")
     fi
+else 
+    # TorchRec mode args
+    if [ -n "$embedding_storage" ]; then
+         extra_args+=(--embedding_storage "$embedding_storage")
+    fi
+    if [ -n "$trace_file" ]; then
+        extra_args+=(--trace_file "$trace_file")
+    fi
 fi
+echo "Executing command: python -m torch.distributed.run --nnodes 1 --nproc_per_node 1 --rdzv_backend c10d --rdzv_endpoint localhost --rdzv_id run-$(date +%s) --role trainer $script_to_run --single_day_mode --in_memory_binary_criteo_path $processed_dataset_path --batch_size $batch_size --learning_rate $learning_rate --epochs $epochs --pin_memory --mmap_mode --embedding_dim 128 ${extra_args[@]} --adagrad"
+
 python -m torch.distributed.run --nnodes 1 \
     --nproc_per_node 1 \
     --rdzv_backend c10d \

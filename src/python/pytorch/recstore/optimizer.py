@@ -38,31 +38,8 @@ def _process_dist_embedding_module(mod: DistEmbedding, lr: float):
     mod.weight[unique_ids] = updated_weights
 
 def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
-    """Handles the optimization step for a generic module with _config_names and _trace using embupdate."""
-    if not mod._trace:
-        return
-
-    grads_by_table: Dict[str, List[Tuple[torch.Tensor, torch.Tensor]]] = {}
-    for config_name, ids, grads in mod._trace:
-        if config_name not in grads_by_table:
-            grads_by_table[config_name] = []
-        grads_by_table[config_name].append((ids, grads))
-
-    for config_name, trace_list in grads_by_table.items():
-        all_ids = torch.cat([ids for ids, _ in trace_list])
-        all_grads = torch.cat([grads for _, grads in trace_list])
-
-        unique_ids, inverse_indices = torch.unique(all_ids, return_inverse=True)
-
-        embedding_dim = all_grads.shape[1]
-        summed_grads = torch.zeros((len(unique_ids), embedding_dim), device=all_grads.device)
-        summed_grads.index_add_(0, inverse_indices, all_grads)
-
-        # Backend operations are on CPU
-        unique_ids_cpu = unique_ids.cpu()
-        summed_grads_cpu = summed_grads.cpu()
-
-        kv_client.update(name=config_name, ids=unique_ids_cpu, grads=summed_grads_cpu)
+    """Handles the optimization step for a generic module - now a no-op as updates are moved to backward hooks."""
+    pass
 
 # --- Core Classes ---
 

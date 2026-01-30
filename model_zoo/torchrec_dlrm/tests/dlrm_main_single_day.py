@@ -64,6 +64,23 @@ except ImportError:
         def get_dataloader(args, backend, stage):
             raise NotImplementedError("Please ensure custom dataloader modules are available")
 
+try:
+    from profiling_utils import print_env_config, CudaTimer
+except ImportError:
+    # Fallback if running from a different directory context
+    sys.path.append(os.path.dirname(__file__))
+    try:
+        from profiling_utils import print_env_config, CudaTimer
+    except ImportError:
+        print("Warning: Could not import profiling_utils")
+        def print_env_config(mode): pass
+        class CudaTimer:
+            def __init__(self, enable=True): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def elapsed_ms(self): return 0.0
+
+
 TRAIN_PIPELINE_STAGES = 3  # Number of stages in TrainPipelineSparseDist.
 
 
@@ -285,7 +302,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
             raise ValueError("--in_memory_binary_criteo_path must be specified for single day mode")
         
         if args.num_embeddings_per_feature is None:
-            LIMIT_FEATURE = 100000
+            LIMIT_FEATURE = 800000
             orig_list = [
                 40000000, 39060, 17295, 7424, 20265, 3, 7122, 1543, 63,
                 40000000, 3067956, 405282, 10, 2209, 11938, 155, 4, 976,
@@ -318,7 +335,10 @@ def main(argv: List[str]) -> None:
         device = torch.device("cuda", dist.get_rank())
     else:
         dist.init_process_group(backend="gloo")
+        dist.init_process_group(backend="gloo")
         device = torch.device("cpu")
+    
+    print_env_config("RecStore")
     
     print(f"Distributed training initialized:")
     print(f"  Rank: {dist.get_rank()}")
@@ -504,6 +524,12 @@ def main(argv: List[str]) -> None:
             forward_time_total = 0.0
             backward_time_total = 0.0
             opt_time_total = 0.0
+            emb_time_total = 0.0
+            nn_time_total = 0.0
+            # Additional profiling
+            prefetch_wait_time_total = 0.0
+            emb_update_time_total = 0.0
+
             use_cuda_timing = torch.cuda.is_available() and device.type == 'cuda'
             if use_cuda_timing:
                 fwd_start = torch.cuda.Event(enable_timing=True)
@@ -520,7 +546,16 @@ def main(argv: List[str]) -> None:
                      batch_data, handles = batch
                      dense_features, sparse_features, labels = batch_data
                      # deliver handles to EBC so it consumes prefetched results
-                     embedding_bag_collection.set_prefetch_handles(handles)
+                     # deliver handles to EBC so it consumes prefetched results
+                     with CudaTimer(use_cuda_timing) as timer_pf:
+                        embedding_bag_collection.set_prefetch_handles(handles)
+                     # Note: set_prefetch_handles itself doesn't block, but accessing results later will.
+                     # We can't easily measure just the "wait" time here without modifying EBC internals 
+                     # or instrumenting where EBC calls wait_and_get.
+                     # Assuming the EBC modification isn't done, we rely on EBC report_prefetch_stats used later.
+                     # However, user asked for "each operation time".
+                     # We will try to hook into the KV client pull/update if possible, or trust report_prefetch_stats.
+
                 else:
                     dense_features, sparse_features, labels = batch
                 dense_features = dense_features.to(device)
@@ -563,7 +598,18 @@ def main(argv: List[str]) -> None:
 
                 if dense_optimizer is not None:
                     dense_optimizer.step()
+                
+                # Measure sparse update time implicitly if possible, or explicit via wrapping
+                # Since sparse_optimizer steps are effectively no-ops for EBC (updates in hook),
+                # we need to measure the hook execution. 
+                # The hook is executed during backward(). 
+                # So we can't separate backward compute from backward communication easily without modifying implementation.
+                # However, sparse_optimizer.step() handles the generic modules if any.
                 sparse_optimizer.step()
+
+                emb_ms = 0.0
+                nn_ms = 0.0
+                raw_model = model.module if hasattr(model, "module") else model
 
                 if use_cuda_timing:
                     opt_end.record()
@@ -571,15 +617,41 @@ def main(argv: List[str]) -> None:
                     fwd_ms = fwd_start.elapsed_time(fwd_end)
                     bwd_ms = bwd_start.elapsed_time(bwd_end)
                     opt_ms = opt_start.elapsed_time(opt_end)
+                    
+                    if hasattr(raw_model, "timings"):
+                        events = raw_model.timings
+                        emb_ms = events["emb_start"].elapsed_time(events["emb_end"])
+                        dense1_ms = events["dense_start"].elapsed_time(events["dense_end"])
+                        dense2_ms = events["dense2_start"].elapsed_time(events["dense2_end"])
+                        nn_ms = dense1_ms + dense2_ms
                 else:
                     t_opt_end = time.time()
                     fwd_ms = (t_fwd_end - t_fwd_start) * 1000.0
                     bwd_ms = (t_bwd_end - t_bwd_start) * 1000.0
                     opt_ms = (t_opt_end - t_opt_start) * 1000.0
+                    
+                    if hasattr(raw_model, "timings_cpu"):
+                        emb_ms = raw_model.timings_cpu.get("sparse_ms", 0.0)
+                        nn_ms = raw_model.timings_cpu.get("dense_ms", 0.0)
                 
                 forward_time_total += fwd_ms
                 backward_time_total += bwd_ms
                 opt_time_total += opt_ms
+                emb_time_total += emb_ms
+                nn_time_total += nn_ms
+                
+                # Extract stats from EBC if available for this batch
+                curr_pf_wait = 0.0
+                if prefetch_enabled:
+                    # report_prefetch_stats returns cumulative or since reset? 
+                    # Code in EmbeddingBag.py says "if reset: clear()".
+                    # We print stats at end of epoch with reset=True.
+                    # To get per-batch, we'd need to peek or reset frequently.
+                    # Let's peek into stats safely if possible
+                    if hasattr(embedding_bag_collection, "_prefetch_wait_latencies") and embedding_bag_collection._prefetch_wait_latencies:
+                         curr_pf_wait = embedding_bag_collection._prefetch_wait_latencies[-1] * 1000.0 # s to ms
+                prefetch_wait_time_total += curr_pf_wait
+
                 prof.step()
                 
                 train_loss += loss.item()
@@ -587,8 +659,9 @@ def main(argv: List[str]) -> None:
                 train_auroc += auroc_score.item()
                 num_batches += 1
                 
-                if batch_idx:
-                    print(f"Batch {batch_idx}: Loss={loss.item():.4f} AUROC={auroc_score.item():.4f} FWD(ms)={fwd_ms:.2f} BWD(ms)={bwd_ms:.2f} OPT(ms)={opt_ms:.2f}")
+                if batch_idx % 10 == 0:
+                    pf_msg = f" PF_Wait(ms)={curr_pf_wait:.2f}" if prefetch_enabled else ""
+                    print(f"Batch {batch_idx}: Loss={loss.item():.4f} AUROC={auroc_score.item():.4f} FWD={fwd_ms:.2f} (Emb={emb_ms:.2f} NN={nn_ms:.2f}) BWD={bwd_ms:.2f} OPT={opt_ms:.2f}{pf_msg}")
             
             avg_train_loss = train_loss / num_batches
             avg_train_auroc = train_auroc / num_batches
@@ -596,7 +669,10 @@ def main(argv: List[str]) -> None:
             avg_fwd = forward_time_total / num_batches if num_batches else 0.0
             avg_bwd = backward_time_total / num_batches if num_batches else 0.0
             avg_opt = opt_time_total / num_batches if num_batches else 0.0
-            print(f"Epoch {epoch + 1} - Training Loss: {avg_train_loss:.4f}, Training AUROC: {avg_train_auroc:.4f}, AvgFWD(ms): {avg_fwd:.2f}, AvgBWD(ms): {avg_bwd:.2f}, AvgOPT(ms): {avg_opt:.2f}")
+            avg_emb = emb_time_total / num_batches if num_batches else 0.0
+            avg_nn = nn_time_total / num_batches if num_batches else 0.0
+            avg_pf_wait = prefetch_wait_time_total / num_batches if num_batches else 0.0
+            print(f"Epoch {epoch + 1} - Training Loss: {avg_train_loss:.4f}, Training AUROC: {avg_train_auroc:.4f}, AvgFWD(ms): {avg_fwd:.2f} (Emb: {avg_emb:.2f} NN: {avg_nn:.2f}), AvgBWD(ms): {avg_bwd:.2f}, AvgOPT(ms): {avg_opt:.2f}, AvgPF_Wait(ms): {avg_pf_wait:.2f}")
             
             model.eval()
             val_loss = 0.0

@@ -394,12 +394,8 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
                 unique_ids, inverse = torch.unique(ids_cpu, return_inverse=True)
                 grad_sum = torch.zeros((unique_ids.size(0), grad_cpu.size(1)), dtype=grad_cpu.dtype)
                 grad_sum.index_add_(0, inverse, grad_cpu)
-                # print(f"[EBC] Fused grad hook: updating {unique_ids.size(0)} unique IDs for config '{master_name}'")
-                # print(f"[WARNING] Direct push is disabled in enabled EmbUpdate Operation. --- IGNORE ---")
-                # current = self.kv_client.pull(name=master_name, ids=unique_ids)
-                # updated = current - self._lr * grad_sum
-                # self.kv_client.push(name=master_name, ids=unique_ids, data=updated)
-                self._trace.append((master_name, unique_ids, grad_sum))
+                # Direct update in backward pass (backend handles LR scaling)
+                self.kv_client.update(name=master_name, ids=unique_ids, grads=grad_sum)
 
             all_embeddings.register_hook(grad_hook_fused)
 
@@ -514,8 +510,8 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
                     unique_ids, inverse = torch.unique(ids_cpu, return_inverse=True)
                     grad_sum = torch.zeros((unique_ids.size(0), grad_cpu.size(1)), dtype=grad_cpu.dtype)
                     grad_sum.index_add_(0, inverse, grad_cpu)
-                    # Trace gradients for later backend update via kv_client.update() in optimizer.step()
-                    self._trace.append((name, unique_ids, grad_sum))
+                    # Direct update in backward pass (backend handles LR scaling)
+                    self.kv_client.update(name=name, ids=unique_ids, grads=grad_sum)
                 all_embeddings.register_hook(grad_hook)
 
                 local_indices = torch.arange(len(values), device=values.device, dtype=torch.long)

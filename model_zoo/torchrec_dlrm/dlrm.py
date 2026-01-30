@@ -10,6 +10,7 @@
 from typing import Dict, List, Optional, Tuple
 
 import torch
+import time
 from torch import nn
 from torchrec.datasets.utils import Batch
 from torchrec.modules.crossnet import LowRankCrossNet
@@ -572,13 +573,62 @@ class DLRM(nn.Module):
         Returns:
             torch.Tensor: logits.
         """
-        embedded_dense = self.dense_arch(dense_features)
-        embedded_sparse = self.sparse_arch(sparse_features)
-        concatenated_dense = self.inter_arch(
-            dense_features=embedded_dense, sparse_features=embedded_sparse
-        )
-        logits = self.over_arch(concatenated_dense)
-        return logits
+        if dense_features.device.type == "cuda":
+            # Event-based timing for CUDA
+            if not hasattr(self, "events"):
+                 self.events = {
+                     "emb_start": torch.cuda.Event(enable_timing=True),
+                     "emb_end": torch.cuda.Event(enable_timing=True),
+                     "dense_start": torch.cuda.Event(enable_timing=True),
+                     "dense_end": torch.cuda.Event(enable_timing=True),
+                     "dense2_start": torch.cuda.Event(enable_timing=True),
+                     "dense2_end": torch.cuda.Event(enable_timing=True)
+                 }
+
+            # Dense computation 1 (Bottom MLP)
+            self.events["dense_start"].record()
+            embedded_dense = self.dense_arch(dense_features)
+            self.events["dense_end"].record()
+                           
+            # Start Sparse Timer (Pull)
+            self.events["emb_start"].record()
+            embedded_sparse = self.sparse_arch(sparse_features)
+            self.events["emb_end"].record()
+            
+            # Interaction + Top MLP
+            self.events["dense2_start"].record()
+            concatenated_dense = self.inter_arch(
+                dense_features=embedded_dense, sparse_features=embedded_sparse
+            )
+            logits = self.over_arch(concatenated_dense)
+            self.events["dense2_end"].record()
+            
+            # Store timings for retrieval
+            self.timings = self.events
+            return logits
+
+        else:
+            # CPU Timing
+            t0 = time.time()
+            embedded_dense = self.dense_arch(dense_features)
+            t1 = time.time()
+            
+            embedded_sparse = self.sparse_arch(sparse_features)
+            t2 = time.time()
+            
+            concatenated_dense = self.inter_arch(
+                dense_features=embedded_dense, sparse_features=embedded_sparse
+            )
+            logits = self.over_arch(concatenated_dense)
+            t3 = time.time()
+            
+            if not hasattr(self, "timings_cpu"):
+                self.timings_cpu = {}
+            self.timings_cpu = {
+                "dense_ms": (t1 - t0 + t3 - t2) * 1000,
+                "sparse_ms": (t2 - t1) * 1000
+            }
+            return logits
 
 
 class DLRM_Projection(DLRM):
