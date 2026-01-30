@@ -296,7 +296,10 @@ public:
             builder.AddListeningPort(
                 server_address, grpc::InsecureServerCredentials());
             builder.RegisterService(&service);
+            builder.SetMaxReceiveMessageSize(-1); // Unlimited
+            builder.SetMaxSendMessageSize(-1);    // Unlimited
             std::unique_ptr<Server> server(builder.BuildAndStart());
+
             if (!server) {
               std::string err_msg = fmt::format(
                   "FATAL: Failed to start gRPC server shard {} on {}. "
@@ -350,7 +353,10 @@ public:
       builder.AddListeningPort(
           server_address, grpc::InsecureServerCredentials());
       builder.RegisterService(&service);
+      builder.SetMaxReceiveMessageSize(-1); // Unlimited
+      builder.SetMaxSendMessageSize(-1);    // Unlimited
       std::unique_ptr<Server> server(builder.BuildAndStart());
+
       if (!server) {
         std::string err_msg = fmt::format(
             "FATAL: Failed to start gRPC server on {}. "

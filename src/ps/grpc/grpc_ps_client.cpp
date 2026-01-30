@@ -54,8 +54,16 @@ GRPCParameterClient::GRPCParameterClient(json config)
   shard_      = config.value("shard", 0);
   nr_clients_ = FLAGS_get_parameter_threads;
   Initialize();
-  channel_ = grpc::CreateChannel(
-      fmt::format("{}:{}", host_, port_), grpc::InsecureChannelCredentials());
+
+  grpc::ChannelArguments args;
+  args.SetMaxReceiveMessageSize(-1);
+  args.SetMaxSendMessageSize(-1);
+
+  channel_ = grpc::CreateCustomChannel(
+      fmt::format("{}:{}", host_, port_),
+      grpc::InsecureChannelCredentials(),
+      args);
+
   for (int i = 0; i < nr_clients_; i++) {
     stubs_.push_back(nullptr);
     stubs_[i] = recstoreps::ParameterService::NewStub(channel_);
@@ -73,8 +81,16 @@ GRPCParameterClient::GRPCParameterClient(
       shard_(shard),
       nr_clients_(FLAGS_get_parameter_threads) {
   Initialize();
-  channel_ = grpc::CreateChannel(
-      fmt::format("{}:{}", host, port), grpc::InsecureChannelCredentials());
+
+  grpc::ChannelArguments args;
+  args.SetMaxReceiveMessageSize(-1);
+  args.SetMaxSendMessageSize(-1);
+
+  channel_ = grpc::CreateCustomChannel(
+      fmt::format("{}:{}", host, port),
+      grpc::InsecureChannelCredentials(),
+      args);
+
   for (int i = 0; i < nr_clients_; i++) {
     stubs_.push_back(nullptr);
     stubs_[i] = recstoreps::ParameterService::NewStub(channel_);
