@@ -8,14 +8,6 @@ add_library(grpc_ps_client SHARED
     grpc_ps_client.cpp grpc_ps_client.h
 )
 
-set(REPORT_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../libreport.so")
-if(EXISTS "${REPORT_LIB_PATH}")
-    set(REPORT_LIB "${REPORT_LIB_PATH}")
-    message(STATUS "Found libreport.so at ${REPORT_LIB}")
-else()
-    message(WARNING "libreport.so not found at ${REPORT_LIB_PATH}, performance reporting will not work")
-    set(REPORT_LIB "")
-endif()
 
 target_link_libraries(
     grpc_ps_client PUBLIC
@@ -25,7 +17,6 @@ target_link_libraries(
     gRPC::grpc++_reflection
     gRPC::grpc++
     protobuf::libprotobuf
-    ${REPORT_LIB}
 )
 
 # gRPC PS Client Test
@@ -55,7 +46,7 @@ target_link_libraries(grpc_ps_server PUBLIC
     gflags
     glog
     TBB::tbb
-    ${REPORT_LIB}
+
 )
 
 # Distributed gRPC PS Client
@@ -70,7 +61,7 @@ target_link_libraries(dist_grpc_ps_client PUBLIC
     gRPC::grpc++_reflection
     gRPC::grpc++
     protobuf::libprotobuf
-    ${REPORT_LIB}
+
 )
 
 # Distributed gRPC PS Client Test

@@ -73,11 +73,11 @@ void BRPCParameterServiceImpl::PrintMetrics(const std::string& table_name,
         ((total_get_bytes_ + total_put_bytes_) / 1024.0 / 1024.0) / elapsed_s;
 
     // Report QPS and throughput metrics
-    report(table_name.c_str(), unique_id.c_str(), "overall_qps", overall_qps);
-    report(table_name.c_str(),
-           unique_id.c_str(),
-           "overall_throughput_mbps",
-           overall_throughput_mbps);
+    // report(table_name.c_str(), unique_id.c_str(), "overall_qps",
+    // overall_qps); report(table_name.c_str(),
+    //        unique_id.c_str(),
+    //        "overall_throughput_mbps",
+    //        overall_throughput_mbps);
   }
 }
 

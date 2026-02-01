@@ -49,14 +49,7 @@ if(NOT SYSTEM_OPENSSL_INCLUDE OR NOT SYSTEM_OPENSSL_SSL_LIB OR NOT SYSTEM_OPENSS
     message(FATAL_ERROR "Could NOT find system OpenSSL libraries under /usr")
 endif()
 
-set(REPORT_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../libreport.so")
-if(EXISTS "${REPORT_LIB_PATH}")
-    set(REPORT_LIB "${REPORT_LIB_PATH}")
-    message(STATUS "Found libreport.so at ${REPORT_LIB}")
-else()
-    message(WARNING "libreport.so not found at ${REPORT_LIB_PATH}, performance reporting will not work")
-    set(REPORT_LIB "")
-endif()
+
 
 if(BRPC_INCLUDE_PATH AND BRPC_LIB AND CUSTOM_PROTOBUF_INCLUDE AND CUSTOM_PROTOBUF_LIB)
     set(brpc_FOUND TRUE)
@@ -89,7 +82,6 @@ if(brpc_FOUND)
         dl                       
         gflags
         leveldb
-        ${REPORT_LIB}
     )
 
     # bRPC PS Client Test
@@ -122,7 +114,6 @@ if(brpc_FOUND)
         gflags
         leveldb
         TBB::tbb
-        ${REPORT_LIB}
     )
 
     # Distributed bRPC PS Client
@@ -142,7 +133,7 @@ if(brpc_FOUND)
         ZLIB::ZLIB
         leveldb
         dl
-        ${REPORT_LIB}
+
     )
 
     # Distributed bRPC PS Client Test

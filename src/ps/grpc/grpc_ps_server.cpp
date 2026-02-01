@@ -70,11 +70,11 @@ public:
 
       // Report QPS and throughput metrics
 
-      report(table_name.c_str(), unique_id.c_str(), "overall_qps", overall_qps);
-      report(table_name.c_str(),
-             unique_id.c_str(),
-             "overall_throughput_mbps",
-             overall_throughput_mbps);
+      // report(table_name.c_str(), unique_id.c_str(), "overall_qps",
+      // overall_qps); report(table_name.c_str(),
+      //        unique_id.c_str(),
+      //        "overall_throughput_mbps",
+      //        overall_throughput_mbps);
     }
   }
 

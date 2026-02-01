@@ -1,14 +1,6 @@
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 
-set(REPORT_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/libreport.so")
-if(EXISTS "${REPORT_LIB_PATH}")
-    set(REPORT_LIB "${REPORT_LIB_PATH}")
-    message(STATUS "Found libreport.so at ${REPORT_LIB}")
-else()
-    message(WARNING "libreport.so not found at ${REPORT_LIB_PATH}, performance reporting will not work")
-    set(REPORT_LIB "")
-endif()
 
 add_subdirectory(base)
 add_subdirectory(proto)
@@ -47,7 +39,6 @@ if(brpc_FOUND)
         glog
         leveldb
         TBB::tbb
-        ${REPORT_LIB}
     )
     
     target_sources(ps_server PRIVATE

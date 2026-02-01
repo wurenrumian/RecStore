@@ -32,3 +32,16 @@ CI/CD:
     - '.github/**'
     - 'dockerfiles/**'
     - 'ci/**'
+
+ThirdParty:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'third_party/**'
+
+Build:
+- changed-files:
+  - any-glob-to-any-file:
+    - 'CMakeLists.txt'
+    - 'cmake/**'
+    - 'build/**'
+    - 'dockerfiles/**'
