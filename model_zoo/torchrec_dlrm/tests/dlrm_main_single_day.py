@@ -71,12 +71,18 @@ except ImportError:
     def report_metric(*args): return True
 
 def report_latency(name: str, ms_value: float):
-    # RecStore is typically on GPU with SSD (based on context)
-    # But let's check device
     device_str = "GPU" if torch.cuda.is_available() else "CPU"
-    storage_str = "RAM" # Hardcoded for RecStore single day mode as requested context implies RecStore=SSD
     
-    # Convert ms into us
+    import json
+    config_path = os.path.join(os.path.dirname(__file__), '../../../recstore_config.json')
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            value_type = config.get('cache_ps', {}).get('base_kv_config', {}).get('value_type', 'DRAM')
+            storage_str = value_type
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        storage_str = "DRAM" 
+    
     val_us = ms_value * 1000.0
     key = f"{name}_{device_str}_{storage_str}"
     report_metric("op_latency", key, "latency_us", val_us)
