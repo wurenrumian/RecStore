@@ -17,6 +17,9 @@
 #include "base/tensor.h"
 #include "op.h"
 #include <glog/logging.h>
+#ifdef ENABLE_PERF_REPORT
+#  include "base/report/report_client.h"
+#endif
 
 namespace recstore {
 
@@ -251,6 +254,10 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
                              "KVClientOp::SetPSClient() first.");
   }
 
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
+
   LOG(INFO) << "EmbRead: keys.shape=" << keys.shape(0) << ", values.shape=["
             << values.shape(0) << ", " << values.shape(1) << "]";
   LOG(INFO) << "EmbRead: keys.data=" << keys.data_as<uint64_t>()
@@ -295,6 +302,15 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   if (!success) {
     throw std::runtime_error("Failed to read embeddings from PS client.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("op_latency", "EmbRead", "latency_us", static_cast<double>(duration));
+#  endif
 }
 
 void KVClientOp::EmbUpdate(const base::RecTensor& keys,
@@ -309,6 +325,10 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
     throw std::runtime_error("PS client is not initialized. Please call "
                              "KVClientOp::SetPSClient() first.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
 
   validate_keys(keys);
   validate_embeddings(grads, "Grads");
@@ -342,6 +362,16 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   if (ret != 0) {
     throw std::runtime_error("Failed to update embeddings via PS client.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report(
+      "op_latency", "EmbUpdate", "latency_us", static_cast<double>(duration));
+#  endif
 }
 
 bool KVClientOp::InitEmbeddingTable(const std::string& table_name,
@@ -351,7 +381,22 @@ bool KVClientOp::InitEmbeddingTable(const std::string& table_name,
                              "KVClientOp::SetPSClient() first.");
   }
 
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
   int ret = ps_client_->InitEmbeddingTable(table_name, config);
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  // report(table_name, key, metric_name, value)
+  report("op_latency",
+         "InitEmbeddingTable",
+         "latency_us",
+         static_cast<double>(duration));
+#  endif
   return ret == 0;
 }
 
@@ -360,6 +405,10 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
     throw std::runtime_error("PS client is not initialized. Please call "
                              "KVClientOp::SetPSClient() first.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
 
   validate_keys(keys);
   validate_embeddings(values, "Values");
@@ -431,6 +480,15 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
   if (!success) {
     throw std::runtime_error("Failed to write embeddings to PS client.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("op_latency", "EmbWrite", "latency_us", static_cast<double>(duration));
+#  endif
 }
 
 void KVClientOp::EmbInit(const base::RecTensor& keys,

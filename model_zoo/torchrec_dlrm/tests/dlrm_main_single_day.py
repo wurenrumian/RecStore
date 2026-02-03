@@ -65,6 +65,30 @@ except ImportError:
             raise NotImplementedError("Please ensure custom dataloader modules are available")
 
 try:
+    from report_uploader import report_metric
+except ImportError:
+    print("Warning: Could not import report_uploader. Reporting disabled.")
+    def report_metric(*args): return True
+
+def report_latency(name: str, ms_value: float):
+    device_str = "GPU" if torch.cuda.is_available() else "CPU"
+    
+    import json
+    config_path = os.path.join(os.path.dirname(__file__), '../../../recstore_config.json')
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+            value_type = config.get('cache_ps', {}).get('base_kv_config', {}).get('value_type', 'DRAM')
+            storage_str = value_type
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        storage_str = "DRAM" 
+    
+    val_us = ms_value * 1000.0
+    key = f"{name}_{device_str}_{storage_str}"
+    report_metric("op_latency", key, "latency_us", val_us)
+
+
+try:
     from profiling_utils import print_env_config, CudaTimer
 except ImportError:
     # Fallback if running from a different directory context
@@ -639,6 +663,13 @@ def main(argv: List[str]) -> None:
                 opt_time_total += opt_ms
                 emb_time_total += emb_ms
                 nn_time_total += nn_ms
+                
+                # Report latencies
+                report_latency("Forward", fwd_ms)
+                report_latency("Backward", bwd_ms)
+                report_latency("Optimizer", opt_ms)
+                report_latency("Embedding", emb_ms)
+                report_latency("Dense", nn_ms)
                 
                 # Extract stats from EBC if available for this batch
                 curr_pf_wait = 0.0

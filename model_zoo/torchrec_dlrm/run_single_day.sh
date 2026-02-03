@@ -345,9 +345,9 @@ echo "=========================================="
 
 
 total_seconds=$(echo "$end_time - $start_time" | bc)
-uid="dlrm_${dataset_size}_${mode}_${epochs}_gpu"
+# uid="dlrm_${dataset_size}_${mode}_${epochs}_gpu"
 echo "Uploading training duration: $total_seconds seconds"
-python report_uploader.py dlrm_training_metrics "$uid" training_duration_seconds "$total_seconds"
-if [ $? -ne 0 ]; then
-    echo "Warning: Data upload failed. Continuing with summary output."
-fi
+# python report_uploader.py dlrm_training_metrics "$uid" training_duration_seconds "$total_seconds"
+# if [ $? -ne 0 ]; then
+#     echo "Warning: Data upload failed. Continuing with summary output."
+# fi

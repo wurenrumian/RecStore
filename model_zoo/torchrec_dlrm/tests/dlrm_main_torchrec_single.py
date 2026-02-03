@@ -69,6 +69,26 @@ except ImportError:
         def get_dataloader(args, backend, stage):
             raise NotImplementedError("Please ensure custom dataloader modules are available")
 
+try:
+    from report_uploader import report_metric
+except ImportError:
+    print("Warning: Could not import report_uploader. Reporting disabled.")
+    def report_metric(*args): return True
+
+def report_latency(name: str, ms_value: float, storage_arg: str):
+    device_str = "GPU" if torch.cuda.is_available() else "CPU"
+    storage_map = {
+        "hbm": "HBM",
+        "uvm": "RAM",
+        "ssd": "SSD"
+    }
+    storage_str = storage_map.get(storage_arg, "hbm")
+    
+    val_us = ms_value * 1000.0
+    key = f"{name}_{device_str}_{storage_str}"
+    report_metric("op_latency", key, "latency_us", val_us)
+
+
 def parse_args(argv: List[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="torchrec dlrm training with standard backend")
     parser.add_argument(
@@ -531,6 +551,13 @@ def main(argv: List[str]) -> None:
                     opt_time_total += opt_ms
                     emb_time_total += emb_ms
                     nn_time_total += nn_ms
+                    
+                    # Report latencies
+                    report_latency("Forward", fwd_ms, args.embedding_storage)
+                    report_latency("Backward", bwd_ms, args.embedding_storage)
+                    report_latency("Optimizer", opt_ms, args.embedding_storage)
+                    report_latency("Embedding", emb_ms, args.embedding_storage)
+                    report_latency("Dense", nn_ms, args.embedding_storage)
                     
                     train_loss += loss.item()
                     auroc_score = auroc(torch.sigmoid(outputs.squeeze()), labels)
