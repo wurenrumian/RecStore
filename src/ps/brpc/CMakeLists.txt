@@ -111,6 +111,7 @@ if(brpc_FOUND)
         dl
         stdc++fs
         kv_engine
+        sparse_tensor
         gflags
         leveldb
         TBB::tbb
