@@ -712,9 +712,9 @@ void ExtendibleHash::clear() {
   }
   delete[] dir._;
 
-  dir.capacity = 1;
-  dir._        = new Block*[1];
-  global_depth = 0;
+  dir.capacity = Directory::kDefaultDirectorySize;
+  dir._        = new Block*[dir.capacity];
+  global_depth = static_cast<size_t>(log2(dir.capacity));
 
   for (unsigned i = 0; i < dir.capacity; ++i) {
     dir._[i]          = new Block(global_depth);
