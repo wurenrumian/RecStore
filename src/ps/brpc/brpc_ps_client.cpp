@@ -16,6 +16,11 @@
 #include "ps/base/parameters.h"
 #include "ps_brpc.pb.h"
 
+#ifdef ENABLE_PERF_REPORT
+#  include <chrono>
+#  include "base/report/report_client.h"
+#endif
+
 using recstoreps_brpc::CommandRequest;
 using recstoreps_brpc::CommandResponse;
 using recstoreps_brpc::GetParameterRequest;
@@ -88,6 +93,10 @@ bool BRPCParameterClient::Initialize() { return true; }
 
 int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                                       float* values) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   if (FLAGS_parameter_client_random_init_brpc) {
     CHECK(0) << "todo implement";
     return true;
@@ -103,6 +112,10 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
   // 创建 stub
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
 
+#ifdef ENABLE_PERF_REPORT
+  auto wait_start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   // 发送异步请求
   for (int start = 0, index = 0; start < keys.Size();
        start += MAX_PARAMETER_BATCH_BRPC, ++index) {
@@ -114,6 +127,10 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                              sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback([]() { /* 空回调 */ });
+#ifdef ENABLE_PERF_REPORT
+    controllers[index].set_log_id(recstore::g_trace_id);
+    requests[index].set_trace_id(recstore::g_trace_id);
+#endif
     stub.GetParameter(
         &controllers[index], &requests[index], &responses[index], done);
   }
@@ -126,6 +143,32 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       return false;
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto wait_end_time = std::chrono::high_resolution_clock::now();
+  auto wait_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_end_time - wait_start_time)
+          .count();
+  double wait_start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_start_time.time_since_epoch())
+          .count();
+  std::string wait_label =
+      "brpc_client::RPC_Call_And_Wait_Shard" + std::to_string(shard_);
+  FlameGraphData wait_fg = {
+      wait_label,
+      wait_start_us,
+      2, // level
+      static_cast<double>(wait_duration),
+      static_cast<double>(wait_duration)};
+  report_flame_graph(
+      "emb_read_flame_map",
+      ("embread_debug" + std::to_string(recstore::g_trace_id)).c_str(),
+      wait_fg);
+
+  auto deserialize_start_time = std::chrono::high_resolution_clock::now();
+#endif
 
   // 解析结果
   size_t get_embedding_acc = 0;
@@ -158,11 +201,67 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       get_embedding_acc++;
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto deserialize_end_time = std::chrono::high_resolution_clock::now();
+  auto deserialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          deserialize_end_time - deserialize_start_time)
+          .count();
+  double deserialize_start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          deserialize_start_time.time_since_epoch())
+          .count();
+  std::string des_label =
+      "brpc_client::Deserialize_Shard" + std::to_string(shard_);
+  FlameGraphData des_fg = {
+      des_label,
+      deserialize_start_us,
+      2, // level
+      static_cast<double>(deserialize_duration),
+      static_cast<double>(deserialize_duration)};
+  report_flame_graph(
+      "emb_read_flame_map",
+      ("embread_debug" + std::to_string(recstore::g_trace_id)).c_str(),
+      des_fg);
+#endif
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_client_latency",
+         "GetParameter",
+         "latency_us",
+         static_cast<double>(duration));
+
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  FlameGraphData fg_data = {
+      "brpc_client::GetParameter",
+      start_us,
+      1, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+  report_flame_graph(
+      "emb_read_flame_map",
+      ("embread_debug" + std::to_string(recstore::g_trace_id)).c_str(),
+      fg_data);
+#endif
+
   return true;
 }
 
 int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                                       std::vector<std::vector<float>>* values) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   if (FLAGS_parameter_client_random_init_brpc) {
     values->clear();
     values->reserve(keys.Size());
@@ -183,6 +282,10 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
 
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
 
+#ifdef ENABLE_PERF_REPORT
+  auto wait_start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   // 发送异步请求
   for (int start = 0, index = 0; start < keys.Size();
        start += MAX_PARAMETER_BATCH_BRPC, ++index) {
@@ -194,6 +297,10 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                              sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback([]() { /* 空回调 */ });
+#ifdef ENABLE_PERF_REPORT
+    controllers[index].set_log_id(recstore::g_trace_id);
+    requests[index].set_trace_id(recstore::g_trace_id);
+#endif
     stub.GetParameter(
         &controllers[index], &requests[index], &responses[index], done);
   }
@@ -206,6 +313,31 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       return false;
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto wait_end_time = std::chrono::high_resolution_clock::now();
+  auto wait_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_end_time - wait_start_time)
+          .count();
+  double wait_start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          wait_start_time.time_since_epoch())
+          .count();
+  std::string wait_label =
+      "brpc_client::RPC_Call_And_Wait_Shard" + std::to_string(shard_);
+  FlameGraphData wait_fg = {
+      wait_label,
+      wait_start_us,
+      2, // level
+      static_cast<double>(wait_duration),
+      static_cast<double>(wait_duration)};
+  std::string unique_id =
+      "embread_debug" + std::to_string(recstore::g_trace_id);
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), wait_fg);
+
+  auto deserialize_start_time = std::chrono::high_resolution_clock::now();
+#endif
 
   // 解析结果
   for (int i = 0; i < responses.size(); ++i) {
@@ -230,6 +362,52 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       }
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto deserialize_end_time = std::chrono::high_resolution_clock::now();
+  auto deserialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          deserialize_end_time - deserialize_start_time)
+          .count();
+  double deserialize_start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          deserialize_start_time.time_since_epoch())
+          .count();
+  std::string des_label =
+      "brpc_client::Deserialize_Shard" + std::to_string(shard_);
+  FlameGraphData des_fg = {
+      des_label,
+      deserialize_start_us,
+      2, // level
+      static_cast<double>(deserialize_duration),
+      static_cast<double>(deserialize_duration)};
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), des_fg);
+#endif
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_client_latency",
+         "GetParameter",
+         "latency_us",
+         static_cast<double>(duration));
+
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  FlameGraphData fg_data = {
+      "brpc_client::GetParameter",
+      start_us,
+      1, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+#endif
+
   return true;
 }
 
@@ -402,6 +580,10 @@ bool BRPCParameterClient::LoadCkpt(
 bool BRPCParameterClient::PutParameter(
     const std::vector<uint64_t>& keys,
     const std::vector<std::vector<float>>& values) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
 
   for (int start = 0, index = 0; start < keys.size();
@@ -435,6 +617,19 @@ bool BRPCParameterClient::PutParameter(
       return false;
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_client_latency",
+         "PutParameter",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
+
   return true;
 }
 
@@ -473,6 +668,9 @@ int BRPCParameterClient::UpdateParameter(
     const std::string& table_name,
     const base::ConstArray<uint64_t>& keys,
     const std::vector<std::vector<float>>* grads) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
   if (grads == nullptr) {
     LOG(ERROR) << "UpdateParameter grads pointer is null";
     return -1;
@@ -510,12 +708,29 @@ int BRPCParameterClient::UpdateParameter(
     LOG(ERROR) << "UpdateParameter RPC failed: " << cntl.ErrorText();
     return -1;
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_client_latency",
+         "UpdateParameter",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
+
   return response.success() ? 0 : -1;
 }
 
 int BRPCParameterClient::InitEmbeddingTable(
     const std::string& table_name,
     const recstore::EmbeddingTableConfig& config) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   InitEmbeddingTableRequest request;
   InitEmbeddingTableResponse response;
   request.set_table_name(table_name);
@@ -528,6 +743,19 @@ int BRPCParameterClient::InitEmbeddingTable(
     LOG(ERROR) << "InitEmbeddingTable RPC failed: " << cntl.ErrorText();
     return -1;
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_client_latency",
+         "InitEmbeddingTable",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
+
   return response.success() ? 0 : -1;
 }
 

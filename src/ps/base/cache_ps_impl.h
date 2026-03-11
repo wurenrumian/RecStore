@@ -16,6 +16,12 @@
 #include "storage/kv_engine/engine_factory.h"
 #include "storage/kv_engine/engine_selector.h"
 #include "optimizer/optimizer.h"
+
+#ifdef ENABLE_PERF_REPORT
+#  include <chrono>
+#  include "base/report/report_client.h"
+#endif
+
 using boost::coroutines2::coroutine;
 
 static const int KEY_CNT = 12543670;
@@ -99,6 +105,9 @@ public:
   }
 
   bool GetParameterRun2Completion(key_t key, ParameterPack& pack, int tid) {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     std::vector<uint64_t> keys = {key};
     base::ConstArray<uint64_t> keys_array(keys);
     std::vector<base::ConstArray<float>> values;
@@ -117,6 +126,33 @@ public:
     pack.dim      = value.Size();
     pack.emb_data = value.Data();
     // LOG(ERROR) << "Get key " << key << " dim " << pack.dim;
+
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+    double start_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+
+    report("embread_stages",
+           "cache_ps::GetParameterRun2Completion",
+           "duration_us",
+           static_cast<double>(duration));
+
+    FlameGraphData fg_data = {
+        "cache_ps::GetParameterRun2Completion",
+        start_us,
+        3, // level
+        static_cast<double>(duration),
+        static_cast<double>(duration)};
+    std::string unique_id =
+        "embread_debug" + std::to_string(recstore::g_trace_id);
+    report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+#endif
     return true;
   }
 
@@ -125,6 +161,9 @@ public:
       base::ConstArray<uint64_t> keys,
       std::vector<ParameterPack>& pack,
       int tid) {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     std::vector<base::ConstArray<float>> values;
 
     base_kv_->BatchGet(sink, keys, &values, tid);
@@ -133,6 +172,31 @@ public:
       pack.emplace_back(keys[i], values[i].Size(), values[i].Data());
     }
 
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+    double start_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+
+    report("embread_stages",
+           "cache_ps::GetParameterRun2Completion",
+           "duration_us",
+           static_cast<double>(duration));
+    FlameGraphData fg_data = {
+        "cache_ps::GetParameterRun2Completion",
+        start_us,
+        3, // level
+        static_cast<double>(duration),
+        static_cast<double>(duration)};
+    std::string unique_id =
+        "embread_debug" + std::to_string(recstore::g_trace_id);
+    report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+#endif
     return true;
   }
 

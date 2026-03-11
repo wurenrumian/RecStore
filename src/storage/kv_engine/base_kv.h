@@ -123,6 +123,12 @@ std::invalid_argument。
 （完）
 */
 
+/*
+另：可查阅
+- KV 引擎实现 https://recstore.github.io/RecStore/storage/kv_engines/
+- 内存管理 https://recstore.github.io/RecStore/storage/memory/
+*/
+
 class BaseKV {
 public:
   virtual ~BaseKV() { std::cout << "exit BaseKV" << std::endl; }
@@ -172,7 +178,9 @@ public:
     delete[] values;
   };
 
-  virtual void clear() { LOG(FATAL) << "not implemented"; };
+  virtual void clear() {
+    LOG(WARNING) << "clear() not fully implemented for this KV engine";
+  };
 
 protected:
 };

@@ -6,8 +6,14 @@
 #include <thread>
 
 #include "base/factory.h"
+#include "base/flatc.h"
 #include "base/log.h"
 #include "base/timer.h"
+
+#ifdef ENABLE_PERF_REPORT
+#  include <chrono>
+#  include "base/report/report_client.h"
+#endif
 
 using recstoreps_brpc::CommandRequest;
 using recstoreps_brpc::CommandResponse;
@@ -153,6 +159,10 @@ void DistributedBRPCParameterClient::PartitionKeys(
 bool DistributedBRPCParameterClient::GetParameter(
     const base::ConstArray<uint64_t>& keys,
     std::vector<std::vector<float>>* values) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   if (keys.Size() == 0) {
     values->clear();
     return true;
@@ -199,6 +209,27 @@ bool DistributedBRPCParameterClient::GetParameter(
 
   // 合并结果
   MergeResults(keys, partitioned_results, values);
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  FlameGraphData fg_data = {
+      "dist_client::GetParameter",
+      start_us,
+      1, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+  std::string unique_id =
+      "embread_debug" + std::to_string(recstore::g_trace_id);
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+#endif
 
   return true;
 }

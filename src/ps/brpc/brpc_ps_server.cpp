@@ -23,7 +23,11 @@
 #include "ps/base/parameters.h"
 #include "ps_brpc.pb.h"
 #include "recstore_config.h"
-#include "../report_client.h"
+
+#ifdef ENABLE_PERF_REPORT
+#  include <chrono>
+#  include "base/report/report_client.h"
+#endif
 
 using recstoreps_brpc::CommandRequest;
 using recstoreps_brpc::CommandResponse;
@@ -88,6 +92,23 @@ void BRPCParameterServiceImpl::GetParameter(
     google::protobuf::Closure* done) {
   brpc::ClosureGuard done_guard(done);
 
+#ifdef ENABLE_PERF_REPORT
+  auto start_time        = std::chrono::high_resolution_clock::now();
+  brpc::Controller* cntl = static_cast<brpc::Controller*>(controller);
+  uint64_t trace_id      = cntl->log_id();
+  if (trace_id == 0) {
+    // Do not trace prefetch operations to avoid Grafana frontend errors
+    // since prefetch operations do not have a root op::EmbRead node.
+  } else {
+    recstore::g_trace_id = trace_id;
+  }
+  if (request->has_trace_id() && request->trace_id() != 0) {
+    recstore::g_trace_id = request->trace_id();
+    trace_id             = request->trace_id();
+  }
+  std::string unique_id = "embread_debug" + std::to_string(trace_id);
+#endif
+
   base::ConstArray<uint64_t> keys_array(request->keys());
   bool isPerf = request->has_perf() && request->perf();
 
@@ -103,16 +124,63 @@ void BRPCParameterServiceImpl::GetParameter(
       << "[bRPC PS] Getting " << keys_array.Size() << " keys";
 
   int total_dim = 0;
+
+#ifdef ENABLE_PERF_REPORT
+  auto cache_loop_start = std::chrono::high_resolution_clock::now();
+#endif
   for (auto each : keys_array) {
     ParameterPack parameter_pack;
     cache_ps_->GetParameterRun2Completion(each, parameter_pack, 0);
     compressor.AddItem(parameter_pack, &blocks);
     total_dim += parameter_pack.dim;
   }
+#ifdef ENABLE_PERF_REPORT
+  auto cache_loop_end = std::chrono::high_resolution_clock::now();
+  auto cache_loop_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          cache_loop_end - cache_loop_start)
+          .count();
+  double cache_loop_start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          cache_loop_start.time_since_epoch())
+          .count();
+  FlameGraphData cache_loop_fg = {
+      "brpc_server::CacheGet_Loop",
+      cache_loop_start_us,
+      4, // level
+      static_cast<double>(cache_loop_duration),
+      static_cast<double>(cache_loop_duration)};
+  if (trace_id != 0) {
+    report_flame_graph("emb_read_flame_map", unique_id.c_str(), cache_loop_fg);
+  }
+
+  auto toblock_start = std::chrono::high_resolution_clock::now();
+#endif
 
   compressor.ToBlock(&blocks);
   CHECK_EQ(blocks.size(), 1);
   response->mutable_parameter_value()->swap(blocks[0]);
+
+#ifdef ENABLE_PERF_REPORT
+  auto toblock_end = std::chrono::high_resolution_clock::now();
+  auto toblock_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          toblock_end - toblock_start)
+          .count();
+  double toblock_start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          toblock_start.time_since_epoch())
+          .count();
+  FlameGraphData toblock_fg = {
+      "brpc_server::Compressor_ToBlock",
+      toblock_start_us,
+      4, // level
+      static_cast<double>(toblock_duration),
+      static_cast<double>(toblock_duration)};
+  if (trace_id != 0) {
+    report_flame_graph("emb_read_flame_map", unique_id.c_str(), toblock_fg);
+  }
+#endif
 
   total_get_requests_++;
   total_get_keys_ += keys_array.Size();
@@ -123,6 +191,39 @@ void BRPCParameterServiceImpl::GetParameter(
   } else {
     timer_ps_get_req.destroy();
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_server_latency",
+         "GetParameter",
+         "latency_us",
+         static_cast<double>(duration));
+
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+
+  report("embread_stages", "brpc_server::GetParameter", "start_us", start_us);
+  report("embread_stages",
+         "brpc_server::GetParameter",
+         "duration_us",
+         static_cast<double>(duration));
+
+  FlameGraphData fg_data = {
+      "brpc_server::GetParameter",
+      start_us,
+      3, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+  if (trace_id != 0) {
+    report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+  }
+#endif
 }
 
 void BRPCParameterServiceImpl::Command(
@@ -165,6 +266,10 @@ void BRPCParameterServiceImpl::PutParameter(
     google::protobuf::Closure* done) {
   brpc::ClosureGuard done_guard(done);
 
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   const ParameterCompressReader* reader =
       reinterpret_cast<const ParameterCompressReader*>(
           request->parameter_value().data());
@@ -179,6 +284,18 @@ void BRPCParameterServiceImpl::PutParameter(
   total_put_requests_++;
   total_put_keys_ += size;
   total_put_bytes_ += total_bytes;
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_server_latency",
+         "PutParameter",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
 }
 
 void BRPCParameterServiceImpl::UpdateParameter(
@@ -187,6 +304,49 @@ void BRPCParameterServiceImpl::UpdateParameter(
     UpdateParameterResponse* reply,
     google::protobuf::Closure* done) {
   brpc::ClosureGuard done_guard(done);
+
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
+  try {
+    const std::string& table_name = request->table_name();
+    const ParameterCompressReader* reader =
+        reinterpret_cast<const ParameterCompressReader*>(
+            request->gradients().data());
+    int size = reader->item_size();
+
+    std::vector<std::vector<float>> grads_vector;
+    grads_vector.reserve(size);
+    for (int i = 0; i < size; i++) {
+      const auto* item = reader->item(i);
+      std::vector<float> grad(item->data(), item->data() + item->dim);
+      grads_vector.push_back(std::move(grad));
+    }
+
+    bool success =
+        cache_ps_->UpdateParameter(table_name, reader, &grads_vector, 0);
+
+    FB_LOG_EVERY_MS(INFO, 2000)
+        << "UpdateParameter: table=" << table_name << ", keys=" << size;
+
+    reply->set_success(success);
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "UpdateParameter error: " << e.what();
+    reply->set_success(false);
+  }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_server_latency",
+         "UpdateParameter",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
 }
 
 void BRPCParameterServiceImpl::InitEmbeddingTable(
@@ -195,6 +355,45 @@ void BRPCParameterServiceImpl::InitEmbeddingTable(
     InitEmbeddingTableResponse* reply,
     google::protobuf::Closure* done) {
   brpc::ClosureGuard done_guard(done);
+
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
+  try {
+    if (request->has_config_payload()) {
+      auto payload            = request->config_payload();
+      nlohmann::json cfg      = nlohmann::json::parse(payload);
+      uint64_t num_embeddings = cfg.value("num_embeddings", 0);
+      uint64_t embedding_dim  = cfg.value("embedding_dim", 0);
+      FB_LOG_EVERY_MS(INFO, 2000)
+          << "InitEmbeddingTable: table=" << request->table_name()
+          << ", num_embeddings=" << num_embeddings
+          << ", embedding_dim=" << embedding_dim;
+
+      bool init_success = cache_ps_->InitTable(
+          request->table_name(), num_embeddings, embedding_dim);
+      reply->set_success(init_success);
+    } else {
+      LOG(WARNING) << "InitEmbeddingTable called without config_payload";
+      reply->set_success(false);
+    }
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "InitEmbeddingTable error: " << e.what();
+    reply->set_success(false);
+  }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_server_latency",
+         "InitEmbeddingTable",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
 }
 
 class BRPCParameterServer : public BaseParameterServer {
@@ -322,7 +521,6 @@ FACTORY_REGISTER(BaseParameterServer, BRPCParameterServer, BRPCParameterServer);
 #ifndef RECSTORE_NO_SERVER_MAIN
 int main(int argc, char** argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
-  xmh::Reporter::StartReportThread(2000);
 
   std::ifstream config_file(FLAGS_brpc_config_path);
   nlohmann::json ex;
