@@ -33,6 +33,7 @@ prefetch_depth=$DEFAULT_PREFETCH_DEPTH
 fuse_emb_tables=$DEFAULT_FUSE_EMB
 fuse_k=$DEFAULT_FUSE_K
 trace_file=$DEFAULT_TRACE_FILE
+allow_tf32=false
 
 show_help() {
     echo "DLRM Training Script with Performance Metrics"
@@ -62,6 +63,7 @@ show_help() {
     echo "  --disable-fuse-emb          Disable embedding table fusion"
     echo "  --fuse-k K                  Bit prefix shift k (default: $DEFAULT_FUSE_K)"
     echo "  --trace-file PATH           Chrome trace output file (optional)"
+    echo "  --allow-tf32                Enable TF32 for MatMul"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -204,6 +206,10 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
+        --allow-tf32)
+            allow_tf32=true
+            shift
+            ;;
         *)
             echo "Error: Unknown option $1" >&2
             show_help
@@ -281,6 +287,10 @@ start_seconds=$(date +%s)
 
 echo "Starting training..."
 extra_args=()
+if [ "$allow_tf32" = true ]; then
+    extra_args+=(--allow_tf32)
+fi
+
 if [ "$mode" = "RecStore" ]; then
     if [ "$enable_prefetch" = true ]; then
         extra_args+=(--enable_prefetch)

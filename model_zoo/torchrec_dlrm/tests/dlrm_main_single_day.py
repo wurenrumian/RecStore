@@ -84,8 +84,11 @@ def report_latency(name: str, ms_value: float):
         storage_str = "DRAM" 
     
     val_us = ms_value * 1000.0
-    key = f"{name}_{device_str}_{storage_str}"
-    report_metric("op_latency", key, "latency_us", val_us)
+    
+    import time
+    start_us = int(time.time() * 1e6)
+    key = f"{name}_{device_str}_{storage_str}|{start_us}"
+    report_metric("op_latency", key, "recstore_us", val_us)
 
 
 try:
@@ -318,6 +321,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=None,
         help="PS server port",
     )
+    parser.add_argument(
+        "--allow_tf32",
+        action="store_true",
+        help="Enable TensorFloat-32 mode for matrix multiplications on A100 (or newer) GPUs.",
+    )
     
     args = parser.parse_args(argv)
 
@@ -369,6 +377,10 @@ def main(argv: List[str]) -> None:
     print(f"  World size: {dist.get_world_size()}")
     print(f"  Device: {device}")
     
+    if hasattr(args, "allow_tf32") and args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        print(f"TF32 Enabled: {torch.backends.cuda.matmul.allow_tf32}")
+
     train_dataloader = get_dataloader(args, "nccl" if torch.cuda.is_available() else "gloo", "train")
     val_dataloader = get_dataloader(args, "nccl" if torch.cuda.is_available() else "gloo", "val")
     
