@@ -1,7 +1,9 @@
+#include <csignal>
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <algorithm>
+#include <cstdlib>
 
 #include <gflags/gflags.h>
 #include <folly/init/Init.h>
@@ -11,12 +13,28 @@
 #include "base/json.h"
 #include "ps/base/base_ps_server.h"
 #include "recstore_config.h"
-#include "report_client.h"
+
+#ifdef ENABLE_PERF_REPORT
+#  include <chrono>
+#  include "base/report/report_client.h"
+#endif
+
+#ifdef ENABLE_GPERF_PROFILING
+#  include <gperftools/profiler.h>
+#endif
 
 DECLARE_string(config_path);
 DECLARE_string(brpc_config_path);
 
 using recstore::BaseParameterServer;
+
+#ifdef ENABLE_GPERF_PROFILING
+void StopProfilerAndExit(int signum) {
+  LOG(INFO) << "Caught signal " << signum << ", stopping gperf profiler.";
+  ProfilerStop();
+  std::exit(signum);
+}
+#endif
 
 static inline std::string ToUpper(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
@@ -27,7 +45,28 @@ static inline std::string ToUpper(std::string s) {
 
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
-  xmh::Reporter::StartReportThread(2000);
+
+#ifdef ENABLE_GPERF_PROFILING
+  std::signal(SIGINT, StopProfilerAndExit);
+  std::signal(SIGTERM, StopProfilerAndExit);
+
+  struct ProfilerGuard {
+    const char* profile;
+    ProfilerGuard() : profile(std::getenv("CPUPROFILE")) {
+      if (profile) {
+        ProfilerStart(profile);
+        LOG(INFO) << "gperftools CPU profiling started, outputting to "
+                  << profile;
+      }
+    }
+    ~ProfilerGuard() {
+      if (profile) {
+        ProfilerStop();
+        LOG(INFO) << "gperftools CPU profiling stopped.";
+      }
+    }
+  } profiler_guard;
+#endif
 
   std::string cfg_path = FLAGS_config_path;
   {
@@ -73,7 +112,19 @@ int main(int argc, char** argv) {
   std::unique_ptr<BaseParameterServer> server(
       base::Factory<BaseParameterServer>::NewInstance(key));
   try {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     server->Init(config);
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+    report(
+        "server_latency", "Init", "latency_us", static_cast<double>(duration));
+#endif
     server->Run();
   } catch (const std::exception& e) {
     std::cerr << "FATAL: Uncaught exception in ps_server: " << e.what()

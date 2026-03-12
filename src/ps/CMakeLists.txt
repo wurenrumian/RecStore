@@ -46,6 +46,11 @@ if(brpc_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/brpc/brpc_ps_server.cpp
     )
 
+    if(CMAKE_BUILD_TYPE MATCHES "Debug" AND USE_GPERF_PROFILING)
+        target_compile_definitions(ps_server PRIVATE ENABLE_GPERF_PROFILING)
+        target_link_libraries(ps_server PRIVATE profiler)
+    endif()
+
     if(CMAKE_BUILD_TYPE MATCHES "Debug" AND USE_PERF_REPORT)
         target_compile_definitions(ps_server PRIVATE ENABLE_PERF_REPORT)
         target_link_libraries(ps_server PRIVATE report_client)
