@@ -159,6 +159,13 @@ private:
     std::string report_id = "grpc_server::GetParameter|" +
                             std::to_string(static_cast<uint64_t>(start_us));
 
+    std::string op_latency_key =
+        "EmbRead|" + std::to_string(static_cast<uint64_t>(start_us));
+    report("op_latency",
+           op_latency_key.c_str(),
+           "recserver_us",
+           static_cast<double>(duration));
+
     report("embread_stages",
            report_id.c_str(),
            "duration_us",
@@ -218,6 +225,9 @@ private:
   Status PutParameter(ServerContext* context,
                       const PutParameterRequest* request,
                       PutParameterResponse* reply) override {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     const ParameterCompressReader* reader =
         reinterpret_cast<const ParameterCompressReader*>(
             request->parameter_value().data());
@@ -230,12 +240,34 @@ private:
     total_put_requests_++;
     total_put_keys_ += size;
     total_put_bytes_ += total_bytes;
+
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double start_us_for_key =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+    std::string op_latency_key =
+        "EmbWrite|" + std::to_string(static_cast<uint64_t>(start_us_for_key));
+    report("op_latency",
+           op_latency_key.c_str(),
+           "recserver_us",
+           static_cast<double>(duration));
+#endif
+
     return Status::OK;
   }
 
   Status UpdateParameter(ServerContext* context,
                          const UpdateParameterRequest* request,
                          UpdateParameterResponse* reply) override {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     try {
       const std::string& table_name = request->table_name();
       const ParameterCompressReader* reader =
@@ -262,12 +294,34 @@ private:
       LOG(ERROR) << "UpdateParameter error: " << e.what();
       reply->set_success(false);
     }
+
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double start_us_for_key =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+    std::string op_latency_key =
+        "EmbUpdate|" + std::to_string(static_cast<uint64_t>(start_us_for_key));
+    report("op_latency",
+           op_latency_key.c_str(),
+           "recserver_us",
+           static_cast<double>(duration));
+#endif
+
     return Status::OK;
   }
 
   Status InitEmbeddingTable(ServerContext* context,
                             const InitEmbeddingTableRequest* request,
                             InitEmbeddingTableResponse* reply) override {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     try {
       if (request->has_config_payload()) {
         auto payload            = request->config_payload();
@@ -290,6 +344,26 @@ private:
       LOG(ERROR) << "InitEmbeddingTable error: " << e.what();
       reply->set_success(false);
     }
+
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double start_us_for_key =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+    std::string op_latency_key =
+        "InitEmbeddingTable|" +
+        std::to_string(static_cast<uint64_t>(start_us_for_key));
+    report("op_latency",
+           op_latency_key.c_str(),
+           "recserver_us",
+           static_cast<double>(duration));
+#endif
+
     return Status::OK;
   }
 

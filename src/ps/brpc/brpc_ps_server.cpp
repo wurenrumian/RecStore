@@ -212,6 +212,17 @@ void BRPCParameterServiceImpl::GetParameter(
          "latency_us",
          static_cast<double>(duration));
 
+  double start_us_for_key =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbRead|" + std::to_string(static_cast<uint64_t>(start_us_for_key));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recserver_us",
+         static_cast<double>(duration));
+
   double start_us =
       std::chrono::duration_cast<std::chrono::microseconds>(
           start_time.time_since_epoch())
@@ -313,6 +324,17 @@ void BRPCParameterServiceImpl::PutParameter(
          "PutParameter",
          "latency_us",
          static_cast<double>(duration));
+
+  double start_us_for_key =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbWrite|" + std::to_string(static_cast<uint64_t>(start_us_for_key));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recserver_us",
+         static_cast<double>(duration));
 #endif
 }
 
@@ -364,6 +386,17 @@ void BRPCParameterServiceImpl::UpdateParameter(
          "UpdateParameter",
          "latency_us",
          static_cast<double>(duration));
+
+  double start_us_for_key =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbUpdate|" + std::to_string(static_cast<uint64_t>(start_us_for_key));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recserver_us",
+         static_cast<double>(duration));
 #endif
 }
 
@@ -410,6 +443,18 @@ void BRPCParameterServiceImpl::InitEmbeddingTable(
   report("ps_server_latency",
          "InitEmbeddingTable",
          "latency_us",
+         static_cast<double>(duration));
+
+  double start_us_for_key =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "InitEmbeddingTable|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_key));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recserver_us",
          static_cast<double>(duration));
 #endif
 }

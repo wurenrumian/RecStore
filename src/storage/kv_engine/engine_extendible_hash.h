@@ -8,6 +8,11 @@
 #include "base_kv.h"
 #include "memory/persist_malloc.h"
 
+#ifdef ENABLE_PERF_REPORT
+#  include <chrono>
+#  include "base/report/report_client.h"
+#endif
+
 class KVEngineExtendibleHash : public BaseKV {
   static constexpr int kKVEngineValidFileSize = 123;
 
@@ -107,6 +112,9 @@ public:
   void BatchGet(base::ConstArray<uint64_t> keys,
                 std::vector<base::ConstArray<float>>* values,
                 unsigned tid) override {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     values->clear();
     // std::shared_lock<std::shared_mutex> _(lock_);
 
@@ -132,6 +140,31 @@ public:
         values->emplace_back((float*)data, size / sizeof(float));
       }
     }
+
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double start_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+
+    std::string report_id = "engine_extendible_hash::BatchGet|" +
+                            std::to_string(static_cast<uint64_t>(start_us));
+
+    report("embread_stages",
+           report_id.c_str(),
+           "duration_us",
+           static_cast<double>(duration));
+
+    report("embread_stages",
+           report_id.c_str(),
+           "request_size",
+           static_cast<double>(keys.Size()));
+#endif
   }
 
   ~KVEngineExtendibleHash() {

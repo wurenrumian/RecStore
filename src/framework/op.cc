@@ -329,7 +329,12 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
-  report("op_latency", "EmbRead", "latency_us", static_cast<double>(duration));
+  std::string op_latency_key =
+      "EmbRead|" + std::to_string(static_cast<uint64_t>(start_us));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
 
   report("embread_stages",
          report_id.c_str(),
@@ -407,8 +412,16 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
-  report(
-      "op_latency", "EmbUpdate", "latency_us", static_cast<double>(duration));
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbUpdate|" + std::to_string(static_cast<uint64_t>(start_us));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
 #  endif
 }
 
@@ -429,10 +442,16 @@ bool KVClientOp::InitEmbeddingTable(const std::string& table_name,
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "InitEmbeddingTable|" + std::to_string(static_cast<uint64_t>(start_us));
   // report(table_name, key, metric_name, value)
   report("op_latency",
-         "InitEmbeddingTable",
-         "latency_us",
+         op_latency_key.c_str(),
+         "recstore_us",
          static_cast<double>(duration));
 #  endif
   return ret == 0;
@@ -525,7 +544,16 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
-  report("op_latency", "EmbWrite", "latency_us", static_cast<double>(duration));
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbWrite|" + std::to_string(static_cast<uint64_t>(start_us));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
 #  endif
 }
 

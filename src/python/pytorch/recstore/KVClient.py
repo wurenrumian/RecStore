@@ -1,6 +1,27 @@
 import torch
 import os
+import time
+import ctypes
 from typing import Optional, Tuple, List, Any, Callable
+
+def get_reporter():
+    if not hasattr(get_reporter, 'lib'):
+        script_dir = os.path.dirname(__file__)
+        lib_path = os.path.abspath(os.path.join(script_dir, '../../../../build/lib/libreport.so'))
+        if os.path.exists(lib_path):
+            lib = ctypes.CDLL(lib_path)
+            lib.report.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_double]
+            lib.report.restype = ctypes.c_bool
+            get_reporter.lib = lib
+        else:
+            get_reporter.lib = None
+    return get_reporter.lib
+
+def report_metric(table: str, uid: str, metric: str, value: float) -> bool:
+    lib = get_reporter()
+    if lib:
+        return lib.report(table.encode('utf-8'), uid.encode('utf-8'), metric.encode('utf-8'), float(value))
+    return False
 
 class RecStoreClient:
     _instance = None
@@ -208,7 +229,17 @@ class RecStoreClient:
         # Some upstream code may pass CUDA tensors; backend ops are CPU-only.
         if ids.device.type != 'cpu':
             ids = ids.to('cpu')
-        return self.ops.emb_read(ids, embedding_dim)
+            
+        start_t = time.time()
+        res = self.ops.emb_read(ids, embedding_dim)
+        end_t = time.time()
+        
+        start_us = int(start_t * 1e6)
+        duration_us = (end_t - start_t) * 1e6
+        report_metric("embread_stages", f"KVClient::pull|{start_us}", "duration_us", duration_us)
+        report_metric("embread_stages", f"KVClient::pull|{start_us}", "request_size", float(ids.numel()))
+        
+        return res
 
     def push(self, name: str, ids: torch.Tensor, data: torch.Tensor):
         """Push data to KVServer.
@@ -246,7 +277,14 @@ class RecStoreClient:
 
     def wait_and_get(self, prefetch_id: int, embedding_dim: int, device: torch.device = torch.device("cpu")) -> torch.Tensor:
         """Block until prefetch completes and return embeddings of shape [N, D]."""
+        start_t = time.time()
         out = self.ops.emb_wait_result(int(prefetch_id), int(embedding_dim))
+        end_t = time.time()
+        
+        start_us = int(start_t * 1e6)
+        duration_us = (end_t - start_t) * 1e6
+        report_metric("embread_stages", f"KVClient::wait_and_get|{start_us}", "duration_us", duration_us)
+        
         if device.type == "cuda":
             out = out.to(device)
         return out
