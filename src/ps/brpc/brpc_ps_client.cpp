@@ -127,10 +127,6 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                              sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback([]() { /* 空回调 */ });
-#ifdef ENABLE_PERF_REPORT
-    controllers[index].set_log_id(recstore::g_trace_id);
-    requests[index].set_trace_id(recstore::g_trace_id);
-#endif
     stub.GetParameter(
         &controllers[index], &requests[index], &responses[index], done);
   }
@@ -162,10 +158,21 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       2, // level
       static_cast<double>(wait_duration),
       static_cast<double>(wait_duration)};
-  report_flame_graph(
-      "emb_read_flame_map",
-      ("embread_debug" + std::to_string(recstore::g_trace_id)).c_str(),
-      wait_fg);
+  std::string unique_id =
+      "embread_debug|" + std::to_string(static_cast<uint64_t>(wait_start_us));
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), wait_fg);
+
+  double start_us_for_rpc =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id_for_rpc =
+      "brpc_client::GetParameter|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_rpc));
+  report("embread_stages",
+         report_id_for_rpc.c_str(),
+         "rpc_duration_us",
+         static_cast<double>(wait_duration));
 
   auto deserialize_start_time = std::chrono::high_resolution_clock::now();
 #endif
@@ -220,10 +227,22 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       2, // level
       static_cast<double>(deserialize_duration),
       static_cast<double>(deserialize_duration)};
-  report_flame_graph(
-      "emb_read_flame_map",
-      ("embread_debug" + std::to_string(recstore::g_trace_id)).c_str(),
-      des_fg);
+  std::string des_unique_id =
+      "embread_debug|" +
+      std::to_string(static_cast<uint64_t>(deserialize_start_us));
+  report_flame_graph("emb_read_flame_map", des_unique_id.c_str(), des_fg);
+
+  double start_us_for_des =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id_for_des =
+      "brpc_client::GetParameter|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_des));
+  report("embread_stages",
+         report_id_for_des.c_str(),
+         "deserialize_duration_us",
+         static_cast<double>(deserialize_duration));
 #endif
 
 #ifdef ENABLE_PERF_REPORT
@@ -247,10 +266,23 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       1, // level
       static_cast<double>(duration),
       static_cast<double>(duration)};
-  report_flame_graph(
-      "emb_read_flame_map",
-      ("embread_debug" + std::to_string(recstore::g_trace_id)).c_str(),
-      fg_data);
+
+  std::string report_id = "brpc_client::GetParameter|" +
+                          std::to_string(static_cast<uint64_t>(start_us));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "duration_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "request_size",
+         static_cast<double>(keys.Size()));
+
+  std::string final_unique_id =
+      "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
+  report_flame_graph("emb_read_flame_map", final_unique_id.c_str(), fg_data);
 #endif
 
   return true;
@@ -297,10 +329,6 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                              sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback([]() { /* 空回调 */ });
-#ifdef ENABLE_PERF_REPORT
-    controllers[index].set_log_id(recstore::g_trace_id);
-    requests[index].set_trace_id(recstore::g_trace_id);
-#endif
     stub.GetParameter(
         &controllers[index], &requests[index], &responses[index], done);
   }
@@ -333,8 +361,21 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       static_cast<double>(wait_duration),
       static_cast<double>(wait_duration)};
   std::string unique_id =
-      "embread_debug" + std::to_string(recstore::g_trace_id);
+      "embread_debug|" + std::to_string(static_cast<uint64_t>(wait_start_us));
   report_flame_graph("emb_read_flame_map", unique_id.c_str(), wait_fg);
+
+  double start_us_for_rpc =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id_for_rpc =
+      "brpc_client::GetParameter_Vec|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_rpc));
+
+  report("embread_stages",
+         report_id_for_rpc.c_str(),
+         "rpc_duration_us",
+         static_cast<double>(wait_duration));
 
   auto deserialize_start_time = std::chrono::high_resolution_clock::now();
 #endif
@@ -381,7 +422,22 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       2, // level
       static_cast<double>(deserialize_duration),
       static_cast<double>(deserialize_duration)};
-  report_flame_graph("emb_read_flame_map", unique_id.c_str(), des_fg);
+  std::string des_unique_id =
+      "embread_debug|" +
+      std::to_string(static_cast<uint64_t>(deserialize_start_us));
+  report_flame_graph("emb_read_flame_map", des_unique_id.c_str(), des_fg);
+
+  double start_us_for_des =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id_for_des =
+      "brpc_client::GetParameter_Vec|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_des));
+  report("embread_stages",
+         report_id_for_des.c_str(),
+         "deserialize_duration_us",
+         static_cast<double>(deserialize_duration));
 #endif
 
 #ifdef ENABLE_PERF_REPORT
@@ -400,12 +456,28 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
           start_time.time_since_epoch())
           .count();
   FlameGraphData fg_data = {
-      "brpc_client::GetParameter",
+      "brpc_client::GetParameter_Vec",
       start_us,
       1, // level
       static_cast<double>(duration),
       static_cast<double>(duration)};
-  report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+
+  std::string report_id = "brpc_client::GetParameter_Vec|" +
+                          std::to_string(static_cast<uint64_t>(start_us));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "duration_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "request_size",
+         static_cast<double>(keys.Size()));
+
+  std::string final_unique_id =
+      "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
+  report_flame_graph("emb_read_flame_map", final_unique_id.c_str(), fg_data);
 #endif
 
   return true;

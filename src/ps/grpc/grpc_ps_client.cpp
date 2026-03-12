@@ -18,6 +18,11 @@
 #include "ps.grpc.pb.h"
 #include "ps.pb.h"
 
+#ifdef ENABLE_PERF_REPORT
+#  include "base/report/report_client.h"
+#  include <chrono>
+#endif
+
 using grpc::Channel;
 using grpc::ClientAsyncResponseReader;
 using grpc::ClientContext;
@@ -100,6 +105,10 @@ GRPCParameterClient::GRPCParameterClient(
 
 int GRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                                       float* values) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   if (FLAGS_parameter_client_random_init) {
     CHECK(0) << "todo implement";
     return true;
@@ -148,6 +157,24 @@ int GRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
     }
     get++;
   }
+#ifdef ENABLE_PERF_REPORT
+  auto after_rpc_time = std::chrono::high_resolution_clock::now();
+  auto rpc_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          after_rpc_time - start_time)
+          .count();
+  double start_us_for_rpc =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id_for_rpc =
+      "grpc_client::GetParameter|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_rpc));
+  report("embread_stages",
+         report_id_for_rpc.c_str(),
+         "rpc_duration_us",
+         static_cast<double>(rpc_duration));
+#endif
   size_t get_embedding_acc = 0;
   int old_dimension        = -1;
 
@@ -178,11 +205,58 @@ int GRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       get_embedding_acc++;
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+
+  auto deserialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - after_rpc_time)
+          .count();
+
+  report("embread_stages",
+         "grpc_client::GetParameter",
+         "deserialize_duration_us",
+         static_cast<double>(deserialize_duration));
+
+  report("embread_stages",
+         "grpc_client::GetParameter",
+         "duration_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         "grpc_client::GetParameter",
+         "request_size",
+         static_cast<double>(keys.Size()));
+
+  FlameGraphData grpc_client_data = {
+      "grpc_ps_client::GetParameter",
+      start_us,
+      1, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+
+  std::string unique_id = "embread_debug";
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), grpc_client_data);
+#endif
+
   return true;
 }
 
 int GRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
                                       std::vector<std::vector<float>>* values) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+
   if (FLAGS_parameter_client_random_init) {
     values->clear();
     values->reserve(keys.Size());
@@ -242,6 +316,25 @@ int GRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
     get++;
   }
 
+#ifdef ENABLE_PERF_REPORT
+  auto after_rpc_time = std::chrono::high_resolution_clock::now();
+  auto rpc_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          after_rpc_time - start_time)
+          .count();
+  double start_us_for_rpc =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id_for_rpc =
+      "grpc_client::GetParameter|" +
+      std::to_string(static_cast<uint64_t>(start_us_for_rpc));
+  report("embread_stages",
+         report_id_for_rpc.c_str(),
+         "rpc_duration_us",
+         static_cast<double>(rpc_duration));
+#endif
+
   for (int i = 0; i < get_param_responses_.size(); ++i) {
     auto& response  = get_param_responses_[i];
     int key_size    = get_param_key_sizes_[i];
@@ -264,6 +357,49 @@ int GRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       }
     }
   }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+
+  auto deserialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - after_rpc_time)
+          .count();
+
+  report("embread_stages",
+         "grpc_client::GetParameter",
+         "deserialize_duration_us",
+         static_cast<double>(deserialize_duration));
+
+  report("embread_stages",
+         "grpc_client::GetParameter",
+         "duration_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         "grpc_client::GetParameter",
+         "request_size",
+         static_cast<double>(keys.Size()));
+
+  FlameGraphData grpc_client_data = {
+      "grpc_ps_client::GetParameter",
+      start_us,
+      1, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+
+  std::string unique_id = "embread_debug";
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), grpc_client_data);
+#endif
+
   return true;
 }
 

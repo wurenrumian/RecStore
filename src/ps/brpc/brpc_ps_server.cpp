@@ -96,17 +96,7 @@ void BRPCParameterServiceImpl::GetParameter(
   auto start_time        = std::chrono::high_resolution_clock::now();
   brpc::Controller* cntl = static_cast<brpc::Controller*>(controller);
   uint64_t trace_id      = cntl->log_id();
-  if (trace_id == 0) {
-    // Do not trace prefetch operations to avoid Grafana frontend errors
-    // since prefetch operations do not have a root op::EmbRead node.
-  } else {
-    recstore::g_trace_id = trace_id;
-  }
-  if (request->has_trace_id() && request->trace_id() != 0) {
-    recstore::g_trace_id = request->trace_id();
-    trace_id             = request->trace_id();
-  }
-  std::string unique_id = "embread_debug" + std::to_string(trace_id);
+  std::string unique_id  = "embread_debug" + std::to_string(trace_id);
 #endif
 
   base::ConstArray<uint64_t> keys_array(request->keys());
@@ -128,11 +118,13 @@ void BRPCParameterServiceImpl::GetParameter(
 #ifdef ENABLE_PERF_REPORT
   auto cache_loop_start = std::chrono::high_resolution_clock::now();
 #endif
-  for (auto each : keys_array) {
-    ParameterPack parameter_pack;
-    cache_ps_->GetParameterRun2Completion(each, parameter_pack, 0);
-    compressor.AddItem(parameter_pack, &blocks);
-    total_dim += parameter_pack.dim;
+  std::vector<ParameterPack> packs;
+  packs.reserve(keys_array.Size());
+  cache_ps_->GetParameterRun2Completion(keys_array, packs, 0);
+
+  for (auto& pack : packs) {
+    compressor.AddItem(pack, &blocks);
+    total_dim += pack.dim;
   }
 #ifdef ENABLE_PERF_REPORT
   auto cache_loop_end = std::chrono::high_resolution_clock::now();
@@ -144,6 +136,15 @@ void BRPCParameterServiceImpl::GetParameter(
       std::chrono::duration_cast<std::chrono::microseconds>(
           cache_loop_start.time_since_epoch())
           .count();
+
+  std::string report_id_cache =
+      "brpc_server::GetParameter|" +
+      std::to_string(static_cast<uint64_t>(cache_loop_start_us));
+  report("embread_stages",
+         report_id_cache.c_str(),
+         "cache_lookup_us",
+         static_cast<double>(cache_loop_duration));
+
   FlameGraphData cache_loop_fg = {
       "brpc_server::CacheGet_Loop",
       cache_loop_start_us,
@@ -151,7 +152,11 @@ void BRPCParameterServiceImpl::GetParameter(
       static_cast<double>(cache_loop_duration),
       static_cast<double>(cache_loop_duration)};
   if (trace_id != 0) {
-    report_flame_graph("emb_read_flame_map", unique_id.c_str(), cache_loop_fg);
+    std::string cache_unique_id =
+        "embread_debug|" +
+        std::to_string(static_cast<uint64_t>(cache_loop_start_us));
+    report_flame_graph(
+        "emb_read_flame_map", cache_unique_id.c_str(), cache_loop_fg);
   }
 
   auto toblock_start = std::chrono::high_resolution_clock::now();
@@ -178,7 +183,11 @@ void BRPCParameterServiceImpl::GetParameter(
       static_cast<double>(toblock_duration),
       static_cast<double>(toblock_duration)};
   if (trace_id != 0) {
-    report_flame_graph("emb_read_flame_map", unique_id.c_str(), toblock_fg);
+    std::string toblock_unique_id =
+        "embread_debug|" +
+        std::to_string(static_cast<uint64_t>(toblock_start_us));
+    report_flame_graph(
+        "emb_read_flame_map", toblock_unique_id.c_str(), toblock_fg);
   }
 #endif
 
@@ -208,11 +217,18 @@ void BRPCParameterServiceImpl::GetParameter(
           start_time.time_since_epoch())
           .count();
 
-  report("embread_stages", "brpc_server::GetParameter", "start_us", start_us);
+  std::string report_id = "brpc_server::GetParameter|" +
+                          std::to_string(static_cast<uint64_t>(start_us));
+
   report("embread_stages",
-         "brpc_server::GetParameter",
+         report_id.c_str(),
          "duration_us",
          static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "request_size",
+         static_cast<double>(keys_array.Size()));
 
   FlameGraphData fg_data = {
       "brpc_server::GetParameter",
@@ -221,7 +237,9 @@ void BRPCParameterServiceImpl::GetParameter(
       static_cast<double>(duration),
       static_cast<double>(duration)};
   if (trace_id != 0) {
-    report_flame_graph("emb_read_flame_map", unique_id.c_str(), fg_data);
+    std::string req_unique_id =
+        "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
+    report_flame_graph("emb_read_flame_map", req_unique_id.c_str(), fg_data);
   }
 #endif
 }

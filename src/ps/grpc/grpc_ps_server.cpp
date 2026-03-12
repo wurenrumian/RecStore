@@ -19,7 +19,13 @@
 #include "ps.grpc.pb.h"
 #include "ps.pb.h"
 #include "recstore_config.h"
-#include "../report_client.h"
+
+#ifdef ENABLE_PERF_REPORT
+#  include "base/report/report_client.h"
+#  include <chrono>
+#else
+#  include "../report_client.h"
+#endif
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -82,6 +88,9 @@ private:
   Status GetParameter(ServerContext* context,
                       const GetParameterRequest* request,
                       GetParameterResponse* reply) override {
+#ifdef ENABLE_PERF_REPORT
+    auto start_time = std::chrono::high_resolution_clock::now();
+#endif
     base::ConstArray<uint64_t> keys_array(request->keys());
     bool isPerf = request->has_perf() && request->perf();
     if (isPerf) {
@@ -93,12 +102,35 @@ private:
     FB_LOG_EVERY_MS(INFO, 1000)
         << "[PS] Getting " << keys_array.Size() << " keys";
     int total_dim = 0;
-    for (auto each : keys_array) {
-      ParameterPack parameter_pack;
-      cache_ps_->GetParameterRun2Completion(each, parameter_pack, 0);
-      compressor.AddItem(parameter_pack, &blocks);
-      total_dim += parameter_pack.dim;
+#ifdef ENABLE_PERF_REPORT
+    auto cache_start_time = std::chrono::high_resolution_clock::now();
+#endif
+    std::vector<ParameterPack> packs;
+    packs.reserve(keys_array.Size());
+    cache_ps_->GetParameterRun2Completion(keys_array, packs, 0);
+
+    for (auto& pack : packs) {
+      compressor.AddItem(pack, &blocks);
+      total_dim += pack.dim;
     }
+#ifdef ENABLE_PERF_REPORT
+    auto cache_end_time = std::chrono::high_resolution_clock::now();
+    auto cache_duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            cache_end_time - cache_start_time)
+            .count();
+    double start_us_for_cache =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+    std::string report_id_for_cache =
+        "grpc_server::GetParameter|" +
+        std::to_string(static_cast<uint64_t>(start_us_for_cache));
+    report("embread_stages",
+           report_id_for_cache.c_str(),
+           "cache_lookup_us",
+           static_cast<double>(cache_duration));
+#endif
 
     compressor.ToBlock(&blocks);
     CHECK_EQ(blocks.size(), 1);
@@ -112,6 +144,43 @@ private:
     } else {
       timer_ps_get_req.destroy();
     }
+
+#ifdef ENABLE_PERF_REPORT
+    auto end_time = std::chrono::high_resolution_clock::now();
+    double start_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            start_time.time_since_epoch())
+            .count();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            end_time - start_time)
+            .count();
+
+    std::string report_id = "grpc_server::GetParameter|" +
+                            std::to_string(static_cast<uint64_t>(start_us));
+
+    report("embread_stages",
+           report_id.c_str(),
+           "duration_us",
+           static_cast<double>(duration));
+
+    report("embread_stages",
+           report_id.c_str(),
+           "request_size",
+           static_cast<double>(keys_array.Size()));
+
+    std::string unique_id =
+        "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
+    FlameGraphData grpc_server_data = {
+        "grpc_ps_server::GetParameter",
+        start_us,
+        2, // level
+        static_cast<double>(duration),
+        static_cast<double>(duration)};
+    report_flame_graph(
+        "emb_read_flame_map", unique_id.c_str(), grpc_server_data);
+#endif
+
     return Status::OK;
   }
 

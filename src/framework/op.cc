@@ -111,19 +111,28 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 namespace recstore {
 
 BasePSClient* create_ps_client_from_config(const json& config) {
-  json client_config;
-  if (config.contains("client")) {
-    client_config = config["client"];
-  } else {
-    client_config = json{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}};
-  }
-
   std::string ps_type = "GRPC";
   try {
     if (config.contains("cache_ps") && config["cache_ps"].contains("ps_type")) {
       ps_type = config["cache_ps"]["ps_type"].get<std::string>();
     }
   } catch (...) {
+  }
+
+  if (false && config.contains("distributed_client")) {
+    std::string type_key =
+        (ps_type == "BRPC") ? "distributed_brpc" : "distributed_grpc";
+    BasePSClient* client =
+        base::Factory<BasePSClient, json>::NewInstance(type_key, config);
+    if (client)
+      return client;
+  }
+
+  json client_config;
+  if (config.contains("client")) {
+    client_config = config["client"];
+  } else {
+    client_config = json{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}};
   }
 
   std::string type_key = (ps_type == "BRPC") ? "brpc" : "grpc";
@@ -238,12 +247,15 @@ void KVClientOp::SetPSConfig(const std::string& host, int port) {
     final_host = "127.0.0.1";
   }
 
-  json config;
-  config["host"]  = final_host;
-  config["port"]  = final_port;
-  config["shard"] = 0;
+  json config = file_config;
+  if (!config.contains("client")) {
+    config["client"] = json::object();
+  }
+  config["client"]["host"]  = final_host;
+  config["client"]["port"]  = final_port;
+  config["client"]["shard"] = 0;
 
-  ps_client_ = new GRPCParameterClient(config);
+  ps_client_ = create_ps_client_from_config(config);
   LOG(INFO) << "Re-initialized PS client with host=" << final_host
             << " port=" << final_port;
 }
@@ -256,6 +268,14 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
 
 #  ifdef ENABLE_PERF_REPORT
   auto start_time = std::chrono::high_resolution_clock::now();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id =
+      "op::EmbRead|" + std::to_string(static_cast<uint64_t>(start_us));
+  std::string unique_id =
+      "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
 #  endif
 
   LOG(INFO) << "EmbRead: keys.shape=" << keys.shape(0) << ", values.shape=["
@@ -310,6 +330,24 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
           end_time - start_time)
           .count();
   report("op_latency", "EmbRead", "latency_us", static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "duration_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "request_size",
+         static_cast<double>(keys.shape(0)));
+
+  FlameGraphData op_data = {
+      "op::EmbRead",
+      start_us,
+      0, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), op_data);
 #  endif
 }
 
