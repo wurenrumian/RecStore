@@ -32,7 +32,7 @@ struct IOConfig {
 
 class IOBackend {
 public:
-  IOBackend(IOConfig& config) : queue_cnt(config.queue_cnt) {}
+  IOBackend(IOConfig& config) : next_page_id(0), queue_cnt(config.queue_cnt) {}
   virtual ~IOBackend() {}
   virtual void init() = 0;
 

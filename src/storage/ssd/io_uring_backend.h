@@ -1,3 +1,5 @@
+#pragma once
+
 #include "io_backend.h"
 #include <fcntl.h>
 #include <liburing.h>
@@ -110,10 +112,16 @@ private:
 
 public:
   IoUringBackend(IOConfig& config)
-      : IOBackend(config), file_path(config.file_path) {}
+      : IOBackend(config), file_path(config.file_path), fd(-1) {}
   ~IoUringBackend() {
-    CHECK(fd >= 0) << "Invalid file descriptor";
-    close(fd);
+    if (fd >= 0) {
+      close(fd);
+      fd = -1;
+    }
+    if (!empty_page) {
+      delete[] empty_page;
+      empty_page = nullptr;
+    }
   }
 
   void init() override {
