@@ -1,7 +1,10 @@
 #include "storage/ssd/CCEH.h"
+#include "storage/ssd/io_backend.h"
 #include "gtest/gtest.h"
 #include <thread>
 #include <vector>
+
+IOConfig config{BackendType::IOURING, 512, "/tmp/test_cceh.db"};
 
 class CCEHTest : public ::testing::Test {
 protected:
@@ -10,7 +13,7 @@ protected:
 };
 
 TEST_F(CCEHTest, SimpleInsertAndGet) {
-  CCEH cceh;
+  CCEH cceh(config);
 
   Key_t key     = 100;
   Value_t value = 200;
@@ -25,7 +28,7 @@ TEST_F(CCEHTest, SimpleInsertAndGet) {
 }
 
 TEST_F(CCEHTest, SplitTest) {
-  CCEH cceh;
+  CCEH cceh(config);
 
   const int num_to_insert = 10000;
   std::vector<Key_t> keys;
@@ -42,7 +45,7 @@ TEST_F(CCEHTest, SplitTest) {
 }
 
 TEST_F(CCEHTest, DirectoryExpansionTest) {
-  CCEH cceh;
+  CCEH cceh(config);
 
   const int num_to_insert = 100000;
   std::vector<Key_t> keys;
@@ -61,7 +64,7 @@ TEST_F(CCEHTest, DirectoryExpansionTest) {
 }
 
 TEST_F(CCEHTest, ConcurrentInsertTest) {
-  CCEH cceh;
+  CCEH cceh(config);
 
   const int kNumThreads       = 64;
   const int kInsertsPerThread = 1000;

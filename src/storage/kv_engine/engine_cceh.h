@@ -11,7 +11,7 @@
 #include "base_kv.h"
 #include "memory/persist_malloc.h"
 #include "pair.h"
-#include "storage/ssd/file.h"
+#include "storage/ssd/io_backend.h"
 
 class KVEngineCCEH : public BaseKV {
   static constexpr int kKVEngineValidFileSize = 123;
@@ -24,10 +24,15 @@ public:
             1.2 * config.json_config_.at("capacity").get<size_t>() *
                 config.json_config_.at("value_size").get<size_t>()) {
     value_size_ = config.json_config_.at("value_size").get<int>();
-    queue_size_ = config.json_config_.at("queue_size").get<int>();
+    queue_cnt_  = config.json_config_.at("queue_size").get<int>();
+    type        = config.json_config_.at("type").get<std::string>();
     LOG(INFO) << "--------------init KVEngineCCEH--------------------";
-    std::string path = config.json_config_.at("path").get<std::string>();
-    hash_table_      = new CCEH(this->queue_size_);
+    std::string path    = config.json_config_.at("path").get<std::string>();
+    std::string db_path = path + "/cceh_test.db";
+    BackendType backend_type =
+        (type == "SPDK") ? BackendType::SPDK : BackendType::IOURING;
+    IOConfig io_config{backend_type, queue_cnt_, db_path};
+    hash_table_ = new CCEH(io_config);
 
     uint64_t value_shm_size =
         config.json_config_.at("capacity").get<uint64_t>() *
@@ -98,10 +103,8 @@ public:
             vals[i] = hash_table_->Get(yield, i, k);
           }));
     }
-    struct spdk_nvme_qpair* qpair = hash_table_->fm->get_thread_qpair();
-    while (pending) {
-      spdk_nvme_qpair_process_completions(qpair, 0);
-    }
+    while (pending)
+      hash_table_->io_backend->PollCompletion();
 
     for (auto v : vals) {
       base::PetKVData shmkv_data;
@@ -136,7 +139,8 @@ private:
   CCEH* hash_table_;
   std::string dict_pool_name_;
   int value_size_;
-  int queue_size_;
+  int queue_cnt_;
+  std::string type;
   base::PersistLoopShmMalloc shm_malloc_;
   base::ShmFile valid_shm_file_;
 };

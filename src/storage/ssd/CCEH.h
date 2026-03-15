@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../dram/pair.h"
-#include "file.h"
+#include "io_backend.h"
 #include "storage/dram/pair.h"
 #include <cmath>
 #include <cstdlib>
@@ -45,11 +45,10 @@ struct Segment {
   }
 
   bool Insert4split(Key_t&, Value_t, size_t);
-  PageID_t* Split(coroutine<void>::push_type& sink, int index, FileManager*);
-  PageID_t* Split(FileManager*);
+  PageID_t* Split(coroutine<void>::push_type& sink, int index, IOBackend*);
+  PageID_t* Split(IOBackend*);
   std::vector<std::pair<size_t, size_t>> find_path(size_t, size_t);
-  void execute_path(
-      FileManager*, std::vector<std::pair<size_t, size_t>>&, Key_t&, Value_t);
+  void execute_path(std::vector<std::pair<size_t, size_t>>&, Key_t&, Value_t);
   void execute_path(std::vector<std::pair<size_t, size_t>>&, Pair);
   size_t numElement(void);
 
@@ -101,8 +100,7 @@ struct DirectoryHeader {
 
 class CCEH {
 public:
-  CCEH(int queue_size = 512);
-  ~CCEH(void);
+  CCEH(IOConfig& config);
 
   void Insert(coroutine<void>::push_type& sink, int index, Key_t&, Value_t);
   void Insert(Key_t&, Value_t);
@@ -116,7 +114,7 @@ public:
   void Recovery();
 
   bool crashed = true;
-  FileManager* fm;
+  std::unique_ptr<IOBackend> io_backend;
 
 private:
   void initCCEH(size_t);
