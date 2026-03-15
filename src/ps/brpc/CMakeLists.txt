@@ -119,9 +119,11 @@ if(brpc_FOUND)
         gflags
         leveldb
         TBB::tbb
-        report_client
     )
-    target_compile_definitions(brpc_ps_server PRIVATE ENABLE_PERF_REPORT)
+    if(USE_PERF_REPORT)
+        target_compile_definitions(brpc_ps_server PRIVATE ENABLE_PERF_REPORT)
+        target_link_libraries(brpc_ps_server PUBLIC report_client)
+    endif()
 
     # Distributed bRPC PS Client
     add_library(dist_brpc_ps_client
