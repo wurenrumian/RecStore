@@ -275,16 +275,7 @@ private:
               request->gradients().data());
       int size = reader->item_size();
 
-      std::vector<std::vector<float>> grads_vector;
-      grads_vector.reserve(size);
-      for (int i = 0; i < size; i++) {
-        const auto* item = reader->item(i);
-        std::vector<float> grad(item->data(), item->data() + item->dim);
-        grads_vector.push_back(std::move(grad));
-      }
-
-      bool success =
-          cache_ps_->UpdateParameter(table_name, reader, &grads_vector, 0);
+      bool success = cache_ps_->UpdateParameter(table_name, reader, 0);
 
       FB_LOG_EVERY_MS(INFO, 2000)
           << "UpdateParameter: table=" << table_name << ", keys=" << size;

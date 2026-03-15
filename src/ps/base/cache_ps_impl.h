@@ -208,7 +208,6 @@ public:
 
   bool UpdateParameter(const std::string& table_name,
                        const ParameterCompressReader* reader,
-                       const std::vector<std::vector<float>>* grads,
                        unsigned tid) {
     if (!optimizer_) {
       LOG(ERROR) << "Optimizer not initialized. Please call InitTable first.";
@@ -216,15 +215,10 @@ public:
     }
 
     std::vector<uint64_t> keys_vec;
-    // std::vector<base::ConstArray<float>> values;
     for (int i = 0; i < reader->item_size(); i++) {
       keys_vec.emplace_back(reader->item(i)->key);
-      // values.emplace_back(
-      // (float*)reader->item(i)->data(), reader->item(i)->dim);
     }
-    // base::ConstArray<uint64_t> keys(keys_vec);
-    // base_kv_->BatchPut(sink, keys, &values, tid);
-    optimizer_->Update(table_name, keys_vec, *grads, tid);
+    optimizer_->Update(table_name, keys_vec, reader, tid);
     return true;
   }
 

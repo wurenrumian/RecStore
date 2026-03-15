@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include "sparse_tensor.h"
 #include "ps/base/base_client.h"
+#include "ps/base/parameters.h"
 
 using recstore::EmbeddingTableConfig;
 
@@ -27,7 +28,7 @@ public:
 
   virtual void Update(std::string table,
                       const std::vector<uint64_t>& keys,
-                      const std::vector<std::vector<float>>& grads,
+                      const ParameterCompressReader* grads,
                       unsigned tid) = 0;
 };
 
@@ -43,7 +44,7 @@ public:
             BaseKV* base_kv) override;
   void Update(std::string table,
               const std::vector<uint64_t>& keys,
-              const std::vector<std::vector<float>>& grads,
+              const ParameterCompressReader* grads,
               unsigned tid) override;
 };
 
@@ -61,7 +62,7 @@ public:
             BaseKV* base_kv) override;
   void Update(std::string table,
               const std::vector<uint64_t>& keys,
-              const std::vector<std::vector<float>>& grads,
+              const ParameterCompressReader* grads,
               unsigned tid) override;
 };
 
@@ -79,6 +80,6 @@ public:
             BaseKV* base_kv) override;
   void Update(std::string table,
               const std::vector<uint64_t>& keys,
-              const std::vector<std::vector<float>>& grads,
+              const ParameterCompressReader* grads,
               unsigned tid) override;
 };

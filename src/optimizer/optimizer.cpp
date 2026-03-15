@@ -1,4 +1,5 @@
 #include "optimizer.h"
+#include <algorithm>
 #include <cstring>
 
 void SGD::Init(const std::vector<std::string> table_name,
@@ -21,9 +22,15 @@ void SGD::Init(const std::vector<std::string> table_name,
 
 void SGD::Update(std::string table,
                  const std::vector<uint64_t>& keys,
-                 const std::vector<std::vector<float>>& grads,
+                 const ParameterCompressReader* grads,
                  unsigned tid) {
-  std::vector<std::vector<float>> current_values(keys.size());
+  if (grads == nullptr) {
+    throw std::runtime_error("SGD gradients reader is null");
+  }
+  if (keys.size() != static_cast<size_t>(grads->item_size())) {
+    throw std::runtime_error("SGD keys/grads size mismatch");
+  }
+
   auto it = tensor_map_.find(table);
 
   if (it == tensor_map_.end()) {
@@ -36,36 +43,31 @@ void SGD::Update(std::string table,
   }
 
   for (size_t i = 0; i < keys.size(); ++i) {
+    const auto* grad_item = grads->item(i);
+    const int grad_dim    = grad_item->dim;
+    const float* grad_ptr = grad_item->data();
+
     std::string value;
     it->second->Get(keys[i], value, tid);
+    std::vector<float> current_value(grad_dim, 0.0f);
     if (value.empty()) {
-      current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
     } else {
       size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
+      if (float_count != static_cast<size_t>(grad_dim)) {
       } else {
-        float* data       = (float*)value.data();
-        current_values[i] = std::vector<float>(data, data + grads[i].size());
+        const float* data = reinterpret_cast<const float*>(value.data());
+        std::copy_n(data, grad_dim, current_value.data());
       }
     }
-  }
 
-  std::vector<std::vector<float>> updated_values;
-  updated_values.reserve(keys.size());
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::vector<float> updated(grads[i].size());
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      updated[j] = current_values[i][j] - learning_rate_ * grads[i][j];
+    std::vector<float> updated(grad_dim);
+    for (int j = 0; j < grad_dim; ++j) {
+      updated[j] = current_value[j] - learning_rate_ * grad_ptr[j];
     }
-    updated_values.push_back(updated);
-  }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string value((char*)updated_values[i].data(),
-                      updated_values[i].size() * sizeof(float));
-    it->second->Put(keys[i], value, tid);
+    std::string updated_value(reinterpret_cast<const char*>(updated.data()),
+                              updated.size() * sizeof(float));
+    it->second->Put(keys[i], updated_value, tid);
   }
 }
 
@@ -94,10 +96,14 @@ void AdaGrad::Init(const std::vector<std::string> table_name,
 
 void AdaGrad::Update(std::string table,
                      const std::vector<uint64_t>& keys,
-                     const std::vector<std::vector<float>>& grads,
+                     const ParameterCompressReader* grads,
                      unsigned tid) {
-  std::vector<std::vector<float>> current_values(keys.size());
-  std::vector<std::vector<float>> accumulated_gradients_squared(keys.size());
+  if (grads == nullptr) {
+    throw std::runtime_error("AdaGrad gradients reader is null");
+  }
+  if (keys.size() != static_cast<size_t>(grads->item_size())) {
+    throw std::runtime_error("AdaGrad keys/grads size mismatch");
+  }
 
   auto param_it = tensor_map_.find(table);
   if (param_it == tensor_map_.end()) {
@@ -112,65 +118,50 @@ void AdaGrad::Update(std::string table,
   }
 
   for (size_t i = 0; i < keys.size(); ++i) {
+    const auto* grad_item = grads->item(i);
+    const int grad_dim    = grad_item->dim;
+    const float* grad_ptr = grad_item->data();
+
     std::string value;
     param_it->second->Get(keys[i], value, tid);
+    std::vector<float> current_value(grad_dim, 0.0f);
     if (value.empty()) {
-      current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
     } else {
       size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
+      if (float_count != static_cast<size_t>(grad_dim)) {
       } else {
-        float* data       = (float*)value.data();
-        current_values[i] = std::vector<float>(data, data + grads[i].size());
+        const float* data = reinterpret_cast<const float*>(value.data());
+        std::copy_n(data, grad_dim, current_value.data());
       }
     }
 
     acc_it->second->Get(keys[i], value, tid);
+    std::vector<float> accumulated_gradient_squared(grad_dim, 0.0f);
     if (value.empty()) {
-      accumulated_gradients_squared[i] =
-          std::vector<float>(grads[i].size(), 0.0f);
     } else {
       size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        accumulated_gradients_squared[i] =
-            std::vector<float>(grads[i].size(), 0.0f);
+      if (float_count != static_cast<size_t>(grad_dim)) {
       } else {
-        float* data = (float*)value.data();
-        accumulated_gradients_squared[i] =
-            std::vector<float>(data, data + grads[i].size());
+        const float* data = reinterpret_cast<const float*>(value.data());
+        std::copy_n(data, grad_dim, accumulated_gradient_squared.data());
       }
     }
-  }
 
-  std::vector<std::vector<float>> updated_values;
-  std::vector<std::vector<float>> updated_accumulated_gradients;
+    std::vector<float> updated(grad_dim);
+    std::vector<float> updated_acc_grad(grad_dim);
 
-  updated_values.reserve(keys.size());
-  updated_accumulated_gradients.reserve(keys.size());
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::vector<float> updated(grads[i].size());
-    std::vector<float> updated_acc_grad(grads[i].size());
-
-    for (size_t j = 0; j < grads[i].size(); ++j) {
+    for (int j = 0; j < grad_dim; ++j) {
       updated_acc_grad[j] =
-          accumulated_gradients_squared[i][j] + grads[i][j] * grads[i][j];
+          accumulated_gradient_squared[j] + grad_ptr[j] * grad_ptr[j];
       float adaptive_lr =
           learning_rate_ / (std::sqrt(updated_acc_grad[j]) + epsilon_);
-      updated[j] = current_values[i][j] - adaptive_lr * grads[i][j];
+      updated[j] = current_value[j] - adaptive_lr * grad_ptr[j];
     }
 
-    updated_values.push_back(updated);
-    updated_accumulated_gradients.push_back(updated_acc_grad);
-  }
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string param_value((char*)updated_values[i].data(),
-                            updated_values[i].size() * sizeof(float));
-    std::string acc_value(
-        (char*)updated_accumulated_gradients[i].data(),
-        updated_accumulated_gradients[i].size() * sizeof(float));
+    std::string param_value(reinterpret_cast<const char*>(updated.data()),
+                            updated.size() * sizeof(float));
+    std::string acc_value(reinterpret_cast<const char*>(updated_acc_grad.data()),
+                          updated_acc_grad.size() * sizeof(float));
 
     param_it->second->Put(keys[i], param_value, tid);
     acc_it->second->Put(keys[i], acc_value, tid);
@@ -204,10 +195,14 @@ void RowWiseAdaGrad::Init(const std::vector<std::string> table_name,
 
 void RowWiseAdaGrad::Update(std::string table,
                             const std::vector<uint64_t>& keys,
-                            const std::vector<std::vector<float>>& grads,
+                            const ParameterCompressReader* grads,
                             unsigned tid) {
-  std::vector<std::vector<float>> current_values(keys.size());
-  std::vector<std::vector<float>> accumulated_gradients_squared(keys.size());
+  if (grads == nullptr) {
+    throw std::runtime_error("RowWiseAdaGrad gradients reader is null");
+  }
+  if (keys.size() != static_cast<size_t>(grads->item_size())) {
+    throw std::runtime_error("RowWiseAdaGrad keys/grads size mismatch");
+  }
 
   auto param_it = tensor_map_.find(table);
   if (param_it == tensor_map_.end()) {
@@ -222,69 +217,56 @@ void RowWiseAdaGrad::Update(std::string table,
   }
 
   for (size_t i = 0; i < keys.size(); ++i) {
+    const auto* grad_item = grads->item(i);
+    const int grad_dim    = grad_item->dim;
+    const float* grad_ptr = grad_item->data();
+
     std::string value;
     param_it->second->Get(keys[i], value, tid);
+    std::vector<float> current_value(grad_dim, 0.0f);
     if (value.empty()) {
-      current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
     } else {
       size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
+      if (float_count != static_cast<size_t>(grad_dim)) {
       } else {
-        float* data       = (float*)value.data();
-        current_values[i] = std::vector<float>(data, data + grads[i].size());
+        const float* data = reinterpret_cast<const float*>(value.data());
+        std::copy_n(data, grad_dim, current_value.data());
       }
     }
 
     acc_it->second->Get(keys[i], value, tid);
+    float accumulated_gradient_squared = 0.0f;
     if (value.empty()) {
-      accumulated_gradients_squared[i] = std::vector<float>(1, 0.0f);
     } else {
       size_t float_count = value.size() / sizeof(float);
       if (float_count < 1) {
-        accumulated_gradients_squared[i] = std::vector<float>(1, 0.0f);
       } else {
-        float* data                      = (float*)value.data();
-        accumulated_gradients_squared[i] = std::vector<float>(data, data + 1);
+        const float* data         = reinterpret_cast<const float*>(value.data());
+        accumulated_gradient_squared = data[0];
       }
     }
-  }
 
-  std::vector<std::vector<float>> updated_values;
-  std::vector<std::vector<float>> updated_accumulated_gradients;
-
-  updated_values.reserve(keys.size());
-  updated_accumulated_gradients.reserve(keys.size());
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::vector<float> updated(grads[i].size());
+    std::vector<float> updated(grad_dim);
     std::vector<float> updated_acc_grad(1);
 
     float grad_square_mean = 0.0;
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      grad_square_mean += grads[i][j] * grads[i][j];
+    for (int j = 0; j < grad_dim; ++j) {
+      grad_square_mean += grad_ptr[j] * grad_ptr[j];
     }
-    grad_square_mean /= grads[i].size();
+    grad_square_mean /= grad_dim;
 
-    updated_acc_grad[0] =
-        accumulated_gradients_squared[i][0] + grad_square_mean;
+    updated_acc_grad[0] = accumulated_gradient_squared + grad_square_mean;
 
     float adaptive_lr =
         learning_rate_ / (std::sqrt(updated_acc_grad[0]) + epsilon_);
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      updated[j] = current_values[i][j] - adaptive_lr * grads[i][j];
+    for (int j = 0; j < grad_dim; ++j) {
+      updated[j] = current_value[j] - adaptive_lr * grad_ptr[j];
     }
 
-    updated_values.push_back(updated);
-    updated_accumulated_gradients.push_back(updated_acc_grad);
-  }
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string param_value((char*)updated_values[i].data(),
-                            updated_values[i].size() * sizeof(float));
-    std::string acc_value(
-        (char*)updated_accumulated_gradients[i].data(),
-        updated_accumulated_gradients[i].size() * sizeof(float));
+    std::string param_value(reinterpret_cast<const char*>(updated.data()),
+                            updated.size() * sizeof(float));
+    std::string acc_value(reinterpret_cast<const char*>(updated_acc_grad.data()),
+                          updated_acc_grad.size() * sizeof(float));
 
     param_it->second->Put(keys[i], param_value, tid);
     acc_it->second->Put(keys[i], acc_value, tid);

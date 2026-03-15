@@ -33,6 +33,28 @@ using recstoreps_brpc::PutParameterResponse;
 using recstoreps_brpc::UpdateParameterRequest;
 using recstoreps_brpc::UpdateParameterResponse;
 
+namespace {
+
+const ParameterCompressReader* ExtractGetResponseReader(
+    const brpc::Controller& cntl,
+    const GetParameterResponse& response,
+    std::string* payload_storage,
+    int* payload_size) {
+  if (!cntl.response_attachment().empty()) {
+    payload_storage->clear();
+    cntl.response_attachment().copy_to(payload_storage);
+    *payload_size = payload_storage->size();
+    return reinterpret_cast<const ParameterCompressReader*>(
+        payload_storage->data());
+  }
+
+  *payload_size = response.parameter_value().size();
+  return reinterpret_cast<const ParameterCompressReader*>(
+      response.parameter_value().data());
+}
+
+} // namespace
+
 DEFINE_int32(brpc_timeout_ms, 5000, "brpc request timeout in milliseconds");
 DEFINE_int32(brpc_max_retry, 3, "brpc max retry times");
 DEFINE_bool(parameter_client_random_init_brpc, false, "");
@@ -123,8 +145,9 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
         std::min((int)(keys.Size() - start), MAX_PARAMETER_BATCH_BRPC);
     key_sizes.push_back(key_size);
 
-    requests[index].set_keys(reinterpret_cast<const char*>(&keys[start]),
-                             sizeof(uint64_t) * key_size);
+    controllers[index].request_attachment().append(
+      reinterpret_cast<const char*>(&keys[start]),
+      sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback([]() { /* 空回调 */ });
     stub.GetParameter(
@@ -180,12 +203,19 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
   // 解析结果
   size_t get_embedding_acc = 0;
   int old_dimension        = -1;
+  std::string payload_storage;
 
   for (int i = 0; i < responses.size(); ++i) {
     auto& response  = responses[i];
     int key_size    = key_sizes[i];
-    auto parameters = reinterpret_cast<const ParameterCompressReader*>(
-        response.parameter_value().data());
+    int payload_size = 0;
+    auto parameters  = ExtractGetResponseReader(
+        controllers[i], response, &payload_storage, &payload_size);
+
+    if (parameters == nullptr || !parameters->Valid(payload_size)) {
+      LOG(ERROR) << "GetParameter invalid payload: " << payload_size;
+      return false;
+    }
 
     if (parameters->size != key_size) {
       LOG(ERROR) << "GetParameter error: " << parameters->size << " vs "
@@ -325,8 +355,9 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
         std::min((int)(keys.Size() - start), MAX_PARAMETER_BATCH_BRPC);
     key_sizes.push_back(key_size);
 
-    requests[index].set_keys(reinterpret_cast<const char*>(&keys[start]),
-                             sizeof(uint64_t) * key_size);
+    controllers[index].request_attachment().append(
+      reinterpret_cast<const char*>(&keys[start]),
+      sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback([]() { /* 空回调 */ });
     stub.GetParameter(
@@ -381,11 +412,18 @@ int BRPCParameterClient::GetParameter(const base::ConstArray<uint64_t>& keys,
 #endif
 
   // 解析结果
+  std::string payload_storage;
   for (int i = 0; i < responses.size(); ++i) {
     auto& response  = responses[i];
     int key_size    = key_sizes[i];
-    auto parameters = reinterpret_cast<const ParameterCompressReader*>(
-        response.parameter_value().data());
+    int payload_size = 0;
+    auto parameters  = ExtractGetResponseReader(
+        controllers[i], response, &payload_storage, &payload_size);
+
+    if (parameters == nullptr || !parameters->Valid(payload_size)) {
+      LOG(ERROR) << "GetParameter(vector) invalid payload: " << payload_size;
+      return false;
+    }
 
     if (unlikely(parameters->size != key_size)) {
       LOG(ERROR) << "GetParameter error: " << parameters->size << " vs "
@@ -506,10 +544,11 @@ BRPCParameterClient::PrefetchParameter(const base::ConstArray<uint64_t>& keys) {
     pb->key_sizes_[index] = key_size;
 
     GetParameterRequest request;
-    request.set_keys(reinterpret_cast<const char*>(&keys[start]),
-                     sizeof(uint64_t) * key_size);
 
     pb->controllers_[index] = std::make_unique<brpc::Controller>();
+    pb->controllers_[index]->request_attachment().append(
+      reinterpret_cast<const char*>(&keys[start]),
+      sizeof(uint64_t) * key_size);
 
     google::protobuf::Closure* done = brpc::NewCallback(OnPrefetchDone, pb);
     stub.GetParameter(
@@ -565,8 +604,15 @@ bool BRPCParameterClient::GetPrefetchResult(
 
     auto& response  = pb.responses_[i];
     int key_size    = pb.key_sizes_[i];
-    auto parameters = reinterpret_cast<const ParameterCompressReader*>(
-        response.parameter_value().data());
+    std::string payload_storage;
+    int payload_size = 0;
+    auto parameters  = ExtractGetResponseReader(
+        *pb.controllers_[i], response, &payload_storage, &payload_size);
+
+    if (parameters == nullptr || !parameters->Valid(payload_size)) {
+      LOG(ERROR) << "Prefetch invalid payload: " << payload_size;
+      return false;
+    }
 
     if (unlikely(parameters->size != key_size)) {
       LOG(ERROR) << "GetParameter error: " << parameters->size << " vs "
@@ -666,7 +712,6 @@ bool BRPCParameterClient::PutParameter(
     PutParameterRequest request;
     PutParameterResponse response;
     ParameterCompressor compressor;
-    std::vector<std::string> blocks;
 
     for (int i = start; i < start + key_size; i++) {
       auto each_key   = keys[i];
@@ -675,13 +720,11 @@ bool BRPCParameterClient::PutParameter(
       parameter_pack.key      = each_key;
       parameter_pack.dim      = embedding.size();
       parameter_pack.emb_data = embedding.data();
-      compressor.AddItem(parameter_pack, &blocks);
+      compressor.AddItem(parameter_pack, nullptr);
     }
-    compressor.ToBlock(&blocks);
-    CHECK_EQ(blocks.size(), 1);
-    request.mutable_parameter_value()->swap(blocks[0]);
 
     brpc::Controller cntl;
+    compressor.AppendToIOBuf(&cntl.request_attachment());
     stub.PutParameter(&cntl, &request, &response, nullptr);
 
     if (cntl.Failed()) {
@@ -754,16 +797,14 @@ int BRPCParameterClient::UpdateParameter(
   }
 
   ParameterCompressor compressor;
-  std::vector<std::string> blocks;
   for (size_t i = 0; i < keys.Size(); ++i) {
     ParameterPack pack;
     pack.key      = keys[i];
     pack.dim      = grads->at(i).size();
     pack.emb_data = grads->at(i).data();
-    compressor.AddItem(pack, &blocks);
+    compressor.AddItem(pack, nullptr);
   }
-  compressor.ToBlock(&blocks);
-  if (blocks.empty()) {
+  if (keys.Size() == 0) {
     LOG(WARNING) << "UpdateParameter no gradients to send";
     return 0;
   }
@@ -771,9 +812,9 @@ int BRPCParameterClient::UpdateParameter(
   UpdateParameterRequest request;
   UpdateParameterResponse response;
   request.set_table_name(table_name);
-  request.mutable_gradients()->swap(blocks[0]);
 
   brpc::Controller cntl;
+  compressor.AppendToIOBuf(&cntl.request_attachment());
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
   stub.UpdateParameter(&cntl, &request, &response, nullptr);
   if (cntl.Failed()) {
