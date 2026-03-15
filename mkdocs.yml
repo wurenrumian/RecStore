@@ -73,6 +73,7 @@ nav:
   - 配置:
       - 项目配置: config.md
   - 架构:
+    - 总览: architecture/overview.md
     - 计算层:
       - 架构总览: calc/index.md
       - CommonOp 接口: calc/op_interface.md

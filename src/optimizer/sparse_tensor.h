@@ -24,4 +24,7 @@ public:
             BaseKV* kv);
   void Get(const uint64_t key, std::string& value, unsigned tid);
   void Put(const uint64_t key, const std::string_view& value, unsigned tid);
+  void BatchGet(const std::vector<uint64_t>& keys,
+                std::vector<base::ConstArray<float>>* values,
+                unsigned tid);
 };

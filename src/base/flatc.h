@@ -105,6 +105,14 @@ public:
       return 0;
     }
   }
+
+  template <typename RawItemT>
+  void BatchAddItems(const std::vector<RawItemT>& items) {
+    for (const auto& item : items) {
+      FlatItemDetail<ItemT>::CompressAppend(item, &item_data_);
+      offsets_.push_back(item_data_.size());
+    }
+  }
   int ToBlock(std::vector<std::string>* blocks) {
     std::string* pblock = nullptr;
     int size            = 0;

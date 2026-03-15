@@ -115,21 +115,21 @@ public:
 #ifdef ENABLE_PERF_REPORT
     auto start_time = std::chrono::high_resolution_clock::now();
 #endif
-    values->clear();
-    // std::shared_lock<std::shared_mutex> _(lock_);
-
-    for (auto k : keys) {
+    values->resize(keys.Size());
+#pragma omp parallel for num_threads(8) if (keys.Size() > 1024)
+    for (int i = 0; i < (int)keys.Size(); ++i) {
+      uint64_t k = keys[i];
       base::PetKVData shmkv_data;
       Key_t hash_key     = k;
       Value_t read_value = hash_table_->Get(hash_key);
 
       if (read_value == NONE) {
-        values->emplace_back();
+        (*values)[i] = base::ConstArray<float>();
       } else {
         shmkv_data.data_value = read_value;
         char* data = shm_malloc_->GetMallocData(shmkv_data.shm_malloc_offset());
         if (data == nullptr) {
-          values->emplace_back();
+          (*values)[i] = base::ConstArray<float>();
           continue;
         }
 #ifdef XMH_VARIABLE_SIZE_KV
@@ -137,7 +137,8 @@ public:
 #else
         int size = value_size_;
 #endif
-        values->emplace_back((float*)data, size / sizeof(float));
+        (*values)[i] =
+            base::ConstArray<float>((float*)data, size / sizeof(float));
       }
     }
 

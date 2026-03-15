@@ -214,11 +214,7 @@ public:
       return false;
     }
 
-    std::vector<uint64_t> keys_vec;
-    for (int i = 0; i < reader->item_size(); i++) {
-      keys_vec.emplace_back(reader->item(i)->key);
-    }
-    optimizer_->Update(table_name, keys_vec, reader, tid);
+    optimizer_->Update(table_name, reader, tid);
     return true;
   }
 

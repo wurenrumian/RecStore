@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
+#include "io_backend_factory.h"
 
 thread_local int pending = 0;
 thread_local std::vector<std::unique_ptr<coroutine<void>::pull_type>> coros;
@@ -43,10 +44,8 @@ private:
   std::uniform_real_distribution<> dist;
 };
 
-void Segment::execute_path(FileManager* file_manager,
-                           vector<pair<size_t, size_t>>& path,
-                           Key_t& key,
-                           Value_t value) {
+void Segment::execute_path(
+    vector<pair<size_t, size_t>>& path, Key_t& key, Value_t value) {
   for (int i = path.size() - 1; i > 0; --i)
     bucket[path[i].first] = bucket[path[i - 1].first];
   bucket[path[0].first].value = value;
@@ -116,13 +115,13 @@ bool Segment::Insert4split(Key_t& key, Value_t value, size_t loc) {
   return false;
 }
 
-PageID_t*
-Segment::Split(coroutine<void>::push_type& sink, int index, FileManager* fm) {
+PageID_t* Segment::Split(
+    coroutine<void>::push_type& sink, int index, IOBackend* io_backend) {
   PageID_t* split = new PageID_t[2];
-  split[0]        = fm->AllocatePage(sink, index);
-  split[1]        = fm->AllocatePage(sink, index);
-  auto new_seg1   = fm->GetPage<Segment>(sink, index, split[0]);
-  auto new_seg2   = fm->GetPage<Segment>(sink, index, split[1]);
+  split[0]        = io_backend->AllocatePage(sink, index);
+  split[1]        = io_backend->AllocatePage(sink, index);
+  auto new_seg1   = (Segment*)io_backend->GetPage(sink, index, split[0]);
+  auto new_seg2   = (Segment*)io_backend->GetPage(sink, index, split[1]);
   new_seg1->initSegment(local_depth + 1);
   new_seg2->initSegment(local_depth + 1);
   auto pattern = ((size_t)1 << (sizeof(Key_t) * 8 - local_depth - 1));
@@ -184,17 +183,17 @@ Segment::Split(coroutine<void>::push_type& sink, int index, FileManager* fm) {
       }
     }
   }
-  fm->Unpin(sink, index, split[0], new_seg1, true);
-  fm->Unpin(sink, index, split[1], new_seg2, true);
+  io_backend->Unpin(sink, index, split[0], new_seg1, true);
+  io_backend->Unpin(sink, index, split[1], new_seg2, true);
   return split;
 }
 
-PageID_t* Segment::Split(FileManager* fm) {
+PageID_t* Segment::Split(IOBackend* io_backend) {
   PageID_t* split = new PageID_t[2];
-  split[0]        = fm->AllocatePage();
-  split[1]        = fm->AllocatePage();
-  auto new_seg1   = fm->GetPage<Segment>(split[0]);
-  auto new_seg2   = fm->GetPage<Segment>(split[1]);
+  split[0]        = io_backend->AllocatePage();
+  split[1]        = io_backend->AllocatePage();
+  auto new_seg1   = (Segment*)io_backend->GetPage(split[0]);
+  auto new_seg2   = (Segment*)io_backend->GetPage(split[1]);
   new_seg1->initSegment(local_depth + 1);
   new_seg2->initSegment(local_depth + 1);
   auto pattern = ((size_t)1 << (sizeof(Key_t) * 8 - local_depth - 1));
@@ -256,44 +255,45 @@ PageID_t* Segment::Split(FileManager* fm) {
       }
     }
   }
-  fm->Unpin(split[0], new_seg1, true);
-  fm->Unpin(split[1], new_seg2, true);
+  io_backend->Unpin(split[0], new_seg1, true);
+  io_backend->Unpin(split[1], new_seg2, true);
   return split;
 }
 
-CCEH::CCEH(int queue_size) {
-  fm = new FileManager(queue_size);
+CCEH::CCEH(IOConfig& config) {
+  io_backend = IOBackendFactory::create(config);
+  io_backend->init();
   initCCEH(2);
   crashed = false;
 }
 
-CCEH::~CCEH() { delete fm; }
-
 void CCEH::initCCEH(size_t initCap) {
-  crashed             = true;
-  dir_header_page_id  = fm->AllocatePage();
-  auto dir_header_ptr = fm->GetPage<DirectoryHeader>(dir_header_page_id);
-  size_t init_depth   = static_cast<size_t>(log2(initCap));
+  crashed            = true;
+  dir_header_page_id = io_backend->AllocatePage();
+  auto dir_header_ptr =
+      (DirectoryHeader*)io_backend->GetPage(dir_header_page_id);
+  size_t init_depth = static_cast<size_t>(log2(initCap));
   dir_header_ptr->initDirectory(init_depth);
   size_t num_dir_pages =
       (dir_header_ptr->capacity + DirectoryPage::kNumPointers - 1) /
       DirectoryPage::kNumPointers;
   for (size_t i = 0; i < num_dir_pages; ++i)
-    dir_header_ptr->dir_pages[i] = fm->AllocatePage();
+    dir_header_ptr->dir_pages[i] = io_backend->AllocatePage();
   for (unsigned i = 0; i < dir_header_ptr->capacity; ++i) {
     size_t dir_page_idx = i / DirectoryPage::kNumPointers;
     size_t offset       = i % DirectoryPage::kNumPointers;
-    auto dir_page_ptr =
-        fm->GetPage<DirectoryPage>(dir_header_ptr->dir_pages[dir_page_idx]);
+    auto dir_page_ptr   = (DirectoryPage*)io_backend->GetPage(
+        dir_header_ptr->dir_pages[dir_page_idx]);
 
-    PageID_t new_seg_id            = fm->AllocatePage();
+    PageID_t new_seg_id            = io_backend->AllocatePage();
     dir_page_ptr->segments[offset] = new_seg_id;
-    auto new_seg_ptr               = fm->GetPage<Segment>(new_seg_id);
+    auto new_seg_ptr               = (Segment*)io_backend->GetPage(new_seg_id);
     new_seg_ptr->initSegment(init_depth);
-    fm->Unpin(new_seg_id, new_seg_ptr, true);
-    fm->Unpin(dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, true);
+    io_backend->Unpin(new_seg_id, new_seg_ptr, true);
+    io_backend->Unpin(
+        dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, true);
   }
-  fm->Unpin(dir_header_page_id, dir_header_ptr, true);
+  io_backend->Unpin(dir_header_page_id, dir_header_ptr, true);
   crashed = false;
 }
 
@@ -317,12 +317,13 @@ void CCEH::Insert(
     size_t dir_depth;
     {
       std::shared_lock<std::shared_mutex> dir_rd_lock(dir_mutex);
-      auto dir_header_ptr =
-          fm->GetPage<DirectoryHeader>(sink, index, dir_header_page_id);
+      auto dir_header_ptr = (DirectoryHeader*)io_backend->GetPage(
+          sink, index, dir_header_page_id);
       dir_depth = dir_header_ptr->depth;
       auto x    = (f_hash >> (8 * sizeof(f_hash) - dir_depth));
       if (x >= dir_header_ptr->capacity) {
-        fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+        io_backend->Unpin(
+            sink, index, dir_header_page_id, dir_header_ptr, false);
         backoff.wait();
         continue; // Retry
       }
@@ -330,35 +331,37 @@ void CCEH::Insert(
       size_t offset_in_dir_page   = x % DirectoryPage::kNumPointers;
       PageID_t target_dir_page_id = dir_header_ptr->dir_pages[dir_page_idx];
       auto dir_page_ptr =
-          fm->GetPage<DirectoryPage>(sink, index, target_dir_page_id);
+          (DirectoryPage*)io_backend->GetPage(sink, index, target_dir_page_id);
       target_page_id = dir_page_ptr->segments[offset_in_dir_page];
-      fm->Unpin(sink, index, target_dir_page_id, dir_page_ptr, false);
-      fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(sink, index, target_dir_page_id, dir_page_ptr, false);
+      io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
     }
     // Segment Lock and Insert
     std::unique_lock<std::shared_mutex> seg_lock(
         get_segment_lock(target_page_id));
-    auto target_ptr = fm->GetPage<Segment>(sink, index, target_page_id);
+    auto target_ptr =
+        (Segment*)io_backend->GetPage(sink, index, target_page_id);
     // Validation after acquiring segment lock
     {
       std::shared_lock<std::shared_mutex> dir_rd_lock(dir_mutex);
-      auto dir_header_ptr =
-          fm->GetPage<DirectoryHeader>(sink, index, dir_header_page_id);
+      auto dir_header_ptr = (DirectoryHeader*)io_backend->GetPage(
+          sink, index, dir_header_page_id);
       auto x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
       size_t dir_page_idx       = x / DirectoryPage::kNumPointers;
       size_t offset_in_dir_page = x % DirectoryPage::kNumPointers;
-      auto dir_page_ptr         = fm->GetPage<DirectoryPage>(
+      auto dir_page_ptr         = (DirectoryPage*)io_backend->GetPage(
           sink, index, dir_header_ptr->dir_pages[dir_page_idx]);
       PageID_t current_target_page_id =
           dir_page_ptr->segments[offset_in_dir_page];
-      fm->Unpin(sink,
-                index,
-                dir_header_ptr->dir_pages[dir_page_idx],
-                dir_page_ptr,
-                false);
-      fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(
+          sink,
+          index,
+          dir_header_ptr->dir_pages[dir_page_idx],
+          dir_page_ptr,
+          false);
+      io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
       if (current_target_page_id != target_page_id) {
-        fm->Unpin(sink, index, target_page_id, target_ptr, false);
+        io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
         seg_lock.unlock();
         backoff.wait();
         continue; // Stale segment, retry
@@ -372,7 +375,7 @@ void CCEH::Insert(
       if (storedKey == key) {
         target_ptr->bucket[loc].value = value;
         mfence();
-        fm->Unpin(sink, index, target_page_id, target_ptr, true);
+        io_backend->Unpin(sink, index, target_page_id, target_ptr, true);
         return;
       }
       if ((((hash_funcs[0](&storedKey, sizeof(Key_t), f_seed) >>
@@ -383,7 +386,7 @@ void CCEH::Insert(
           target_ptr->bucket[loc].value = value;
           mfence();
           target_ptr->bucket[loc].key = key;
-          fm->Unpin(sink, index, target_page_id, target_ptr, true);
+          io_backend->Unpin(sink, index, target_page_id, target_ptr, true);
           return;
         }
       }
@@ -396,7 +399,7 @@ void CCEH::Insert(
       if (storedKey == key) {
         target_ptr->bucket[loc].value = value;
         mfence();
-        fm->Unpin(sink, index, target_page_id, target_ptr, true);
+        io_backend->Unpin(sink, index, target_page_id, target_ptr, true);
         return;
       }
       if ((((hash_funcs[0](&storedKey, sizeof(Key_t), f_seed) >>
@@ -407,7 +410,7 @@ void CCEH::Insert(
           target_ptr->bucket[loc].value = value;
           mfence();
           target_ptr->bucket[loc].key = key;
-          fm->Unpin(sink, index, target_page_id, target_ptr, true);
+          io_backend->Unpin(sink, index, target_page_id, target_ptr, true);
           return;
         }
       }
@@ -418,43 +421,45 @@ void CCEH::Insert(
     std::unique_lock<std::shared_mutex> dir_wr_lock(
         dir_mutex, std::try_to_lock);
     if (!dir_wr_lock.owns_lock()) {
-      fm->Unpin(sink, index, target_page_id, target_ptr, false);
+      io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
       seg_lock.unlock();
       backoff.wait();
       continue; // Failed to get dir write lock, retry
     }
     // Re-check segment state after acquiring all locks
     if (target_ptr->local_depth != target_local_depth) {
-      fm->Unpin(sink, index, target_page_id, target_ptr, false);
+      io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
       backoff.wait();
       continue; // Another thread already split this segment
     }
-    PageID_t* s = target_ptr->Split(sink, index, fm);
+    PageID_t* s = target_ptr->Split(sink, index, io_backend.get());
     auto dir_header_ptr =
-        fm->GetPage<DirectoryHeader>(sink, index, dir_header_page_id);
+        (DirectoryHeader*)io_backend->GetPage(sink, index, dir_header_page_id);
     auto x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
     if (target_ptr->local_depth == dir_header_ptr->depth) {
       // Directory expansion
       size_t new_capacity = dir_header_ptr->capacity * 2;
       if ((new_capacity / DirectoryPage::kNumPointers) >
           DirectoryHeader::kMaxDirectoryPages) {
-        fm->Unpin(sink, index, target_page_id, target_ptr, true);
-        fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+        io_backend->Unpin(sink, index, target_page_id, target_ptr, true);
+        io_backend->Unpin(
+            sink, index, dir_header_page_id, dir_header_ptr, false);
         delete[] s;
         std::cerr << "Expansion limit reached" << std::endl;
         return; // Expansion limit reached
       }
       auto old_dir_header_page_id     = this->dir_header_page_id;
       auto old_dir_header_ptr         = dir_header_ptr;
-      PageID_t new_dir_header_page_id = fm->AllocatePage(sink, index);
-      auto new_dir_header_ptr =
-          fm->GetPage<DirectoryHeader>(sink, index, new_dir_header_page_id);
+      PageID_t new_dir_header_page_id = io_backend->AllocatePage(sink, index);
+      auto new_dir_header_ptr         = (DirectoryHeader*)io_backend->GetPage(
+          sink, index, new_dir_header_page_id);
       new_dir_header_ptr->initDirectory(old_dir_header_ptr->depth + 1);
       size_t num_new_dir_pages =
           (new_dir_header_ptr->capacity + DirectoryPage::kNumPointers - 1) /
           DirectoryPage::kNumPointers;
       for (size_t i = 0; i < num_new_dir_pages; ++i) {
-        new_dir_header_ptr->dir_pages[i] = fm->AllocatePage(sink, index);
+        new_dir_header_ptr->dir_pages[i] =
+            io_backend->AllocatePage(sink, index);
       }
       x = (f_hash >> (8 * sizeof(f_hash) - old_dir_header_ptr->depth));
       DirectoryPage* current_old_dir_page_ptr = nullptr;
@@ -466,16 +471,17 @@ void CCEH::Insert(
         size_t new_page_idx = i / DirectoryPage::kNumPointers;
         if (new_page_idx != current_new_dir_page_idx) {
           if (current_new_dir_page_ptr != nullptr)
-            fm->Unpin(sink,
-                      index,
-                      current_new_dir_page_id,
-                      current_new_dir_page_ptr,
-                      true);
+            io_backend->Unpin(
+                sink,
+                index,
+                current_new_dir_page_id,
+                current_new_dir_page_ptr,
+                true);
           current_new_dir_page_idx = new_page_idx;
           current_new_dir_page_id =
               new_dir_header_ptr->dir_pages[current_new_dir_page_idx];
-          current_new_dir_page_ptr =
-              fm->GetPage<DirectoryPage>(sink, index, current_new_dir_page_id);
+          current_new_dir_page_ptr = (DirectoryPage*)io_backend->GetPage(
+              sink, index, current_new_dir_page_id);
         }
         size_t offset_in_new_page = i % DirectoryPage::kNumPointers;
         size_t old_i              = i / 2;
@@ -486,13 +492,14 @@ void CCEH::Insert(
           size_t old_page_idx = old_i / DirectoryPage::kNumPointers;
           if (old_page_idx != current_old_dir_page_idx) {
             if (current_old_dir_page_ptr != nullptr)
-              fm->Unpin(sink,
-                        index,
-                        old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
-                        current_old_dir_page_ptr,
-                        false);
+              io_backend->Unpin(
+                  sink,
+                  index,
+                  old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
+                  current_old_dir_page_ptr,
+                  false);
             current_old_dir_page_idx = old_page_idx;
-            current_old_dir_page_ptr = fm->GetPage<DirectoryPage>(
+            current_old_dir_page_ptr = (DirectoryPage*)io_backend->GetPage(
                 sink,
                 index,
                 old_dir_header_ptr->dir_pages[current_old_dir_page_idx]);
@@ -503,23 +510,27 @@ void CCEH::Insert(
         }
       }
       if (current_new_dir_page_ptr != nullptr)
-        fm->Unpin(sink,
-                  index,
-                  current_new_dir_page_id,
-                  current_new_dir_page_ptr,
-                  true);
+        io_backend->Unpin(
+            sink,
+            index,
+            current_new_dir_page_id,
+            current_new_dir_page_ptr,
+            true);
       if (current_old_dir_page_ptr != nullptr)
-        fm->Unpin(sink,
-                  index,
-                  old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
-                  current_old_dir_page_ptr,
-                  false);
+        io_backend->Unpin(
+            sink,
+            index,
+            old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
+            current_old_dir_page_ptr,
+            false);
 
-      fm->Unpin(sink, index, new_dir_header_page_id, new_dir_header_ptr, true);
+      io_backend->Unpin(
+          sink, index, new_dir_header_page_id, new_dir_header_ptr, true);
       this->dir_header_page_id = new_dir_header_page_id;
 
-      fm->Unpin(sink, index, target_page_id, target_ptr, false);
-      fm->Unpin(sink, index, old_dir_header_page_id, old_dir_header_ptr, false);
+      io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
+      io_backend->Unpin(
+          sink, index, old_dir_header_page_id, old_dir_header_ptr, false);
       delete[] s;
     } else {
       // Normal split
@@ -528,30 +539,32 @@ void CCEH::Insert(
       for (int i = 0; i < stride / 2; ++i) {
         size_t idx          = loc + stride / 2 + i;
         size_t dir_page_idx = idx / DirectoryPage::kNumPointers;
-        auto dir_page_ptr   = fm->GetPage<DirectoryPage>(
+        auto dir_page_ptr   = (DirectoryPage*)io_backend->GetPage(
             sink, index, dir_header_ptr->dir_pages[dir_page_idx]);
         dir_page_ptr->segments[idx % DirectoryPage::kNumPointers] = s[1];
-        fm->Unpin(sink,
-                  index,
-                  dir_header_ptr->dir_pages[dir_page_idx],
-                  dir_page_ptr,
-                  true);
+        io_backend->Unpin(
+            sink,
+            index,
+            dir_header_ptr->dir_pages[dir_page_idx],
+            dir_page_ptr,
+            true);
       }
       mfence(); // ensure writes for s[1] are globally visible before s[0]
       for (int i = 0; i < stride / 2; ++i) {
         size_t idx          = loc + i;
         size_t dir_page_idx = idx / DirectoryPage::kNumPointers;
-        auto dir_page_ptr   = fm->GetPage<DirectoryPage>(
+        auto dir_page_ptr   = (DirectoryPage*)io_backend->GetPage(
             sink, index, dir_header_ptr->dir_pages[dir_page_idx]);
         dir_page_ptr->segments[idx % DirectoryPage::kNumPointers] = s[0];
-        fm->Unpin(sink,
-                  index,
-                  dir_header_ptr->dir_pages[dir_page_idx],
-                  dir_page_ptr,
-                  true);
+        io_backend->Unpin(
+            sink,
+            index,
+            dir_header_ptr->dir_pages[dir_page_idx],
+            dir_page_ptr,
+            true);
       }
-      fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
-      fm->Unpin(sink, index, target_page_id, target_ptr, false);
+      io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
       delete[] s;
     }
   }
@@ -567,41 +580,45 @@ void CCEH::Insert(Key_t& key, Value_t value) {
     size_t dir_depth;
     {
       std::shared_lock<std::shared_mutex> dir_rd_lock(dir_mutex);
-      auto dir_header_ptr = fm->GetPage<DirectoryHeader>(dir_header_page_id);
-      dir_depth           = dir_header_ptr->depth;
-      auto x              = (f_hash >> (8 * sizeof(f_hash) - dir_depth));
+      auto dir_header_ptr =
+          (DirectoryHeader*)io_backend->GetPage(dir_header_page_id);
+      dir_depth = dir_header_ptr->depth;
+      auto x    = (f_hash >> (8 * sizeof(f_hash) - dir_depth));
       if (x >= dir_header_ptr->capacity) {
-        fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+        io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
         backoff.wait();
         continue; // Retry
       }
       size_t dir_page_idx         = x / DirectoryPage::kNumPointers;
       size_t offset_in_dir_page   = x % DirectoryPage::kNumPointers;
       PageID_t target_dir_page_id = dir_header_ptr->dir_pages[dir_page_idx];
-      auto dir_page_ptr = fm->GetPage<DirectoryPage>(target_dir_page_id);
-      target_page_id    = dir_page_ptr->segments[offset_in_dir_page];
-      fm->Unpin(target_dir_page_id, dir_page_ptr, false);
-      fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+      auto dir_page_ptr =
+          (DirectoryPage*)io_backend->GetPage(target_dir_page_id);
+      target_page_id = dir_page_ptr->segments[offset_in_dir_page];
+      io_backend->Unpin(target_dir_page_id, dir_page_ptr, false);
+      io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
     }
     // Segment Lock and Insert
     std::unique_lock<std::shared_mutex> seg_lock(
         get_segment_lock(target_page_id));
-    auto target_ptr = fm->GetPage<Segment>(target_page_id);
+    auto target_ptr = (Segment*)io_backend->GetPage(target_page_id);
     // Validation after acquiring segment lock
     {
       std::shared_lock<std::shared_mutex> dir_rd_lock(dir_mutex);
-      auto dir_header_ptr = fm->GetPage<DirectoryHeader>(dir_header_page_id);
+      auto dir_header_ptr =
+          (DirectoryHeader*)io_backend->GetPage(dir_header_page_id);
       auto x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
       size_t dir_page_idx       = x / DirectoryPage::kNumPointers;
       size_t offset_in_dir_page = x % DirectoryPage::kNumPointers;
-      auto dir_page_ptr =
-          fm->GetPage<DirectoryPage>(dir_header_ptr->dir_pages[dir_page_idx]);
+      auto dir_page_ptr         = (DirectoryPage*)io_backend->GetPage(
+          dir_header_ptr->dir_pages[dir_page_idx]);
       PageID_t current_target_page_id =
           dir_page_ptr->segments[offset_in_dir_page];
-      fm->Unpin(dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, false);
-      fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(
+          dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, false);
+      io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
       if (current_target_page_id != target_page_id) {
-        fm->Unpin(target_page_id, target_ptr, false);
+        io_backend->Unpin(target_page_id, target_ptr, false);
         seg_lock.unlock();
         backoff.wait();
         continue; // Stale segment, retry
@@ -615,7 +632,7 @@ void CCEH::Insert(Key_t& key, Value_t value) {
       if (storedKey == key) {
         target_ptr->bucket[loc].value = value;
         mfence();
-        fm->Unpin(target_page_id, target_ptr, true);
+        io_backend->Unpin(target_page_id, target_ptr, true);
         return;
       }
       if ((((hash_funcs[0](&storedKey, sizeof(Key_t), f_seed) >>
@@ -626,7 +643,7 @@ void CCEH::Insert(Key_t& key, Value_t value) {
           target_ptr->bucket[loc].value = value;
           mfence();
           target_ptr->bucket[loc].key = key;
-          fm->Unpin(target_page_id, target_ptr, true);
+          io_backend->Unpin(target_page_id, target_ptr, true);
           return;
         }
       }
@@ -639,7 +656,7 @@ void CCEH::Insert(Key_t& key, Value_t value) {
       if (storedKey == key) {
         target_ptr->bucket[loc].value = value;
         mfence();
-        fm->Unpin(target_page_id, target_ptr, true);
+        io_backend->Unpin(target_page_id, target_ptr, true);
         return;
       }
       if ((((hash_funcs[0](&storedKey, sizeof(Key_t), f_seed) >>
@@ -650,7 +667,7 @@ void CCEH::Insert(Key_t& key, Value_t value) {
           target_ptr->bucket[loc].value = value;
           mfence();
           target_ptr->bucket[loc].key = key;
-          fm->Unpin(target_page_id, target_ptr, true);
+          io_backend->Unpin(target_page_id, target_ptr, true);
           return;
         }
       }
@@ -661,42 +678,43 @@ void CCEH::Insert(Key_t& key, Value_t value) {
     std::unique_lock<std::shared_mutex> dir_wr_lock(
         dir_mutex, std::try_to_lock);
     if (!dir_wr_lock.owns_lock()) {
-      fm->Unpin(target_page_id, target_ptr, false);
+      io_backend->Unpin(target_page_id, target_ptr, false);
       seg_lock.unlock();
       backoff.wait();
       continue; // Failed to get dir write lock, retry
     }
     // Re-check segment state after acquiring all locks
     if (target_ptr->local_depth != target_local_depth) {
-      fm->Unpin(target_page_id, target_ptr, false);
+      io_backend->Unpin(target_page_id, target_ptr, false);
       backoff.wait();
       continue; // Another thread already split this segment
     }
-    PageID_t* s         = target_ptr->Split(fm);
-    auto dir_header_ptr = fm->GetPage<DirectoryHeader>(dir_header_page_id);
+    PageID_t* s = target_ptr->Split(io_backend.get());
+    auto dir_header_ptr =
+        (DirectoryHeader*)io_backend->GetPage(dir_header_page_id);
     auto x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
     if (target_ptr->local_depth == dir_header_ptr->depth) {
       // Directory expansion
       size_t new_capacity = dir_header_ptr->capacity * 2;
       if ((new_capacity / DirectoryPage::kNumPointers) >
           DirectoryHeader::kMaxDirectoryPages) {
-        fm->Unpin(target_page_id, target_ptr, true);
-        fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+        io_backend->Unpin(target_page_id, target_ptr, true);
+        io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
         delete[] s;
         std::cerr << "Expansion limit reached" << std::endl;
         return; // Expansion limit reached
       }
       auto old_dir_header_page_id     = this->dir_header_page_id;
       auto old_dir_header_ptr         = dir_header_ptr;
-      PageID_t new_dir_header_page_id = fm->AllocatePage();
+      PageID_t new_dir_header_page_id = io_backend->AllocatePage();
       auto new_dir_header_ptr =
-          fm->GetPage<DirectoryHeader>(new_dir_header_page_id);
+          (DirectoryHeader*)io_backend->GetPage(new_dir_header_page_id);
       new_dir_header_ptr->initDirectory(old_dir_header_ptr->depth + 1);
       size_t num_new_dir_pages =
           (new_dir_header_ptr->capacity + DirectoryPage::kNumPointers - 1) /
           DirectoryPage::kNumPointers;
       for (size_t i = 0; i < num_new_dir_pages; ++i) {
-        new_dir_header_ptr->dir_pages[i] = fm->AllocatePage();
+        new_dir_header_ptr->dir_pages[i] = io_backend->AllocatePage();
       }
       x = (f_hash >> (8 * sizeof(f_hash) - old_dir_header_ptr->depth));
       DirectoryPage* current_old_dir_page_ptr = nullptr;
@@ -708,12 +726,13 @@ void CCEH::Insert(Key_t& key, Value_t value) {
         size_t new_page_idx = i / DirectoryPage::kNumPointers;
         if (new_page_idx != current_new_dir_page_idx) {
           if (current_new_dir_page_ptr != nullptr)
-            fm->Unpin(current_new_dir_page_id, current_new_dir_page_ptr, true);
+            io_backend->Unpin(
+                current_new_dir_page_id, current_new_dir_page_ptr, true);
           current_new_dir_page_idx = new_page_idx;
           current_new_dir_page_id =
               new_dir_header_ptr->dir_pages[current_new_dir_page_idx];
           current_new_dir_page_ptr =
-              fm->GetPage<DirectoryPage>(current_new_dir_page_id);
+              (DirectoryPage*)io_backend->GetPage(current_new_dir_page_id);
         }
         size_t offset_in_new_page = i % DirectoryPage::kNumPointers;
         size_t old_i              = i / 2;
@@ -724,11 +743,12 @@ void CCEH::Insert(Key_t& key, Value_t value) {
           size_t old_page_idx = old_i / DirectoryPage::kNumPointers;
           if (old_page_idx != current_old_dir_page_idx) {
             if (current_old_dir_page_ptr != nullptr)
-              fm->Unpin(old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
-                        current_old_dir_page_ptr,
-                        false);
+              io_backend->Unpin(
+                  old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
+                  current_old_dir_page_ptr,
+                  false);
             current_old_dir_page_idx = old_page_idx;
-            current_old_dir_page_ptr = fm->GetPage<DirectoryPage>(
+            current_old_dir_page_ptr = (DirectoryPage*)io_backend->GetPage(
                 old_dir_header_ptr->dir_pages[current_old_dir_page_idx]);
           }
           size_t offset_in_old_page = old_i % DirectoryPage::kNumPointers;
@@ -737,17 +757,19 @@ void CCEH::Insert(Key_t& key, Value_t value) {
         }
       }
       if (current_new_dir_page_ptr != nullptr)
-        fm->Unpin(current_new_dir_page_id, current_new_dir_page_ptr, true);
+        io_backend->Unpin(
+            current_new_dir_page_id, current_new_dir_page_ptr, true);
       if (current_old_dir_page_ptr != nullptr)
-        fm->Unpin(old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
-                  current_old_dir_page_ptr,
-                  false);
+        io_backend->Unpin(
+            old_dir_header_ptr->dir_pages[current_old_dir_page_idx],
+            current_old_dir_page_ptr,
+            false);
 
-      fm->Unpin(new_dir_header_page_id, new_dir_header_ptr, true);
+      io_backend->Unpin(new_dir_header_page_id, new_dir_header_ptr, true);
       this->dir_header_page_id = new_dir_header_page_id;
 
-      fm->Unpin(target_page_id, target_ptr, false);
-      fm->Unpin(old_dir_header_page_id, old_dir_header_ptr, false);
+      io_backend->Unpin(target_page_id, target_ptr, false);
+      io_backend->Unpin(old_dir_header_page_id, old_dir_header_ptr, false);
       delete[] s;
     } else {
       // Normal split
@@ -756,22 +778,24 @@ void CCEH::Insert(Key_t& key, Value_t value) {
       for (int i = 0; i < stride / 2; ++i) {
         size_t idx          = loc + stride / 2 + i;
         size_t dir_page_idx = idx / DirectoryPage::kNumPointers;
-        auto dir_page_ptr =
-            fm->GetPage<DirectoryPage>(dir_header_ptr->dir_pages[dir_page_idx]);
+        auto dir_page_ptr   = (DirectoryPage*)io_backend->GetPage(
+            dir_header_ptr->dir_pages[dir_page_idx]);
         dir_page_ptr->segments[idx % DirectoryPage::kNumPointers] = s[1];
-        fm->Unpin(dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, true);
+        io_backend->Unpin(
+            dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, true);
       }
       mfence(); // ensure writes for s[1] are globally visible before s[0]
       for (int i = 0; i < stride / 2; ++i) {
         size_t idx          = loc + i;
         size_t dir_page_idx = idx / DirectoryPage::kNumPointers;
-        auto dir_page_ptr =
-            fm->GetPage<DirectoryPage>(dir_header_ptr->dir_pages[dir_page_idx]);
+        auto dir_page_ptr   = (DirectoryPage*)io_backend->GetPage(
+            dir_header_ptr->dir_pages[dir_page_idx]);
         dir_page_ptr->segments[idx % DirectoryPage::kNumPointers] = s[0];
-        fm->Unpin(dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, true);
+        io_backend->Unpin(
+            dir_header_ptr->dir_pages[dir_page_idx], dir_page_ptr, true);
       }
-      fm->Unpin(dir_header_page_id, dir_header_ptr, false);
-      fm->Unpin(target_page_id, target_ptr, false);
+      io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(target_page_id, target_ptr, false);
       delete[] s;
     }
   }
@@ -787,41 +811,43 @@ CCEH::Get(coroutine<void>::push_type& sink, int index, const Key_t& key) {
   while (true) {
     std::shared_lock<std::shared_mutex> dir_rd_lock(dir_mutex);
     auto dir_header_ptr =
-        fm->GetPage<DirectoryHeader>(sink, index, dir_header_page_id);
+        (DirectoryHeader*)io_backend->GetPage(sink, index, dir_header_page_id);
     size_t x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
     if (x >= dir_header_ptr->capacity) {
-      fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
       backoff.wait();
       continue;
     }
     size_t dir_page_idx  = x / DirectoryPage::kNumPointers;
     size_t offset        = x % DirectoryPage::kNumPointers;
     PageID_t dir_page_id = dir_header_ptr->dir_pages[dir_page_idx];
-    auto dir_page_ptr    = fm->GetPage<DirectoryPage>(sink, index, dir_page_id);
-    auto target_page_id  = dir_page_ptr->segments[offset];
-    fm->Unpin(sink, index, dir_page_id, dir_page_ptr, false);
+    auto dir_page_ptr =
+        (DirectoryPage*)io_backend->GetPage(sink, index, dir_page_id);
+    auto target_page_id = dir_page_ptr->segments[offset];
+    io_backend->Unpin(sink, index, dir_page_id, dir_page_ptr, false);
     if (target_page_id == INVALID_PAGE) {
-      fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
       backoff.wait();
       continue;
     }
     std::shared_lock<std::shared_mutex> seg_lock(
         get_segment_lock(target_page_id));
-    auto target_ptr = fm->GetPage<Segment>(sink, index, target_page_id);
-    auto check_x    = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
+    auto target_ptr =
+        (Segment*)io_backend->GetPage(sink, index, target_page_id);
+    auto check_x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
     if (x != check_x) {
-      fm->Unpin(sink, index, target_page_id, target_ptr, false);
-      fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
+      io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
       backoff.wait();
       continue;
     }
-    fm->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
+    io_backend->Unpin(sink, index, dir_header_page_id, dir_header_ptr, false);
     dir_rd_lock.unlock();
     for (int i = 0; i < kNumPairPerCacheLine * kNumCacheLine; ++i) {
       auto loc = (f_idx + i) % Segment::kNumSlot;
       if (target_ptr->bucket[loc].key == key) {
         Value_t v = target_ptr->bucket[loc].value;
-        fm->Unpin(sink, index, target_page_id, target_ptr, false);
+        io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
         return v;
       }
     }
@@ -831,11 +857,11 @@ CCEH::Get(coroutine<void>::push_type& sink, int index, const Key_t& key) {
       auto loc = (s_idx + i) % Segment::kNumSlot;
       if (target_ptr->bucket[loc].key == key) {
         Value_t v = target_ptr->bucket[loc].value;
-        fm->Unpin(sink, index, target_page_id, target_ptr, false);
+        io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
         return v;
       }
     }
-    fm->Unpin(sink, index, target_page_id, target_ptr, false);
+    io_backend->Unpin(sink, index, target_page_id, target_ptr, false);
     return NONE;
   }
 }
@@ -846,41 +872,42 @@ Value_t CCEH::Get(const Key_t& key) {
   ExponentialBackoff backoff;
   while (true) {
     std::shared_lock<std::shared_mutex> dir_rd_lock(dir_mutex);
-    auto dir_header_ptr = fm->GetPage<DirectoryHeader>(dir_header_page_id);
+    auto dir_header_ptr =
+        (DirectoryHeader*)io_backend->GetPage(dir_header_page_id);
     size_t x = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
     if (x >= dir_header_ptr->capacity) {
-      fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
       backoff.wait();
       continue;
     }
     size_t dir_page_idx  = x / DirectoryPage::kNumPointers;
     size_t offset        = x % DirectoryPage::kNumPointers;
     PageID_t dir_page_id = dir_header_ptr->dir_pages[dir_page_idx];
-    auto dir_page_ptr    = fm->GetPage<DirectoryPage>(dir_page_id);
+    auto dir_page_ptr    = (DirectoryPage*)io_backend->GetPage(dir_page_id);
     auto target_page_id  = dir_page_ptr->segments[offset];
-    fm->Unpin(dir_page_id, dir_page_ptr, false);
+    io_backend->Unpin(dir_page_id, dir_page_ptr, false);
     if (target_page_id == INVALID_PAGE) {
-      fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
       backoff.wait();
       continue;
     }
     std::shared_lock<std::shared_mutex> seg_lock(
         get_segment_lock(target_page_id));
-    auto target_ptr = fm->GetPage<Segment>(target_page_id);
+    auto target_ptr = (Segment*)io_backend->GetPage(target_page_id);
     auto check_x    = (f_hash >> (8 * sizeof(f_hash) - dir_header_ptr->depth));
     if (x != check_x) {
-      fm->Unpin(target_page_id, target_ptr, false);
-      fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+      io_backend->Unpin(target_page_id, target_ptr, false);
+      io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
       backoff.wait();
       continue;
     }
-    fm->Unpin(dir_header_page_id, dir_header_ptr, false);
+    io_backend->Unpin(dir_header_page_id, dir_header_ptr, false);
     dir_rd_lock.unlock();
     for (int i = 0; i < kNumPairPerCacheLine * kNumCacheLine; ++i) {
       auto loc = (f_idx + i) % Segment::kNumSlot;
       if (target_ptr->bucket[loc].key == key) {
         Value_t v = target_ptr->bucket[loc].value;
-        fm->Unpin(target_page_id, target_ptr, false);
+        io_backend->Unpin(target_page_id, target_ptr, false);
         return v;
       }
     }
@@ -890,11 +917,11 @@ Value_t CCEH::Get(const Key_t& key) {
       auto loc = (s_idx + i) % Segment::kNumSlot;
       if (target_ptr->bucket[loc].key == key) {
         Value_t v = target_ptr->bucket[loc].value;
-        fm->Unpin(target_page_id, target_ptr, false);
+        io_backend->Unpin(target_page_id, target_ptr, false);
         return v;
       }
     }
-    fm->Unpin(target_page_id, target_ptr, false);
+    io_backend->Unpin(target_page_id, target_ptr, false);
     return NONE;
   }
 }

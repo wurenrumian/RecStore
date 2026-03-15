@@ -97,12 +97,15 @@ public:
   void BatchGet(base::ConstArray<uint64> keys,
                 std::vector<base::ConstArray<float>>* values,
                 unsigned tid) override {
-    values->clear();
-    for (auto k : keys) {
+    values->resize(keys.Size());
+    std::shared_lock<std::shared_mutex> _(lock_);
+#pragma omp parallel for num_threads(8) if (keys.Size() > 1024)
+    for (int i = 0; i < (int)keys.Size(); ++i) {
+      uint64_t k = keys[i];
       base::PetKVData shmkv_data;
       auto iter = hash_table_->find(k);
       if (iter == hash_table_->end()) {
-        values->emplace_back(base::ConstArray<float>());
+        (*values)[i] = base::ConstArray<float>();
       } else {
         uint64_t& read_value = iter->second;
         shmkv_data           = *(base::PetKVData*)(&read_value);
@@ -114,7 +117,8 @@ public:
         } else {
           size = shm_malloc_->GetMallocSize(shmkv_data.shm_malloc_offset());
         }
-        values->emplace_back((float*)data, size / sizeof(float));
+        (*values)[i] =
+            base::ConstArray<float>((float*)data, size / sizeof(float));
       }
     }
   }
@@ -124,7 +128,7 @@ public:
     // hash_table_->hash_name();
   }
 
-  void clear() {
+  void clear() override {
     std::unique_lock<std::shared_mutex> _(lock_);
     for (auto& item : *hash_table_) {
       base::PetKVData shmkv_data = *(base::PetKVData*)(&item.second);
@@ -138,8 +142,8 @@ private:
   std::unordered_map<uint64_t, uint64_t>* hash_table_;
   std::shared_mutex lock_;
 
-  const bool kPreKnownValueSize_ = false;
   const int kValueSize_          = 0;
+  const bool kPreKnownValueSize_ = false;
   std::unique_ptr<base::MallocApi> shm_malloc_;
 
   base::ShmFile valid_shm_file_;

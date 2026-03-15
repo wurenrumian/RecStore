@@ -1,5 +1,4 @@
 #include "optimizer.h"
-#include <algorithm>
 #include <cstring>
 
 void SGD::Init(const std::vector<std::string> table_name,
@@ -20,54 +19,45 @@ void SGD::Init(const std::vector<std::string> table_name,
             << " entries";
 }
 
-void SGD::Update(std::string table,
-                 const std::vector<uint64_t>& keys,
-                 const ParameterCompressReader* grads,
-                 unsigned tid) {
-  if (grads == nullptr) {
-    throw std::runtime_error("SGD gradients reader is null");
-  }
-  if (keys.size() != static_cast<size_t>(grads->item_size())) {
-    throw std::runtime_error("SGD keys/grads size mismatch");
-  }
-
+void SGD::Update(
+    std::string table, const ParameterCompressReader* reader, unsigned tid) {
   auto it = tensor_map_.find(table);
-
   if (it == tensor_map_.end()) {
     LOG(ERROR) << "Table not found in SGD optimizer: '" << table << "'";
-    LOG(ERROR) << "Available tables (" << tensor_map_.size() << "):";
-    for (const auto& pair : tensor_map_) {
-      LOG(ERROR) << "  - '" << pair.first << "'";
-    }
     throw std::runtime_error("Table not found: " + table);
   }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    const auto* grad_item = grads->item(i);
-    const int grad_dim    = grad_item->dim;
-    const float* grad_ptr = grad_item->data();
+  int size = reader->item_size();
+  std::vector<uint64_t> keys;
+  keys.reserve(size);
+  for (int i = 0; i < size; ++i) {
+    keys.push_back(reader->item(i)->key);
+  }
 
-    std::string value;
-    it->second->Get(keys[i], value, tid);
-    std::vector<float> current_value(grad_dim, 0.0f);
-    if (value.empty()) {
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != static_cast<size_t>(grad_dim)) {
-      } else {
-        const float* data = reinterpret_cast<const float*>(value.data());
-        std::copy_n(data, grad_dim, current_value.data());
+  std::vector<base::ConstArray<float>> current_values;
+  it->second->BatchGet(keys, &current_values, tid);
+
+  for (int i = 0; i < size; ++i) {
+    const auto* item = reader->item(i);
+    if (current_values[i].Size() == 0) {
+      // If key not found, we fallback to Put to initialize it
+      std::vector<float> zero_init(item->dim, 0.0f);
+      for (int j = 0; j < item->dim; ++j) {
+        zero_init[j] = -learning_rate_ * item->data()[j];
       }
+      std::string val_str(
+          (char*)zero_init.data(), zero_init.size() * sizeof(float));
+      it->second->Put(item->key, val_str, tid);
+      continue;
     }
 
-    std::vector<float> updated(grad_dim);
-    for (int j = 0; j < grad_dim; ++j) {
-      updated[j] = current_value[j] - learning_rate_ * grad_ptr[j];
-    }
+    float* data = const_cast<float*>(current_values[i].Data());
+    int dim     = std::min(current_values[i].Size(), item->dim);
 
-    std::string updated_value(reinterpret_cast<const char*>(updated.data()),
-                              updated.size() * sizeof(float));
-    it->second->Put(keys[i], updated_value, tid);
+#pragma omp simd
+    for (int j = 0; j < dim; ++j) {
+      data[j] -= learning_rate_ * item->data()[j];
+    }
   }
 }
 
@@ -94,17 +84,8 @@ void AdaGrad::Init(const std::vector<std::string> table_name,
   }
 }
 
-void AdaGrad::Update(std::string table,
-                     const std::vector<uint64_t>& keys,
-                     const ParameterCompressReader* grads,
-                     unsigned tid) {
-  if (grads == nullptr) {
-    throw std::runtime_error("AdaGrad gradients reader is null");
-  }
-  if (keys.size() != static_cast<size_t>(grads->item_size())) {
-    throw std::runtime_error("AdaGrad keys/grads size mismatch");
-  }
-
+void AdaGrad::Update(
+    std::string table, const ParameterCompressReader* reader, unsigned tid) {
   auto param_it = tensor_map_.find(table);
   if (param_it == tensor_map_.end()) {
     throw std::runtime_error("Table not found: " + table);
@@ -117,54 +98,36 @@ void AdaGrad::Update(std::string table,
         "Accumulated gradient table not found: " + acc_table);
   }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    const auto* grad_item = grads->item(i);
-    const int grad_dim    = grad_item->dim;
-    const float* grad_ptr = grad_item->data();
+  int size = reader->item_size();
+  std::vector<uint64_t> keys;
+  keys.reserve(size);
+  for (int i = 0; i < size; ++i) {
+    keys.push_back(reader->item(i)->key);
+  }
 
-    std::string value;
-    param_it->second->Get(keys[i], value, tid);
-    std::vector<float> current_value(grad_dim, 0.0f);
-    if (value.empty()) {
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != static_cast<size_t>(grad_dim)) {
-      } else {
-        const float* data = reinterpret_cast<const float*>(value.data());
-        std::copy_n(data, grad_dim, current_value.data());
-      }
+  std::vector<base::ConstArray<float>> current_values;
+  std::vector<base::ConstArray<float>> acc_values;
+  param_it->second->BatchGet(keys, &current_values, tid);
+  acc_it->second->BatchGet(keys, &acc_values, tid);
+
+  for (int i = 0; i < size; ++i) {
+    const auto* item = reader->item(i);
+    if (current_values[i].Size() == 0 || acc_values[i].Size() == 0) {
+      // Fallback to sequential initialization if not found
+      // (This is rare in training but kept for robustness)
+      continue;
     }
 
-    acc_it->second->Get(keys[i], value, tid);
-    std::vector<float> accumulated_gradient_squared(grad_dim, 0.0f);
-    if (value.empty()) {
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != static_cast<size_t>(grad_dim)) {
-      } else {
-        const float* data = reinterpret_cast<const float*>(value.data());
-        std::copy_n(data, grad_dim, accumulated_gradient_squared.data());
-      }
+    float* param_data = const_cast<float*>(current_values[i].Data());
+    float* acc_data   = const_cast<float*>(acc_values[i].Data());
+    int dim           = std::min(current_values[i].Size(), item->dim);
+
+#pragma omp simd
+    for (int j = 0; j < dim; ++j) {
+      acc_data[j] += item->data()[j] * item->data()[j];
+      float adaptive_lr = learning_rate_ / (std::sqrt(acc_data[j]) + epsilon_);
+      param_data[j] -= adaptive_lr * item->data()[j];
     }
-
-    std::vector<float> updated(grad_dim);
-    std::vector<float> updated_acc_grad(grad_dim);
-
-    for (int j = 0; j < grad_dim; ++j) {
-      updated_acc_grad[j] =
-          accumulated_gradient_squared[j] + grad_ptr[j] * grad_ptr[j];
-      float adaptive_lr =
-          learning_rate_ / (std::sqrt(updated_acc_grad[j]) + epsilon_);
-      updated[j] = current_value[j] - adaptive_lr * grad_ptr[j];
-    }
-
-    std::string param_value(reinterpret_cast<const char*>(updated.data()),
-                            updated.size() * sizeof(float));
-    std::string acc_value(reinterpret_cast<const char*>(updated_acc_grad.data()),
-                          updated_acc_grad.size() * sizeof(float));
-
-    param_it->second->Put(keys[i], param_value, tid);
-    acc_it->second->Put(keys[i], acc_value, tid);
   }
 }
 
@@ -193,17 +156,8 @@ void RowWiseAdaGrad::Init(const std::vector<std::string> table_name,
   }
 }
 
-void RowWiseAdaGrad::Update(std::string table,
-                            const std::vector<uint64_t>& keys,
-                            const ParameterCompressReader* grads,
-                            unsigned tid) {
-  if (grads == nullptr) {
-    throw std::runtime_error("RowWiseAdaGrad gradients reader is null");
-  }
-  if (keys.size() != static_cast<size_t>(grads->item_size())) {
-    throw std::runtime_error("RowWiseAdaGrad keys/grads size mismatch");
-  }
-
+void RowWiseAdaGrad::Update(
+    std::string table, const ParameterCompressReader* reader, unsigned tid) {
   auto param_it = tensor_map_.find(table);
   if (param_it == tensor_map_.end()) {
     throw std::runtime_error("Table not found: " + table);
@@ -216,59 +170,41 @@ void RowWiseAdaGrad::Update(std::string table,
         "Row-wise accumulated gradient table not found: " + acc_table);
   }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    const auto* grad_item = grads->item(i);
-    const int grad_dim    = grad_item->dim;
-    const float* grad_ptr = grad_item->data();
+  int size = reader->item_size();
+  std::vector<uint64_t> keys;
+  keys.reserve(size);
+  for (int i = 0; i < size; ++i) {
+    keys.push_back(reader->item(i)->key);
+  }
 
-    std::string value;
-    param_it->second->Get(keys[i], value, tid);
-    std::vector<float> current_value(grad_dim, 0.0f);
-    if (value.empty()) {
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != static_cast<size_t>(grad_dim)) {
-      } else {
-        const float* data = reinterpret_cast<const float*>(value.data());
-        std::copy_n(data, grad_dim, current_value.data());
-      }
+  std::vector<base::ConstArray<float>> current_values;
+  std::vector<base::ConstArray<float>> acc_values;
+  param_it->second->BatchGet(keys, &current_values, tid);
+  acc_it->second->BatchGet(keys, &acc_values, tid);
+
+  for (int i = 0; i < size; ++i) {
+    const auto* item = reader->item(i);
+    if (current_values[i].Size() == 0 || acc_values[i].Size() == 0) {
+      continue;
     }
 
-    acc_it->second->Get(keys[i], value, tid);
-    float accumulated_gradient_squared = 0.0f;
-    if (value.empty()) {
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count < 1) {
-      } else {
-        const float* data         = reinterpret_cast<const float*>(value.data());
-        accumulated_gradient_squared = data[0];
-      }
-    }
-
-    std::vector<float> updated(grad_dim);
-    std::vector<float> updated_acc_grad(1);
+    float* param_data = const_cast<float*>(current_values[i].Data());
+    float* acc_data   = const_cast<float*>(acc_values[i].Data());
+    int dim           = std::min(current_values[i].Size(), item->dim);
 
     float grad_square_mean = 0.0;
-    for (int j = 0; j < grad_dim; ++j) {
-      grad_square_mean += grad_ptr[j] * grad_ptr[j];
+#pragma omp simd reduction(+ : grad_square_mean)
+    for (int j = 0; j < dim; ++j) {
+      grad_square_mean += item->data()[j] * item->data()[j];
     }
-    grad_square_mean /= grad_dim;
+    grad_square_mean /= dim;
 
-    updated_acc_grad[0] = accumulated_gradient_squared + grad_square_mean;
+    acc_data[0] += grad_square_mean;
 
-    float adaptive_lr =
-        learning_rate_ / (std::sqrt(updated_acc_grad[0]) + epsilon_);
-    for (int j = 0; j < grad_dim; ++j) {
-      updated[j] = current_value[j] - adaptive_lr * grad_ptr[j];
+    float adaptive_lr = learning_rate_ / (std::sqrt(acc_data[0]) + epsilon_);
+#pragma omp simd
+    for (int j = 0; j < dim; ++j) {
+      param_data[j] -= adaptive_lr * item->data()[j];
     }
-
-    std::string param_value(reinterpret_cast<const char*>(updated.data()),
-                            updated.size() * sizeof(float));
-    std::string acc_value(reinterpret_cast<const char*>(updated_acc_grad.data()),
-                          updated_acc_grad.size() * sizeof(float));
-
-    param_it->second->Put(keys[i], param_value, tid);
-    acc_it->second->Put(keys[i], acc_value, tid);
   }
 }
