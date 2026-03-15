@@ -17,9 +17,11 @@ target_link_libraries(
     gRPC::grpc++_reflection
     gRPC::grpc++
     protobuf::libprotobuf
-    report_client
 )
-target_compile_definitions(grpc_ps_client PUBLIC ENABLE_PERF_REPORT)
+if(USE_PERF_REPORT)
+    target_compile_definitions(grpc_ps_client PUBLIC ENABLE_PERF_REPORT)
+    target_link_libraries(grpc_ps_client PUBLIC report_client)
+endif()
 
 # gRPC PS Client Test
 add_executable(grpc_ps_client_test
@@ -48,9 +50,11 @@ target_link_libraries(grpc_ps_server PUBLIC
     gflags
     glog
     TBB::tbb
-    report_client
 )
-target_compile_definitions(grpc_ps_server PRIVATE ENABLE_PERF_REPORT)
+if(USE_PERF_REPORT)
+    target_compile_definitions(grpc_ps_server PRIVATE ENABLE_PERF_REPORT)
+    target_link_libraries(grpc_ps_server PUBLIC report_client)
+endif()
 
 # Distributed gRPC PS Client
 add_library(dist_grpc_ps_client
@@ -64,9 +68,11 @@ target_link_libraries(dist_grpc_ps_client PUBLIC
     gRPC::grpc++_reflection
     gRPC::grpc++
     protobuf::libprotobuf
-    report_client
 )
-target_compile_definitions(dist_grpc_ps_client PUBLIC ENABLE_PERF_REPORT)
+if(USE_PERF_REPORT)
+    target_compile_definitions(dist_grpc_ps_client PUBLIC ENABLE_PERF_REPORT)
+    target_link_libraries(dist_grpc_ps_client PUBLIC report_client)
+endif()
 
 # Distributed gRPC PS Client Test
 add_executable(dist_grpc_ps_client_test
