@@ -1,3 +1,5 @@
+#pragma once
+
 #include "io_backend.h"
 #include <algorithm>
 #include <atomic>

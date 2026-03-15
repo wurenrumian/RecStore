@@ -8,8 +8,8 @@ IOConfig config{BackendType::IOURING, 512, "/tmp/test_cceh.db"};
 
 class CCEHTest : public ::testing::Test {
 protected:
-  void SetUp() override {}
-  void TearDown() override {}
+  void SetUp() override { std::remove(config.file_path.c_str()); }
+  void TearDown() override { std::remove(config.file_path.c_str()); }
 };
 
 TEST_F(CCEHTest, SimpleInsertAndGet) {
