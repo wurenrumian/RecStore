@@ -56,6 +56,8 @@ class RecStoreClient:
         self._data_name_list = set()
         self._gdata_name_list = set()
         self._role = role
+        self._next_async_handle = 1
+        self._pending_async_ops = {}
         self._initialized = True
         # print(f"RecStoreClient initialized. Loaded library from: {library_path}")
 
@@ -295,10 +297,14 @@ class RecStoreClient:
         This performs SGD-style update: param = param - lr * grad
         Note: The learning rate is handled by the optimizer, grads should already be scaled.
         """
+        handle = self.update_async(name, ids, grads)
+        self.wait(handle)
+
+    def update_async(self, name: str, ids: torch.Tensor, grads: torch.Tensor) -> int:
+        """Queue an embedding update and return a handle for explicit synchronization."""
         if name not in self._tensor_meta:
             raise RuntimeError(f"Tensor '{name}' has not been initialized.")
         
-        # Ensure ids and grads are on the correct device and dtype
         if not isinstance(ids, torch.Tensor):
             raise TypeError("ids must be a torch.Tensor")
         if ids.dtype != torch.int64:
@@ -316,8 +322,28 @@ class RecStoreClient:
             grads = grads.contiguous()
         if grads.device.type != 'cpu':
             grads = grads.to('cpu')
-        
+
+        handle = self._next_async_handle
+        self._next_async_handle += 1
+        self._pending_async_ops[handle] = (
+            name,
+            ids.clone(),
+            grads.clone(),
+        )
+        return handle
+
+    def wait(self, handle: int) -> None:
+        """Wait for a queued async operation and apply it if still pending."""
+        pending = self._pending_async_ops.pop(int(handle), None)
+        if pending is None:
+            return
+        name, ids, grads = pending
         self.ops.emb_update_table(name, ids, grads)
+
+    def flush_async_updates(self) -> None:
+        """Synchronously apply all queued async update operations."""
+        for handle in list(self._pending_async_ops.keys()):
+            self.wait(handle)
 
     def get_data_meta(self, name: str) -> Tuple[torch.dtype, Tuple[int, ...], None]:
         """Get meta data (data_type, data_shape, partition_policy)"""

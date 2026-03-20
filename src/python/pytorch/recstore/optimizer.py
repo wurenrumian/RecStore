@@ -40,12 +40,22 @@ def _process_dist_embedding_module(mod: DistEmbedding, lr: float):
 def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
     """Handles sparse trace aggregation and backend updates for generic modules."""
     if not mod._trace:
-        return
+        return []
 
     traces_by_name: Dict[str, List[Tuple[torch.Tensor, torch.Tensor]]] = {}
-    for name, ids, grads in mod._trace:
+    for entry in mod._trace:
+        if isinstance(entry, dict):
+            name = entry["name"]
+            ids = entry["ids"]
+            if "grads" in entry:
+                grads = entry["grads"]
+            else:
+                grads = entry["grad"].unsqueeze(0).expand(int(entry["count"]), -1)
+        else:
+            name, ids, grads = entry
         traces_by_name.setdefault(name, []).append((ids, grads))
 
+    handles = []
     for name, entries in traces_by_name.items():
         all_ids = torch.cat([ids for ids, _ in entries], dim=0)
         all_grads = torch.cat([grads for _, grads in entries], dim=0)
@@ -58,7 +68,8 @@ def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
         )
         summed_grads.index_add_(0, inverse_indices, all_grads)
 
-        kv_client.update(name=name, ids=unique_ids, grads=summed_grads)
+        handles.append(kv_client.update_async(name=name, ids=unique_ids, grads=summed_grads))
+    return handles
 
 # --- Core Classes ---
 
@@ -80,6 +91,7 @@ class SparseOptimizer:
         """
         self.param_groups = [{"params": params, "lr": lr}]
         self.kv_client = _get_kv_client_if_needed(params)
+        self._inflight_handles: List[int] = []
 
     def step(self):
         """
@@ -101,6 +113,15 @@ class SparseOptimizer:
                 #         mod.grad.detach_()
                 #         mod.grad.zero_()
 
+    def flush(self):
+        """Wait for all in-flight async sparse updates."""
+        if self.kv_client is None:
+            self._inflight_handles.clear()
+            return
+        for handle in self._inflight_handles:
+            self.kv_client.wait(handle)
+        self._inflight_handles.clear()
+
 class SparseSGD(SparseOptimizer):
     def step(self):
         """Performs a single Sparse SGD optimization step."""
@@ -111,7 +132,9 @@ class SparseSGD(SparseOptimizer):
                     if isinstance(mod, DistEmbedding):
                         _process_dist_embedding_module(mod, lr)
                     elif hasattr(mod, '_config_names') and hasattr(mod, '_trace'):
-                        _process_generic_module_with_trace(mod, lr, self.kv_client)
+                        self._inflight_handles.extend(
+                            _process_generic_module_with_trace(mod, lr, self.kv_client)
+                        )
                     else:
                         print(f"Warning: Module type {type(mod).__name__} is not supported by SparseSGD optimizer.")
                     if hasattr(mod, 'reset_trace'):

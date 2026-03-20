@@ -79,12 +79,13 @@ class _RecStoreEBCFunction(Function):
                 if num_items_in_bag > 0:
                     ids_to_update = values_cpu[start:end]
                     grad_for_bag = grad_output_reshaped[sample_idx, i]
-                    scaled_grad = grad_for_bag
-                    
-                    grads_to_trace = scaled_grad.unsqueeze(0).expand(num_items_in_bag, -1)
-                    
                     module._trace.append(
-                        (config_name, ids_to_update.detach(), grads_to_trace.detach())
+                        {
+                            "name": config_name,
+                            "ids": ids_to_update.detach(),
+                            "grad": grad_for_bag.detach(),
+                            "count": int(num_items_in_bag),
+                        }
                     )
         return None, None, None, None
 
@@ -124,6 +125,7 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         self._fused_prefetch_handle: int | None = None
         self._fused_prefetch_num_ids: int = 0
         self._fused_prefetch_issue_ts: float | None = None
+        self._fused_prefetch_slots: List[Dict[str, Any]] = []
         # Prefetch performance stats
         self._prefetch_issue_ts: Dict[int, float] = {}  # handle -> issue time
         self._prefetch_sizes: Dict[int, int] = {}       # handle -> number of ids
@@ -151,14 +153,17 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         self._trace = []
 
     def _append_trace(self, name: str, ids: torch.Tensor, grad: torch.Tensor) -> None:
-        ids_cpu = ids.detach().to(torch.int64).cpu()
-        grad_cpu = grad.detach().to(torch.float32).cpu()
-        if ids_cpu.numel() == 0:
+        ids_view = ids.detach().to(torch.int64)
+        grad_view = grad.detach().to(torch.float32)
+        if ids_view.numel() == 0:
             return
-        unique_ids, inverse = torch.unique(ids_cpu, return_inverse=True)
-        grad_sum = torch.zeros((unique_ids.size(0), grad_cpu.size(1)), dtype=grad_cpu.dtype)
-        grad_sum.index_add_(0, inverse, grad_cpu)
-        self._trace.append((name, unique_ids, grad_sum))
+        self._trace.append(
+            {
+                "name": name,
+                "ids": ids_view,
+                "grads": grad_view,
+            }
+        )
 
     def set_fusion(self, enabled: bool):
         """Enable/disable fused embedding path at runtime."""
@@ -207,18 +212,36 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         passed through from the producer thread.
         """
         import time
-        self._fused_prefetch_handle = int(handle)
-        self._fused_prefetch_num_ids = int(num_ids) if num_ids is not None else 0
-        self._fused_prefetch_issue_ts = float(issue_ts) if issue_ts is not None else time.time()
+        slot = {
+            "handle": int(handle),
+            "num_ids": int(num_ids) if num_ids is not None else 0,
+            "issue_ts": float(issue_ts) if issue_ts is not None else time.time(),
+            "fused_ids_cpu": fused_ids_cpu if fused_ids_cpu is not None else None,
+            "fused_inverse": fused_inverse if fused_inverse is not None else None,
+        }
+        self._fused_prefetch_slots.append(slot)
+        self._sync_fused_prefetch_slot_state()
         if record_stats:
             # Track in shared stats maps for unified reporting
-            self._prefetch_issue_ts[self._fused_prefetch_handle] = self._fused_prefetch_issue_ts
-            if self._fused_prefetch_num_ids:
-                self._prefetch_sizes[self._fused_prefetch_handle] = self._fused_prefetch_num_ids
-                self._prefetch_total_ids += self._fused_prefetch_num_ids
-        # Store optional mapping so forward can avoid recomputing unique
-        self._fused_ids_cpu = fused_ids_cpu if fused_ids_cpu is not None else None
-        self._fused_inverse = fused_inverse if fused_inverse is not None else None
+            self._prefetch_issue_ts[slot["handle"]] = slot["issue_ts"]
+            if slot["num_ids"]:
+                self._prefetch_sizes[slot["handle"]] = slot["num_ids"]
+                self._prefetch_total_ids += slot["num_ids"]
+
+    def _sync_fused_prefetch_slot_state(self) -> None:
+        if self._fused_prefetch_slots:
+            slot = self._fused_prefetch_slots[0]
+            self._fused_prefetch_handle = slot["handle"]
+            self._fused_prefetch_num_ids = slot["num_ids"]
+            self._fused_prefetch_issue_ts = slot["issue_ts"]
+            self._fused_ids_cpu = slot["fused_ids_cpu"]
+            self._fused_inverse = slot["fused_inverse"]
+        else:
+            self._fused_prefetch_handle = None
+            self._fused_prefetch_num_ids = 0
+            self._fused_prefetch_issue_ts = None
+            self._fused_ids_cpu = None
+            self._fused_inverse = None
 
     def issue_fused_prefetch(
         self,
@@ -436,11 +459,9 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
             )
             # Clear fused prefetch handle after consumption
             if used_fused_prefetch:
-                self._fused_prefetch_handle = None
-                self._fused_prefetch_issue_ts = None
-                self._fused_prefetch_num_ids = 0
-                self._fused_ids_cpu = None
-                self._fused_inverse = None
+                if self._fused_prefetch_slots:
+                    self._fused_prefetch_slots.pop(0)
+                self._sync_fused_prefetch_slot_state()
             return out
 
         # Fallback: per-feature path (original behavior)
