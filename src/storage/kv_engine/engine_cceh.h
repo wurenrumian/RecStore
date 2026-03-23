@@ -1,5 +1,9 @@
 #pragma once
 
+#include <sys/user.h>
+
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -12,79 +16,80 @@
 #include "memory/persist_malloc.h"
 #include "pair.h"
 #include "storage/ssd/io_backend.h"
+#include "storage/ssd/io_backend_factory.h"
 
 class KVEngineCCEH : public BaseKV {
   static constexpr int kKVEngineValidFileSize = 123;
 
 public:
-  KVEngineCCEH(const BaseKVConfig& config)
-      : BaseKV(config),
-        shm_malloc_(
-            config.json_config_.at("path").get<std::string>() + "/value",
-            1.2 * config.json_config_.at("capacity").get<size_t>() *
-                config.json_config_.at("value_size").get<size_t>()) {
-    value_size_ = config.json_config_.at("value_size").get<int>();
-    queue_cnt_  = config.json_config_.at("queue_size").get<int>();
-    type        = config.json_config_.at("type").get<std::string>();
+  KVEngineCCEH(const BaseKVConfig& config) : BaseKV(config) {
+    value_size_      = config.json_config_.at("value_size").get<int>();
+    queue_cnt_       = config.json_config_.at("queue_size").get<int>();
+    type             = config.json_config_.at("type").get<std::string>();
+    pages_per_value_ = (value_size_ + PAGE_SIZE - 1) / PAGE_SIZE;
     LOG(INFO) << "--------------init KVEngineCCEH--------------------";
-    std::string path    = config.json_config_.at("path").get<std::string>();
-    std::string db_path = path + "/cceh_test.db";
+    std::string index_path = config.json_config_.at("path").get<std::string>();
+    std::string index_db_path = index_path + "/cceh_test.db";
+    std::string value_path = config.json_config_.at("path").get<std::string>();
+    std::string value_db_path = value_path + "/cceh_value.db";
     BackendType backend_type =
         (type == "SPDK") ? BackendType::SPDK : BackendType::IOURING;
-    IOConfig io_config{backend_type, queue_cnt_, db_path};
-    hash_table_ = new CCEH(io_config);
+    IOConfig io_config_index{backend_type, queue_cnt_, index_db_path, 0};
 
-    uint64_t value_shm_size =
-        config.json_config_.at("capacity").get<uint64_t>() *
-        config.json_config_.at("value_size").get<uint64_t>();
+    hash_table_ = new CCEH(io_config_index);
+    // For SPDK, offset value pages to avoid overlapping with index LBAs on the
+    // raw device. 1M pages * 4KB = 4GB reserved for index. Adjust if index
+    // grows larger.
+    PageID_t value_offset = (backend_type == BackendType::SPDK) ? 1000000 : 1;
+    IOConfig io_config_value{
+        backend_type, queue_cnt_, value_db_path, value_offset};
+    value_io_backend = IOBackendFactory::create(io_config_value);
+    value_io_backend->init();
 
-    if (!valid_shm_file_.Initialize(path + "/valid", kKVEngineValidFileSize)) {
-      base::file_util::Delete(path + "/valid", false);
-      CHECK(
-          valid_shm_file_.Initialize(path + "/valid", kKVEngineValidFileSize));
-      shm_malloc_.Initialize();
-    }
-    LOG(INFO) << "After init: [shm_malloc] " << shm_malloc_.GetInfo();
+    LOG(INFO) << "After init value and  index io_backend ";
   }
 
   void Get(const uint64_t key, std::string& value, unsigned tid) override {
-    base::PetKVData shmkv_data;
-    Key_t hash_key     = key;
-    Value_t read_value = NONE;
-    read_value         = hash_table_->Get(hash_key);
+    Key_t hash_key         = key;
+    PageID_t start_page_id = NONE;
+    start_page_id          = hash_table_->Get(hash_key);
 
-    if (read_value == NONE) {
+    if (start_page_id == NONE) {
       value = std::string();
     } else {
-      shmkv_data.data_value = read_value;
-      char* data = shm_malloc_.GetMallocData(shmkv_data.shm_malloc_offset());
-      if (data == nullptr) {
-        value = std::string();
-        return;
+      value.resize(value_size_);
+      for (uint64_t i = 0; i < pages_per_value_; i++) {
+        PageID_t pid  = start_page_id + i;
+        char* buffer  = (char*)value_io_backend->GetPage(pid);
+        uint64_t size = (i == pages_per_value_ - 1)
+                          ? value_size_ - i * PAGE_SIZE
+                          : PAGE_SIZE;
+        memcpy(value.data() + i * PAGE_SIZE, buffer, size);
+        value_io_backend->Unpin(pid, buffer, false);
       }
-#ifdef XMH_VARIABLE_SIZE_KV
-      int size = shm_malloc_.GetMallocSize(shmkv_data.shm_malloc_offset());
-#else
-      int size = value_size_;
-#endif
-      value = std::string(data, size);
     }
   }
 
   void Put(const uint64_t key,
            const std::string_view& value,
            unsigned tid) override {
-    base::PetKVData shmkv_data;
-    char* sync_data = shm_malloc_.New(value.size());
-    if (sync_data == nullptr) {
-      LOG(ERROR) << "shm malloc failed (OOM?), key: " << key
-                 << " size: " << value.size();
-      return;
+    PageID_t start_page_id;
+    uint64_t written_bytes = 0;
+    for (int i = 0; i < pages_per_value_; i++) {
+      PageID_t page_id = value_io_backend->AllocatePage();
+      if (i == 0)
+        start_page_id = page_id;
+      char* buffer = (char*)value_io_backend->GetPage(page_id);
+      if (written_bytes < value.size()) {
+        uint64_t size = std::min(
+            (uint64_t)PAGE_SIZE, (uint64_t)value.size() - written_bytes);
+        memcpy(buffer, value.data() + written_bytes, size);
+        written_bytes += size;
+      }
+      value_io_backend->Unpin(page_id, buffer, true);
     }
-    shmkv_data.SetShmMallocOffset(shm_malloc_.GetMallocOffset(sync_data));
-    std::memcpy(sync_data, value.data(), value.size());
     Key_t hash_key = key;
-    hash_table_->Insert(hash_key, shmkv_data.data_value);
+    hash_table_->Insert(hash_key, start_page_id);
   }
 
   void BatchGet(base::ConstArray<uint64_t> keys,
@@ -105,25 +110,75 @@ public:
     }
     while (pending)
       hash_table_->io_backend->PollCompletion();
-
-    for (auto v : vals) {
-      base::PetKVData shmkv_data;
-      if (v == NONE) {
-        values->emplace_back();
-      } else {
-        shmkv_data.data_value = v;
-        char* data = shm_malloc_.GetMallocData(shmkv_data.shm_malloc_offset());
-        if (data == nullptr) {
-          values->emplace_back();
-          continue;
-        }
-#ifdef XMH_VARIABLE_SIZE_KV
-        int size = shm_malloc_.GetMallocSize(shmkv_data.shm_malloc_offset());
-#else
-        int size = value_size_;
-#endif
-        values->emplace_back((float*)data, size / sizeof(float));
+    // Collect valid keys and prepare read buffers
+    std::vector<IOBackend::IOEntry> read_entries;
+    std::vector<int> valid_indices; // which vals[] entries are valid
+    read_entries.reserve(size);
+    valid_indices.reserve(size);
+    for (int i = 0; i < size; i++) {
+      if (vals[i] != NONE) {
+        char* buffer = value_io_backend->AllocateBuffer(pages_per_value_);
+        read_entries.push_back({(PageID_t)vals[i], buffer, pages_per_value_});
+        valid_indices.push_back(i);
       }
+    }
+    // Batch read all values at once
+    value_io_backend->BatchReadPages(read_entries);
+
+    // Copy results into output
+    static thread_local std::vector<std::vector<float>> value_buffers;
+    value_buffers.clear();
+    value_buffers.reserve(size);
+    int ri = 0; // index into read_entries
+    for (int i = 0; i < size; i++) {
+      if (ri < (int)valid_indices.size() && valid_indices[ri] == i) {
+        value_buffers.emplace_back(value_size_ / sizeof(float));
+        auto& buf = value_buffers.back();
+        memcpy((char*)buf.data(),
+               read_entries[ri].buffer,
+               std::min(value_size_, (int)(pages_per_value_ * PAGE_SIZE)));
+        value_io_backend->FreeBuffer(read_entries[ri].buffer);
+        values->emplace_back(buf.data(), buf.size());
+        ri++;
+      } else {
+        values->emplace_back();
+        value_buffers.emplace_back();
+      }
+    }
+  }
+
+  void BatchPut(base::ConstArray<uint64_t> keys,
+                std::vector<base::ConstArray<float>>* values,
+                unsigned tid) override {
+    // Phase 1: allocate page IDs
+    std::vector<PageID_t> start_page_ids(keys.Size(), NONE);
+    for (int i = 0; i < keys.Size(); i++) {
+      start_page_ids[i] = value_io_backend->GetNextPageID();
+      value_io_backend->SetNextPageID(start_page_ids[i] + pages_per_value_);
+    }
+
+    // Phase 2: prepare per-key contiguous buffers and batch write
+    std::vector<IOBackend::IOEntry> write_entries;
+    write_entries.reserve(keys.Size());
+    for (int j = 0; j < keys.Size(); j++) {
+      auto value           = (*values)[j];
+      uint64_t value_bytes = value.Size() * sizeof(float);
+      // One contiguous buffer for all pages of this key (zero-filled)
+      char* buffer = value_io_backend->AllocateBuffer(pages_per_value_);
+      uint64_t copy_size =
+          std::min(value_bytes, pages_per_value_ * (uint64_t)PAGE_SIZE);
+      memcpy(buffer, (const char*)value.Data(), copy_size);
+      write_entries.push_back({start_page_ids[j], buffer, pages_per_value_});
+    }
+    value_io_backend->BatchWritePages(write_entries);
+    for (auto& e : write_entries) {
+      value_io_backend->FreeBuffer(e.buffer);
+    }
+
+    // Phase 3: CCEH index inserts
+    for (int j = 0; j < keys.Size(); j++) {
+      Key_t hash_key = keys[j];
+      hash_table_->Insert(hash_key, start_page_ids[j]);
     }
   }
 
@@ -141,8 +196,8 @@ private:
   int value_size_;
   int queue_cnt_;
   std::string type;
-  base::PersistLoopShmMalloc shm_malloc_;
-  base::ShmFile valid_shm_file_;
+  uint64_t pages_per_value_;
+  std::unique_ptr<IOBackend> value_io_backend;
 };
 
 FACTORY_REGISTER(BaseKV, KVEngineCCEH, KVEngineCCEH, const BaseKVConfig&);

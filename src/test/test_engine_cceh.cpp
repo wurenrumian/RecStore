@@ -20,6 +20,7 @@ protected:
         {"path", test_dir_},
         {"capacity", 100000},
         {"value_size", 128},
+        {"type", "SPDK"},
         {"queue_size", 512}};
     kv_engine_ = std::make_unique<KVEngineCCEH>(config_);
   }
@@ -174,6 +175,55 @@ TEST_F(KVEngineCCEHTest, ConcurrentBatchGet) {
       std::string expected = "concurrent_value_" + std::to_string(global_key);
       EXPECT_EQ(thread_results[tid][i], expected)
           << "Thread " << tid << " key " << global_key << " value mismatch";
+    }
+  }
+}
+
+// BatchPut写入 + BatchGet读回，用float数据做roundtrip验证
+TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
+  const int num_keys = 256;
+  const int floats_per_key = 128 / sizeof(float);  // value_size=128 → 32 floats
+
+  // 构造每个key对应的float数据，key i 的第 j 个float = i * 100.0f + j
+  std::vector<std::vector<float>> write_data(num_keys);
+  for (int i = 0; i < num_keys; i++) {
+    write_data[i].resize(floats_per_key);
+    for (int j = 0; j < floats_per_key; j++) {
+      write_data[i][j] = i * 100.0f + j;
+    }
+  }
+
+  // 准备 keys 数组
+  std::vector<uint64_t> keys(num_keys);
+  for (int i = 0; i < num_keys; i++) {
+    keys[i] = i + 10000;  // 用 10000 开头的key，避免和其他测试冲突
+  }
+
+  // 构造 BatchPut 需要的 vector<ConstArray<float>>
+  std::vector<base::ConstArray<float>> values_in(num_keys);
+  for (int i = 0; i < num_keys; i++) {
+    values_in[i] = base::ConstArray<float>(write_data[i].data(), write_data[i].size());
+  }
+
+  // 调用 BatchPut 写入
+  base::ConstArray<uint64_t> keys_array(keys.data(), keys.size());
+  kv_engine_->BatchPut(keys_array, &values_in, 0);
+
+  // 调用 BatchGet 读回
+  std::vector<base::ConstArray<float>> values_out;
+  kv_engine_->BatchGet(keys_array, &values_out, 0);
+
+  // 验证返回的key数量
+  ASSERT_EQ(values_out.size(), num_keys);
+
+  // 逐key逐float比对
+  for (int i = 0; i < num_keys; i++) {
+    ASSERT_GT(values_out[i].Size(), 0) << "Key " << keys[i] << " returned empty";
+    ASSERT_EQ(values_out[i].Size(), floats_per_key)
+        << "Key " << keys[i] << " dim mismatch";
+    for (int j = 0; j < floats_per_key; j++) {
+      EXPECT_FLOAT_EQ(values_out[i].Data()[j], write_data[i][j])
+          << "Key " << keys[i] << " float[" << j << "] mismatch";
     }
   }
 }

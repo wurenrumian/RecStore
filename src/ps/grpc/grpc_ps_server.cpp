@@ -6,23 +6,24 @@
 #include <cstdint>
 #include <future>
 #include <string>
-#include <vector>
 #include <thread>
+#include <vector>
 
 #include "base/array.h"
 #include "base/base.h"
+#include "base/flatc.h"
 #include "base/timer.h"
+#include "ps.grpc.pb.h"
+#include "ps.pb.h"
 #include "ps/base/base_ps_server.h"
 #include "ps/base/cache_ps_impl.h"
 #include "ps/base/parameters.h"
-#include "base/flatc.h"
-#include "ps.grpc.pb.h"
-#include "ps.pb.h"
 #include "recstore_config.h"
 
 #ifdef ENABLE_PERF_REPORT
-#  include "base/report/report_client.h"
 #  include <chrono>
+
+#  include "base/report/report_client.h"
 #else
 #  include "../report_client.h"
 #endif
@@ -97,7 +98,7 @@ private:
       xmh::PerfCounter::Record("PS Get Keys", keys_array.Size());
     }
     xmh::Timer timer_ps_get_req("PS GetParameter Req");
-    ParameterCompressor compressor;
+    ParameterCompressor compressor(std::numeric_limits<int>::max());
     std::vector<std::string> blocks;
     FB_LOG_EVERY_MS(INFO, 1000)
         << "[PS] Getting " << keys_array.Size() << " keys";
@@ -231,12 +232,15 @@ private:
     const ParameterCompressReader* reader =
         reinterpret_cast<const ParameterCompressReader*>(
             request->parameter_value().data());
-    int size             = reader->item_size();
+    int size = reader->item_size();
+    LOG(INFO) << "[PS] PutParameter: " << size << " keys";
     uint64_t total_bytes = 0;
+
+    cache_ps_->PutParameter(reader, 0);
     for (int i = 0; i < size; i++) {
-      cache_ps_->PutSingleParameter(reader->item(i), 0);
       total_bytes += reader->item(i)->dim * sizeof(float);
     }
+    LOG(INFO) << "[PS] PutParameter done: " << size << " keys";
     total_put_requests_++;
     total_put_keys_ += size;
     total_put_bytes_ += total_bytes;
@@ -383,9 +387,9 @@ public:
 
     if (num_shards > 1) {
       // 多服务器启动逻辑
-      std::cout
-          << "Starting distributed parameter server (gRPC), number of shards: "
-          << num_shards << std::endl;
+      std::cout << "Starting distributed parameter server (gRPC), number "
+                   "of shards: "
+                << num_shards << std::endl;
 
       if (!config_["cache_ps"].contains("servers")) {
         LOG(FATAL) << "配置了 num_shards > 1 但缺少 servers 配置";
@@ -436,8 +440,10 @@ public:
 
             if (!server) {
               std::string err_msg = fmt::format(
-                  "FATAL: Failed to start gRPC server shard {} on {}. "
-                  "Port might be in use or invalid configuration. "
+                  "FATAL: Failed to start gRPC server shard {} "
+                  "on {}. "
+                  "Port might be in use or invalid "
+                  "configuration. "
                   "Check if port {} is already occupied.",
                   shard,
                   server_address,
@@ -490,7 +496,7 @@ public:
       builder.SetMaxReceiveMessageSize(-1); // Unlimited
       builder.SetMaxSendMessageSize(-1);    // Unlimited
       std::unique_ptr<Server> server(builder.BuildAndStart());
-
+      std::cerr << "sever built succesfully" << std::endl;
       if (!server) {
         std::string err_msg = fmt::format(
             "FATAL: Failed to start gRPC server on {}. "

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <fcntl.h>
+#include <thread>
 #include "spdk/env.h"
 #include "spdk/nvme.h"
 #include "spdk/vmd.h"
@@ -11,10 +12,18 @@
 #include "spdk/nvme.h"
 #include "spdk/vmd.h"
 
-static const char* pcie_address = "0000:c2:00.0";
+static const char* pcie_address = "0000:8d:00.0";
 
 class SpdkBackend : public IOBackend {
 private:
+  static void batch_write_complete(void* arg,
+                                   const struct spdk_nvme_cpl* cpl) {
+    int* inflight = reinterpret_cast<int*>(arg);
+    if (!spdk_nvme_cpl_is_success(cpl))
+      LOG(ERROR) << "BatchWritePages: I/O error!";
+    (*inflight)--;
+  }
+
   inline static std::atomic<bool> controller_active_{false};
   inline static std::mutex env_mutex_;
   inline static bool env_initialized_ = false;
@@ -159,18 +168,31 @@ public:
     }
   }
   void init() override {
+    LOG(INFO) << "init spdk backend";
     std::lock_guard<std::mutex> lock(env_mutex_);
     if (!env_initialized_) {
       LOG(INFO) << "Initializing NVMe Controllers";
       opts           = {};
       opts.opts_size = sizeof(spdk_env_opts);
       spdk_env_opts_init(&opts);
+      opts.hugepage_single_segments = 1;
+      opts.hugedir = "/dev/hugepages-2M";
       trid = {};
+      LOG(INFO) <<  "0" ;
       spdk_nvme_trid_populate_transport(&trid, SPDK_NVME_TRANSPORT_PCIE);
       snprintf(trid.subnqn, sizeof(trid.subnqn), "%s", SPDK_NVMF_DISCOVERY_NQN);
+      LOG(INFO) <<  "0.5" ;
+      LOG(INFO) <<  "pcie_address: " << pcie_address ;
+      LOG(INFO) <<  "sizeof(trid.traddr): " << sizeof(trid.traddr) ;
       snprintf(trid.traddr, sizeof(trid.traddr), "%s", pcie_address);
+      LOG(INFO) <<  "opts.iova_mode: " << opts.iova_mode ;
+      LOG(INFO) <<  "trid.traddr: " << trid.traddr ;
+      LOG(INFO) <<  "trid.subnqn: " << trid.subnqn ;
+      LOG(INFO) <<  "sizeof(spdk_env_opts): " << sizeof(spdk_env_opts) ;
+      LOG(INFO) <<  "spdk_nvme_trid_populate_transport: " << spdk_nvme_trid_populate_transport ;
+
       CHECK(spdk_env_init(&opts) >= 0) << "Unable to initialize SPDK env\n";
-      CHECK_EQ(spdk_vmd_init(), 0) << "Failed to initialize VMD";
+      LOG(INFO) <<  "1" ;
       CHECK_EQ(spdk_nvme_probe(&trid, this, probe_cb, attach_cb, NULL), 0)
           << "Failed to probe NVMe device";
       CHECK_NE(ns_entry.ns, nullptr) << "Namespace is not initialized";
@@ -178,15 +200,20 @@ public:
       shared_ns_entry_   = ns_entry;
       shared_empty_page_ = (char*)spdk_zmalloc(
           PAGE_SIZE, 64, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+      LOG(INFO) <<  "2" ;
       CHECK_NE(shared_empty_page_, nullptr) << "Failed to allocate empty page";
+      LOG(INFO) <<  "3" ;
       empty_page = shared_empty_page_;
+      LOG(INFO) <<  "4" ;
       controller_active_.store(true, std::memory_order_release);
       env_initialized_ = true;
+      LOG(INFO) <<  "env initialized successfully" << std::endl;
     } else {
       ns_entry   = shared_ns_entry_;
       empty_page = shared_empty_page_;
       CHECK_NE(empty_page, nullptr) << "Shared empty page is not initialized";
       controller_active_.store(true, std::memory_order_release);
+      LOG(INFO) <<  "env initialized successfully" << std::endl;
     }
     instance_count_.fetch_add(1, std::memory_order_acq_rel);
   }
@@ -207,6 +234,20 @@ public:
     ReadPage(page_id, buffer);
     return reinterpret_cast<void*>(buffer);
   }
+
+  char* AllocateBuffer() override {
+    char* buf = (char*)spdk_zmalloc(
+        PAGE_SIZE, 64, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+    CHECK_NE(buf, nullptr) << "Failed to allocate DMA buffer";
+    return buf;
+  }
+  char* AllocateBuffer(uint64_t page_count) override {
+    char* buf = (char*)spdk_zmalloc(
+        PAGE_SIZE * page_count, 64, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+    CHECK_NE(buf, nullptr) << "Failed to allocate DMA buffer (" << page_count << " pages)";
+    return buf;
+  }
+  void FreeBuffer(char* buf) override { spdk_free(buf); }
 
   // Unpin a page, if dirty, write it back
   void Unpin(coroutine<void>::push_type& sink,
@@ -239,8 +280,10 @@ public:
         io_complete,
         (void*)index,
         0);
-    if (ret == -ENOMEM)
-      throw std::runtime_error("Failed to read page");
+    if (ret != 0) {
+      pending--;
+      throw std::runtime_error("Failed to read page:" + std::to_string(ret));
+    }
     sink();
   }
   void ReadPageSync(PageID_t page_id, char* buffer) override {
@@ -255,8 +298,10 @@ public:
         io_complete,
         (void*)(-1),
         0);
-    if (ret == -ENOMEM)
-      throw std::runtime_error("Failed to read page");
+    if (ret != 0) {
+      pending--;
+      throw std::runtime_error("Failed to read page:" + std::to_string(ret));
+    }
     while (pending > 0) {
       spdk_nvme_qpair_process_completions(qpair, 0);
     }
@@ -277,12 +322,19 @@ public:
         io_complete,
         (void*)index,
         0);
-    if (ret == -ENOMEM)
-      throw std::runtime_error("Failed to write page");
+    if (ret != 0) {
+      pending--;
+      throw std::runtime_error("Failed to write page:" + std::to_string(ret));
+    }
     sink();
   }
   void WritePageSync(PageID_t page_id, char* buffer) override {
+    // LOG(INFO) << "WritePageSync: page_id=" << page_id
+    //           << " qpair_initialized=" << ThreadQpair::instance().initialized
+    //           << " pending=" << pending
+    //           << " thread=" << std::this_thread::get_id();
     struct spdk_nvme_qpair* qpair = get_thread_qpair();
+    // LOG(INFO) << "WritePageSync: qpair=" << (void*)qpair;
     pending++;
     int ret = spdk_nvme_ns_cmd_write(
         ns_entry.ns,
@@ -293,15 +345,75 @@ public:
         io_complete,
         (void*)(-1),
         0);
-    if (ret == -ENOMEM)
-      throw std::runtime_error("Failed to write page");
+   // LOG(INFO) << "WritePageSync: cmd_write ret=" << ret;
+    if (ret != 0) {
+      pending--;
+      throw std::runtime_error("Failed to write page:" + std::to_string(ret));
+    }
+    int poll_count = 0;
     while (pending > 0) {
-      spdk_nvme_qpair_process_completions(qpair, 0);
+      int n = spdk_nvme_qpair_process_completions(qpair, 0);
+      poll_count++;
+      if (poll_count % 1000000 == 0)
+        LOG(WARNING) << "WritePageSync: stuck polling, pending=" << pending
+                     << " poll_count=" << poll_count << " completions=" << n;
     }
   }
 
   void PollCompletion() override {
     struct spdk_nvme_qpair* qpair = get_thread_qpair();
     spdk_nvme_qpair_process_completions(qpair, 0);
+  }
+
+  void BatchWritePages(const std::vector<IOEntry>& entries) override {
+    if (entries.empty()) return;
+    struct spdk_nvme_qpair* qpair = get_thread_qpair();
+    int max_inflight = std::max(queue_cnt / 2, 1);
+    size_t submitted = 0;
+    int inflight = 0;
+    uint32_t sectors_per_page = PAGE_SIZE / spdk_nvme_ns_get_sector_size(ns_entry.ns);
+
+    while (submitted < entries.size() || inflight > 0) {
+      while (submitted < entries.size() && inflight < max_inflight) {
+        auto& e = entries[submitted];
+        int ret = spdk_nvme_ns_cmd_write(
+            ns_entry.ns, qpair, e.buffer,
+            e.page_id * sectors_per_page,
+            e.page_count * sectors_per_page,
+            batch_write_complete, &inflight, 0);
+        if (ret != 0)
+          throw std::runtime_error("BatchWritePages: write failed: " +
+                                   std::to_string(ret));
+        inflight++;
+        submitted++;
+      }
+      spdk_nvme_qpair_process_completions(qpair, 0);
+    }
+  }
+
+  void BatchReadPages(const std::vector<IOEntry>& entries) override {
+    if (entries.empty()) return;
+    struct spdk_nvme_qpair* qpair = get_thread_qpair();
+    int max_inflight = std::max(queue_cnt / 2, 1);
+    size_t submitted = 0;
+    int inflight = 0;
+    uint32_t sectors_per_page = PAGE_SIZE / spdk_nvme_ns_get_sector_size(ns_entry.ns);
+
+    while (submitted < entries.size() || inflight > 0) {
+      while (submitted < entries.size() && inflight < max_inflight) {
+        auto& e = entries[submitted];
+        int ret = spdk_nvme_ns_cmd_read(
+            ns_entry.ns, qpair, e.buffer,
+            e.page_id * sectors_per_page,
+            e.page_count * sectors_per_page,
+            batch_write_complete, &inflight, 0);
+        if (ret != 0)
+          throw std::runtime_error("BatchReadPages: read failed: " +
+                                   std::to_string(ret));
+        inflight++;
+        submitted++;
+      }
+      spdk_nvme_qpair_process_completions(qpair, 0);
+    }
   }
 };
