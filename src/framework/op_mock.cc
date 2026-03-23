@@ -191,10 +191,11 @@ void KVClientOp::GetPretchResult(uint64_t prefetch_id,
   prefetch_results_.erase(it); // consume result to avoid unbounded growth
 }
 
-void KVClientOp::GetPretchResultFlat(uint64_t prefetch_id,
-                                     std::vector<float>* values,
-                                     int64_t* num_rows,
-                                     int64_t embedding_dim) {
+void KVClientOp::GetPretchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
   std::lock_guard<std::mutex> lock(mtx_);
   auto it = prefetch_results_.find(prefetch_id);
   if (it == prefetch_results_.end()) {
@@ -205,7 +206,9 @@ void KVClientOp::GetPretchResultFlat(uint64_t prefetch_id,
   }
 
   *num_rows = static_cast<int64_t>(it->second.size());
-  values->assign(static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim), 0.0f);
+  values->assign(
+      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim),
+      0.0f);
   for (int64_t i = 0; i < *num_rows; ++i) {
     const auto& row = it->second[static_cast<size_t>(i)];
     const int64_t copy_d =

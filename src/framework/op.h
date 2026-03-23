@@ -88,10 +88,11 @@ public:
                                  // prefetch_id is complete.
   virtual void GetPretchResult(uint64_t prefetch_id,
                                std::vector<std::vector<float>>* values) = 0;
-  virtual void GetPretchResultFlat(uint64_t prefetch_id,
-                                   std::vector<float>* values,
-                                   int64_t* num_rows,
-                                   int64_t embedding_dim) = 0;
+  virtual void GetPretchResultFlat(
+      uint64_t prefetch_id,
+      std::vector<float>* values,
+      int64_t* num_rows,
+      int64_t embedding_dim) = 0;
 
   virtual uint64_t
   EmbWriteAsync(const RecTensor& keys,

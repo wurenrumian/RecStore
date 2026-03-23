@@ -42,11 +42,12 @@ using recstoreps::UpdateParameterResponse;
 
 namespace {
 
-int BuildUpdateBlocksFromFlat(const base::ConstArray<uint64_t>& keys,
-                              const float* grads,
-                              int64_t num_rows,
-                              int64_t embedding_dim,
-                              std::vector<std::string>* blocks) {
+int BuildUpdateBlocksFromFlat(
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim,
+    std::vector<std::string>* blocks) {
   if (grads == nullptr) {
     LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
     return -1;
@@ -57,8 +58,8 @@ int BuildUpdateBlocksFromFlat(const base::ConstArray<uint64_t>& keys,
     return -1;
   }
   if (keys.Size() != static_cast<size_t>(num_rows)) {
-    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: " << keys.Size()
-               << " vs " << num_rows;
+    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: "
+               << keys.Size() << " vs " << num_rows;
     return -1;
   }
 
@@ -579,10 +580,11 @@ bool GRPCParameterClient::GetPrefetchResult(
   return true;
 }
 
-bool GRPCParameterClient::GetPrefetchResultFlat(uint64_t prefetch_id,
-                                                std::vector<float>* values,
-                                                int64_t* num_rows,
-                                                int64_t embedding_dim) {
+bool GRPCParameterClient::GetPrefetchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
   auto it = prefetch_batches_.find(prefetch_id);
   if (it == prefetch_batches_.end()) {
     LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
@@ -602,7 +604,8 @@ bool GRPCParameterClient::GetPrefetchResultFlat(uint64_t prefetch_id,
 
   *num_rows = static_cast<int64_t>(total_keys);
   values->assign(
-      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim), 0.0f);
+      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim),
+      0.0f);
 
   size_t row_offset = 0;
   for (int i = 0; i < request_num; ++i) {
@@ -617,7 +620,8 @@ bool GRPCParameterClient::GetPrefetchResultFlat(uint64_t prefetch_id,
       return false;
     }
 
-    for (int index = 0; index < parameters->item_size(); ++index, ++row_offset) {
+    for (int index = 0; index < parameters->item_size();
+         ++index, ++row_offset) {
       auto item = parameters->item(index);
       if (item->dim != 0) {
         const int64_t copy_d =
@@ -749,11 +753,12 @@ int GRPCParameterClient::UpdateParameter(
   return response.success() ? 0 : -1;
 }
 
-int GRPCParameterClient::UpdateParameterFlat(const std::string& table_name,
-                                             const base::ConstArray<uint64_t>& keys,
-                                             const float* grads,
-                                             int64_t num_rows,
-                                             int64_t embedding_dim) {
+int GRPCParameterClient::UpdateParameterFlat(
+    const std::string& table_name,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim) {
   if (keys.Size() == 0) {
     return 0;
   }

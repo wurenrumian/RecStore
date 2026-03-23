@@ -490,8 +490,8 @@ int DistributedBRPCParameterClient::UpdateParameterFlat(
     return -1;
   }
   if (keys.Size() != static_cast<size_t>(num_rows)) {
-    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: " << keys.Size()
-               << " vs " << num_rows;
+    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: "
+               << keys.Size() << " vs " << num_rows;
     return -1;
   }
 
