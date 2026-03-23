@@ -393,15 +393,8 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   base::ConstArray<uint64_t> keys_array(keys_data, L);
 
   const float* grads_data = grads.data_as<float>();
-  std::vector<std::vector<float>> grads_vector;
-  grads_vector.reserve(L);
-  for (int64_t i = 0; i < L; ++i) {
-    std::vector<float> row(D);
-    std::memcpy(row.data(), grads_data + i * D, D * sizeof(float));
-    grads_vector.push_back(std::move(row));
-  }
-
-  int ret = ps_client_->UpdateParameter(table_name, keys_array, &grads_vector);
+  int ret =
+      ps_client_->UpdateParameterFlat(table_name, keys_array, grads_data, L, D);
   if (ret != 0) {
     throw std::runtime_error("Failed to update embeddings via PS client.");
   }
@@ -581,6 +574,15 @@ void KVClientOp::WaitForPrefetch(uint64_t prefetch_id) {
 void KVClientOp::GetPretchResult(uint64_t prefetch_id,
                                  std::vector<std::vector<float>>* values) {
   ps_client_->GetPrefetchResult(prefetch_id, values);
+}
+
+void KVClientOp::GetPretchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
+  ps_client_->GetPrefetchResultFlat(
+      prefetch_id, values, num_rows, embedding_dim);
 }
 
 bool KVClientOp::IsWriteDone(uint64_t write_id) {

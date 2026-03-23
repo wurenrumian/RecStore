@@ -5,6 +5,7 @@
 #  include <vector>
 
 #  include "base/tensor.h"
+#  include <cstring>
 #  include <cstdlib>
 #  include <iostream>
 #  include <stdexcept>
@@ -188,6 +189,37 @@ void KVClientOp::GetPretchResult(uint64_t prefetch_id,
   }
   *values = it->second;
   prefetch_results_.erase(it); // consume result to avoid unbounded growth
+}
+
+void KVClientOp::GetPretchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  auto it = prefetch_results_.find(prefetch_id);
+  if (it == prefetch_results_.end()) {
+    throw std::runtime_error("Invalid prefetch_id or result already consumed");
+  }
+  if (!values || !num_rows) {
+    throw std::runtime_error("flat prefetch output pointer is null");
+  }
+
+  *num_rows = static_cast<int64_t>(it->second.size());
+  values->assign(
+      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim),
+      0.0f);
+  for (int64_t i = 0; i < *num_rows; ++i) {
+    const auto& row = it->second[static_cast<size_t>(i)];
+    const int64_t copy_d =
+        std::min<int64_t>(embedding_dim, static_cast<int64_t>(row.size()));
+    if (copy_d > 0) {
+      std::memcpy(values->data() + i * embedding_dim,
+                  row.data(),
+                  static_cast<size_t>(copy_d) * sizeof(float));
+    }
+  }
+  prefetch_results_.erase(it);
 }
 uint64_t KVClientOp::EmbPrefetch(const base::RecTensor& keys,
                                  const base::RecTensor& values) {

@@ -4,6 +4,7 @@
 #include <grpcpp/grpcpp.h>
 
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <string>
 #include <vector>
@@ -38,6 +39,43 @@ using recstoreps::PutParameterRequest;
 using recstoreps::PutParameterResponse;
 using recstoreps::UpdateParameterRequest;
 using recstoreps::UpdateParameterResponse;
+
+namespace {
+
+int BuildUpdateBlocksFromFlat(
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim,
+    std::vector<std::string>* blocks) {
+  if (grads == nullptr) {
+    LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
+    return -1;
+  }
+  if (num_rows < 0 || embedding_dim <= 0) {
+    LOG(ERROR) << "UpdateParameterFlat invalid shape: rows=" << num_rows
+               << " dim=" << embedding_dim;
+    return -1;
+  }
+  if (keys.Size() != static_cast<size_t>(num_rows)) {
+    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: "
+               << keys.Size() << " vs " << num_rows;
+    return -1;
+  }
+
+  ParameterCompressor compressor;
+  for (int64_t i = 0; i < num_rows; ++i) {
+    ParameterPack pack;
+    pack.key      = keys[static_cast<size_t>(i)];
+    pack.dim      = embedding_dim;
+    pack.emb_data = grads + i * embedding_dim;
+    compressor.AddItem(pack, blocks);
+  }
+  compressor.ToBlock(blocks);
+  return 0;
+}
+
+} // namespace
 
 DEFINE_int32(get_parameter_threads, 4, "get clients per shard");
 DEFINE_bool(parameter_client_random_init, false, "");
@@ -542,6 +580,62 @@ bool GRPCParameterClient::GetPrefetchResult(
   return true;
 }
 
+bool GRPCParameterClient::GetPrefetchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
+  auto it = prefetch_batches_.find(prefetch_id);
+  if (it == prefetch_batches_.end()) {
+    LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
+    return false;
+  }
+  if (values == nullptr || num_rows == nullptr) {
+    LOG(ERROR) << "GetPrefetchResultFlat output pointer is null";
+    return false;
+  }
+
+  auto& pb        = it->second;
+  int request_num = pb.batch_size_;
+  int total_keys  = 0;
+  for (const auto& size : pb.key_sizes_) {
+    total_keys += size;
+  }
+
+  *num_rows = static_cast<int64_t>(total_keys);
+  values->assign(
+      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim),
+      0.0f);
+
+  size_t row_offset = 0;
+  for (int i = 0; i < request_num; ++i) {
+    auto& response  = pb.responses_[i];
+    int key_size    = pb.key_sizes_[i];
+    auto parameters = reinterpret_cast<const ParameterCompressReader*>(
+        response.parameter_value().data());
+
+    if (unlikely(parameters->size != key_size)) {
+      LOG(ERROR) << "GetParameter error: " << parameters->size << " vs "
+                 << key_size;
+      return false;
+    }
+
+    for (int index = 0; index < parameters->item_size();
+         ++index, ++row_offset) {
+      auto item = parameters->item(index);
+      if (item->dim != 0) {
+        const int64_t copy_d =
+            std::min<int64_t>(embedding_dim, static_cast<int64_t>(item->dim));
+        std::memcpy(values->data() + row_offset * embedding_dim,
+                    item->embedding,
+                    static_cast<size_t>(copy_d) * sizeof(float));
+      }
+    }
+  }
+
+  return true;
+}
+
 bool GRPCParameterClient::ClearPS() {
   CommandRequest request;
   CommandResponse response;
@@ -654,6 +748,40 @@ int GRPCParameterClient::UpdateParameter(
       stubs_[0]->UpdateParameter(&context, request, &response);
   if (!status.ok()) {
     LOG(ERROR) << "UpdateParameter RPC failed: " << status.error_message();
+    return -1;
+  }
+  return response.success() ? 0 : -1;
+}
+
+int GRPCParameterClient::UpdateParameterFlat(
+    const std::string& table_name,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim) {
+  if (keys.Size() == 0) {
+    return 0;
+  }
+
+  std::vector<std::string> blocks;
+  if (BuildUpdateBlocksFromFlat(
+          keys, grads, num_rows, embedding_dim, &blocks) != 0) {
+    return -1;
+  }
+  if (blocks.empty()) {
+    return 0;
+  }
+
+  UpdateParameterRequest request;
+  UpdateParameterResponse response;
+  request.set_table_name(table_name);
+  request.mutable_gradients()->swap(blocks[0]);
+
+  grpc::ClientContext context;
+  grpc::Status status =
+      stubs_[0]->UpdateParameter(&context, request, &response);
+  if (!status.ok()) {
+    LOG(ERROR) << "UpdateParameterFlat RPC failed: " << status.error_message();
     return -1;
   }
   return response.success() ? 0 : -1;

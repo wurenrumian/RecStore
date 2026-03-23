@@ -451,6 +451,36 @@ int DistributedGRPCParameterClient::UpdateParameter(
   return 0;
 }
 
+int DistributedGRPCParameterClient::UpdateParameterFlat(
+    const std::string& table_name,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim) {
+  if (grads == nullptr) {
+    LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
+    return -1;
+  }
+  if (num_rows < 0 || embedding_dim <= 0) {
+    LOG(ERROR) << "UpdateParameterFlat invalid shape: rows=" << num_rows
+               << " dim=" << embedding_dim;
+    return -1;
+  }
+  if (keys.Size() != static_cast<size_t>(num_rows)) {
+    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: "
+               << keys.Size() << " vs " << num_rows;
+    return -1;
+  }
+
+  std::vector<std::vector<float>> row_grads;
+  row_grads.reserve(static_cast<size_t>(num_rows));
+  for (int64_t i = 0; i < num_rows; ++i) {
+    const float* row = grads + i * embedding_dim;
+    row_grads.emplace_back(row, row + embedding_dim);
+  }
+  return UpdateParameter(table_name, keys, &row_grads);
+}
+
 int DistributedGRPCParameterClient::InitEmbeddingTable(
     const std::string& table_name,
     const recstore::EmbeddingTableConfig& config) {
@@ -496,6 +526,16 @@ bool DistributedGRPCParameterClient::GetPrefetchResult(
   // 暂时返回false，表示不支持
   LOG(WARNING)
       << "GetPrefetchResult not fully implemented for distributed client";
+  return false;
+}
+
+bool DistributedGRPCParameterClient::GetPrefetchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
+  LOG(WARNING)
+      << "GetPrefetchResultFlat not fully implemented for distributed client";
   return false;
 }
 

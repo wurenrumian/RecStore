@@ -4,6 +4,7 @@
 #include <fmt/core.h>
 
 #include <cstdint>
+#include <cstring>
 #include <future>
 #include <string>
 #include <vector>
@@ -51,6 +52,41 @@ const ParameterCompressReader* ExtractGetResponseReader(
   *payload_size = response.parameter_value().size();
   return reinterpret_cast<const ParameterCompressReader*>(
       response.parameter_value().data());
+}
+
+} // namespace
+
+namespace {
+
+int BuildUpdateBlocksFromFlat(
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim,
+    ParameterCompressor* compressor) {
+  if (grads == nullptr) {
+    LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
+    return -1;
+  }
+  if (num_rows < 0 || embedding_dim <= 0) {
+    LOG(ERROR) << "UpdateParameterFlat invalid shape: rows=" << num_rows
+               << " dim=" << embedding_dim;
+    return -1;
+  }
+  if (keys.Size() != static_cast<size_t>(num_rows)) {
+    LOG(ERROR) << "UpdateParameterFlat keys/grads size mismatch: "
+               << keys.Size() << " vs " << num_rows;
+    return -1;
+  }
+
+  for (int64_t i = 0; i < num_rows; ++i) {
+    ParameterPack pack;
+    pack.key      = keys[static_cast<size_t>(i)];
+    pack.dim      = embedding_dim;
+    pack.emb_data = grads + i * embedding_dim;
+    compressor->AddItem(pack, nullptr);
+  }
+  return 0;
 }
 
 } // namespace
@@ -571,10 +607,18 @@ bool BRPCParameterClient::IsPrefetchDone(uint64_t prefetch_id) {
 }
 
 void BRPCParameterClient::WaitForPrefetch(uint64_t prefetch_id) {
-  while (!IsPrefetchDone(prefetch_id)) {
-    // std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    // 可以考虑使用 bthread_usleep 或者其他机制，但这里简单轮询
+  auto it = prefetch_batches_.find(prefetch_id);
+  if (it == prefetch_batches_.end()) {
+    LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
+    return;
   }
+  auto& pb = it->second;
+  for (int i = 0; i < pb.batch_size_; ++i) {
+    if (pb.controllers_[i]) {
+      brpc::Join(pb.controllers_[i]->call_id());
+    }
+  }
+  pb.completed_count_ = pb.batch_size_;
 }
 
 bool BRPCParameterClient::GetPrefetchResult(
@@ -634,6 +678,76 @@ bool BRPCParameterClient::GetPrefetchResult(
   // 清理
   prefetch_batches_.erase(it);
 
+  return true;
+}
+
+bool BRPCParameterClient::GetPrefetchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
+  auto it = prefetch_batches_.find(prefetch_id);
+  if (it == prefetch_batches_.end()) {
+    LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
+    return false;
+  }
+  if (values == nullptr || num_rows == nullptr) {
+    LOG(ERROR) << "GetPrefetchResultFlat output pointer is null";
+    return false;
+  }
+
+  auto& pb        = it->second;
+  int request_num = pb.batch_size_;
+  int total_keys  = 0;
+  for (const auto& size : pb.key_sizes_) {
+    total_keys += size;
+  }
+
+  *num_rows = static_cast<int64_t>(total_keys);
+  values->assign(
+      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim),
+      0.0f);
+
+  size_t row_offset = 0;
+  for (int i = 0; i < request_num; ++i) {
+    if (pb.controllers_[i]->Failed()) {
+      LOG(ERROR) << "Prefetch request failed: "
+                 << pb.controllers_[i]->ErrorText();
+      return false;
+    }
+
+    auto& response = pb.responses_[i];
+    int key_size   = pb.key_sizes_[i];
+    std::string payload_storage;
+    int payload_size = 0;
+    auto parameters  = ExtractGetResponseReader(
+        *pb.controllers_[i], response, &payload_storage, &payload_size);
+
+    if (parameters == nullptr || !parameters->Valid(payload_size)) {
+      LOG(ERROR) << "Prefetch invalid payload: " << payload_size;
+      return false;
+    }
+
+    if (unlikely(parameters->size != key_size)) {
+      LOG(ERROR) << "GetParameter error: " << parameters->size << " vs "
+                 << key_size;
+      return false;
+    }
+
+    for (int index = 0; index < parameters->item_size();
+         ++index, ++row_offset) {
+      auto item = parameters->item(index);
+      if (item->dim != 0) {
+        const int64_t copy_d =
+            std::min<int64_t>(embedding_dim, static_cast<int64_t>(item->dim));
+        std::memcpy(values->data() + row_offset * embedding_dim,
+                    item->embedding,
+                    static_cast<size_t>(copy_d) * sizeof(float));
+      }
+    }
+  }
+
+  prefetch_batches_.erase(it);
   return true;
 }
 
@@ -830,6 +944,53 @@ int BRPCParameterClient::UpdateParameter(
           .count();
   report("ps_client_latency",
          "UpdateParameter",
+         "latency_us",
+         static_cast<double>(duration));
+#endif
+
+  return response.success() ? 0 : -1;
+}
+
+int BRPCParameterClient::UpdateParameterFlat(
+    const std::string& table_name,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#endif
+  if (keys.Size() == 0) {
+    return 0;
+  }
+
+  ParameterCompressor compressor;
+  if (BuildUpdateBlocksFromFlat(
+          keys, grads, num_rows, embedding_dim, &compressor) != 0) {
+    return -1;
+  }
+
+  UpdateParameterRequest request;
+  UpdateParameterResponse response;
+  request.set_table_name(table_name);
+
+  brpc::Controller cntl;
+  compressor.AppendToIOBuf(&cntl.request_attachment());
+  recstoreps_brpc::ParameterService_Stub stub(channel_.get());
+  stub.UpdateParameter(&cntl, &request, &response, nullptr);
+  if (cntl.Failed()) {
+    LOG(ERROR) << "UpdateParameterFlat RPC failed: " << cntl.ErrorText();
+    return -1;
+  }
+
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  report("ps_client_latency",
+         "UpdateParameterFlat",
          "latency_us",
          static_cast<double>(duration));
 #endif

@@ -46,13 +46,22 @@ public:
   void WaitForPrefetch(uint64_t prefetch_id) override;
   bool GetPrefetchResult(uint64_t prefetch_id,
                          std::vector<std::vector<float>>* values) override;
+  bool GetPrefetchResultFlat(uint64_t prefetch_id,
+                             std::vector<float>* values,
+                             int64_t* num_rows,
+                             int64_t embedding_dim) override;
 
   int UpdateParameter(const std::string& table_name,
                       const base::ConstArray<uint64_t>& keys,
-                      const std::vector<std::vector<float>>* grads);
+                      const std::vector<std::vector<float>>* grads) override;
+  int UpdateParameterFlat(const std::string& table_name,
+                          const base::ConstArray<uint64_t>& keys,
+                          const float* grads,
+                          int64_t num_rows,
+                          int64_t embedding_dim) override;
 
   int InitEmbeddingTable(const std::string& table_name,
-                         const recstore::EmbeddingTableConfig& config);
+                         const recstore::EmbeddingTableConfig& config) override;
 
   // 扩展接口
   bool GetParameter(const base::ConstArray<uint64_t>& keys,

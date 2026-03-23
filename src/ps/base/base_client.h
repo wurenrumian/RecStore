@@ -34,6 +34,12 @@ public:
   virtual int UpdateParameter(const std::string& table_name,
                               const base::ConstArray<uint64_t>& keys,
                               const std::vector<std::vector<float>>* grads) = 0;
+  virtual int UpdateParameterFlat(
+      const std::string& table_name,
+      const base::ConstArray<uint64_t>& keys,
+      const float* grads,
+      int64_t num_rows,
+      int64_t embedding_dim) = 0;
 
   virtual int InitEmbeddingTable(const std::string& table_name,
                                  const EmbeddingTableConfig& config) = 0;
@@ -48,6 +54,11 @@ public:
   virtual void WaitForPrefetch(uint64_t prefetch_id)                      = 0;
   virtual bool GetPrefetchResult(uint64_t prefetch_id,
                                  std::vector<std::vector<float>>* values) = 0;
+  virtual bool GetPrefetchResultFlat(
+      uint64_t prefetch_id,
+      std::vector<float>* values,
+      int64_t* num_rows,
+      int64_t embedding_dim) = 0;
 };
 
 } // namespace recstore
