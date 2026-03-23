@@ -1,0 +1,262 @@
+name: Run Tests (CPU)
+
+on:
+  workflow_run:
+    workflows: ["Build Artifacts (CPU)"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  run-op-ps-server-test:
+    name: Test ps_server and OP
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TORCH_VERSION: "2.5.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+
+      - name: Wait for required build artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const required = [
+              'recstore-cpu-torch-wheel',
+              'recstore-cpu-ps-server-package',
+              'recstore-cpu-ops-package',
+            ];
+            const runId = context.payload.workflow_run.id;
+            const timeoutMs = 10 * 60 * 1000;
+            const intervalMs = 10 * 1000;
+            const start = Date.now();
+
+            while (Date.now() - start < timeoutMs) {
+              const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              });
+
+              const names = new Set(data.artifacts.map((artifact) => artifact.name));
+              const missing = required.filter((name) => !names.has(name));
+
+              if (missing.length === 0) {
+                core.info(`Artifacts are ready: ${required.join(', ')}`);
+                return;
+              }
+
+              core.info(`Waiting for artifacts: ${missing.join(', ')}`);
+              await new Promise((resolve) => setTimeout(resolve, intervalMs));
+            }
+
+            core.setFailed(`Timed out waiting for build artifacts: ${required.join(', ')}`);
+
+      - name: Install host prerequisites
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          bash ci/env/init_host_prereqs.sh
+
+      - name: Download torch wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: recstore-cpu-torch-wheel
+          path: wheel
+
+      - name: Install wheel
+        run: |
+          set -euo pipefail
+          WHL=$(ls -1 wheel/torch-${TORCH_VERSION}*linux_x86_64.whl | head -n1)
+          python3 -m pip install --no-cache-dir "$WHL"
+
+      - name: Download ps_server package artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: recstore-cpu-ps-server-package
+          path: runner
+
+      - name: Download recstore ops package artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: recstore-cpu-ops-package
+          path: runner
+
+      - name: Extract packages
+        run: |
+          set -euo pipefail
+          mkdir -p runner/extracted/ps-server runner/extracted/recstore-ops
+          tar -xzf runner/recstore-cpu-ps-server-package.tar.gz -C runner/extracted/ps-server
+          tar -xzf runner/recstore-cpu-ops-package.tar.gz -C runner/extracted/recstore-ops
+          echo "Extracted ps_server package:" && find runner/extracted/ps-server -maxdepth 3 -type f -print
+          echo "Extracted recstore ops package:" && find runner/extracted/recstore-ops -maxdepth 3 -type f -print
+
+      - name: Place RecStore OP into build/lib
+        run: |
+          set -euo pipefail
+          OPS_ROOT=runner/extracted/recstore-ops/package
+          mkdir -p "${OPS_ROOT}/lib"
+          if [ -f "${OPS_ROOT}/lib/lib_recstore_ops.so" ]; then
+            echo "lib_recstore_ops.so already present in package/lib; skipping copy"
+          elif [ -f "${OPS_ROOT}/deps/lib/lib_recstore_ops.so" ]; then
+            cp "${OPS_ROOT}/deps/lib/lib_recstore_ops.so" "${OPS_ROOT}/lib/"
+          else
+            echo "lib_recstore_ops.so not found in packed recstore ops" && exit 1
+          fi
+          mkdir -p build/lib
+          cp -f "${OPS_ROOT}/lib/lib_recstore_ops.so" build/lib/
+          if [ -d "${OPS_ROOT}/deps/lib" ]; then
+            cp -f "${OPS_ROOT}/deps/lib/"*.so* build/lib/ || true
+            echo "Copied runtime deps (*.so*) to build/lib"
+          fi
+
+      - name: Install torchrec and dependencies
+        run: |
+          set -euo pipefail
+          bash dockerfiles/init_dlrm.sh --mirror=0
+
+      - name: Fix config to reduce resource usage
+        run: |
+          set -euo pipefail
+          bash ci/env/ci_fix_config.sh || true
+
+      - name: Show recstore_config after fix
+        run: |
+          set -euo pipefail
+          echo "===== recstore_config.json (after fix) ====="
+          cat recstore_config.json || true
+
+      - name: Run ps_server package
+        run: |
+          set -euo pipefail
+          export GLOG_logtostderr=1
+          export GLOG_v=1
+          PKG_ROOT=runner/extracted/ps-server/package
+          python3 ci/pack/runner.py "${PKG_ROOT}" bin/ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/recstore-cpu-ps-server.log --inject-rpath --keep-alive
+
+      - name: Run ci/test/test_op.sh
+        run: |
+          set -euo pipefail
+          bash ci/test/test_op.sh
+
+      - name: Stop ps_server
+        if: always()
+        run: |
+          set -euo pipefail
+          pkill -f ps_server || true
+
+      - name: Upload op and ps_server logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recstore-cpu-op-ps-server-logs
+          path: runner/logs/
+
+  run-ycsb-benchmark:
+    name: Test YCSB Benchmarks
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TORCH_VERSION: "2.5.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+
+      - name: Wait for required build artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const required = [
+              'recstore-cpu-torch-wheel',
+              'recstore-cpu-ycsb-package',
+            ];
+            const runId = context.payload.workflow_run.id;
+            const timeoutMs = 10 * 60 * 1000;
+            const intervalMs = 10 * 1000;
+            const start = Date.now();
+
+            while (Date.now() - start < timeoutMs) {
+              const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              });
+
+              const names = new Set(data.artifacts.map((artifact) => artifact.name));
+              const missing = required.filter((name) => !names.has(name));
+
+              if (missing.length === 0) {
+                core.info(`Artifacts are ready: ${required.join(', ')}`);
+                return;
+              }
+
+              core.info(`Waiting for artifacts: ${missing.join(', ')}`);
+              await new Promise((resolve) => setTimeout(resolve, intervalMs));
+            }
+
+            core.setFailed(`Timed out waiting for build artifacts: ${required.join(', ')}`);
+
+      - name: Install host prerequisites
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          bash ci/env/init_host_prereqs.sh
+
+      - name: Download torch wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: recstore-cpu-torch-wheel
+          path: wheel
+
+      - name: Install wheel
+        run: |
+          set -euo pipefail
+          WHL=$(ls -1 wheel/torch-${TORCH_VERSION}*linux_x86_64.whl | head -n1)
+          python3 -m pip install --no-cache-dir "$WHL"
+
+      - name: Download YCSB package artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: recstore-cpu-ycsb-package
+          path: runner
+
+      - name: Extract YCSB package
+        run: |
+          set -euo pipefail
+          mkdir -p runner/extracted-ycsb
+          tar -xzf runner/recstore-cpu-ycsb-package.tar.gz -C runner/extracted-ycsb
+          echo "Extracted YCSB contents:" && find runner/extracted-ycsb -maxdepth 3
+
+      - name: Run YCSB Test Scripts
+        run: |
+          set -euo pipefail
+          PKG_ROOT=$(pwd)/runner/extracted-ycsb/package
+          bash ci/test/test_ycsb.sh "${PKG_ROOT}"
+
+      - name: Upload YCSB logs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recstore-cpu-ycsb-logs
+          path: dbtestlog/*.log
