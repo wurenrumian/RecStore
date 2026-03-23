@@ -192,20 +192,21 @@ public:
   }
 
   void BatchWritePages(const std::vector<IOEntry>& entries) override {
-    if (entries.empty()) return;
+    if (entries.empty())
+      return;
     struct io_uring* ring = get_thread_ring();
-    int max_inflight = std::max(queue_cnt / 2, 1);
-    size_t submitted = 0;
-    int inflight = 0;
+    int max_inflight      = std::max(queue_cnt / 2, 1);
+    size_t submitted      = 0;
+    int inflight          = 0;
 
     while (submitted < entries.size() || inflight > 0) {
       while (submitted < entries.size() && inflight < max_inflight) {
-        auto& e = entries[submitted];
-        uint64_t total_bytes = e.page_count * PAGE_SIZE;
+        auto& e                  = entries[submitted];
+        uint64_t total_bytes     = e.page_count * PAGE_SIZE;
         struct io_uring_sqe* sqe = io_uring_get_sqe(ring);
         CHECK_NE(sqe, nullptr) << "Failed to get SQE for batch write";
-        io_uring_prep_write(sqe, fd, e.buffer, total_bytes,
-                            e.page_id * PAGE_SIZE);
+        io_uring_prep_write(
+            sqe, fd, e.buffer, total_bytes, e.page_id * PAGE_SIZE);
         sqe->user_data = 0;
         inflight++;
         submitted++;
@@ -214,8 +215,8 @@ public:
       CHECK_GE(ret, 0) << "Failed to submit batch writes";
       struct io_uring_cqe* cqe;
       while (inflight > 0 && io_uring_peek_cqe(ring, &cqe) == 0) {
-        CHECK_GE(cqe->res, 0) << "Batch write failed: " +
-                                      std::string(strerror(-cqe->res));
+        CHECK_GE(cqe->res, 0)
+            << "Batch write failed: " + std::string(strerror(-cqe->res));
         io_uring_cqe_seen(ring, cqe);
         inflight--;
       }
@@ -223,20 +224,21 @@ public:
   }
 
   void BatchReadPages(const std::vector<IOEntry>& entries) override {
-    if (entries.empty()) return;
+    if (entries.empty())
+      return;
     struct io_uring* ring = get_thread_ring();
-    int max_inflight = std::max(queue_cnt / 2, 1);
-    size_t submitted = 0;
-    int inflight = 0;
+    int max_inflight      = std::max(queue_cnt / 2, 1);
+    size_t submitted      = 0;
+    int inflight          = 0;
 
     while (submitted < entries.size() || inflight > 0) {
       while (submitted < entries.size() && inflight < max_inflight) {
-        auto& e = entries[submitted];
-        uint64_t total_bytes = e.page_count * PAGE_SIZE;
+        auto& e                  = entries[submitted];
+        uint64_t total_bytes     = e.page_count * PAGE_SIZE;
         struct io_uring_sqe* sqe = io_uring_get_sqe(ring);
         CHECK_NE(sqe, nullptr) << "Failed to get SQE for batch read";
-        io_uring_prep_read(sqe, fd, e.buffer, total_bytes,
-                           e.page_id * PAGE_SIZE);
+        io_uring_prep_read(
+            sqe, fd, e.buffer, total_bytes, e.page_id * PAGE_SIZE);
         sqe->user_data = 0;
         inflight++;
         submitted++;
@@ -245,8 +247,8 @@ public:
       CHECK_GE(ret, 0) << "Failed to submit batch reads";
       struct io_uring_cqe* cqe;
       while (inflight > 0 && io_uring_peek_cqe(ring, &cqe) == 0) {
-        CHECK_GE(cqe->res, 0) << "Batch read failed: " +
-                                      std::string(strerror(-cqe->res));
+        CHECK_GE(cqe->res, 0)
+            << "Batch read failed: " + std::string(strerror(-cqe->res));
         io_uring_cqe_seen(ring, cqe);
         inflight--;
       }

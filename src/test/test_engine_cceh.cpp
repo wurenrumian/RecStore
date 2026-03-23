@@ -182,7 +182,7 @@ TEST_F(KVEngineCCEHTest, ConcurrentBatchGet) {
 // BatchPut写入 + BatchGet读回，用float数据做roundtrip验证
 TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
   const int num_keys = 256;
-  const int floats_per_key = 128 / sizeof(float);  // value_size=128 → 32 floats
+  const int floats_per_key = 128 / sizeof(float); // value_size=128 → 32 floats
 
   // 构造每个key对应的float数据，key i 的第 j 个float = i * 100.0f + j
   std::vector<std::vector<float>> write_data(num_keys);
@@ -196,13 +196,14 @@ TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
   // 准备 keys 数组
   std::vector<uint64_t> keys(num_keys);
   for (int i = 0; i < num_keys; i++) {
-    keys[i] = i + 10000;  // 用 10000 开头的key，避免和其他测试冲突
+    keys[i] = i + 10000; // 用 10000 开头的key，避免和其他测试冲突
   }
 
   // 构造 BatchPut 需要的 vector<ConstArray<float>>
   std::vector<base::ConstArray<float>> values_in(num_keys);
   for (int i = 0; i < num_keys; i++) {
-    values_in[i] = base::ConstArray<float>(write_data[i].data(), write_data[i].size());
+    values_in[i] =
+        base::ConstArray<float>(write_data[i].data(), write_data[i].size());
   }
 
   // 调用 BatchPut 写入
@@ -218,7 +219,8 @@ TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
 
   // 逐key逐float比对
   for (int i = 0; i < num_keys; i++) {
-    ASSERT_GT(values_out[i].Size(), 0) << "Key " << keys[i] << " returned empty";
+    ASSERT_GT(values_out[i].Size(), 0)
+        << "Key " << keys[i] << " returned empty";
     ASSERT_EQ(values_out[i].Size(), floats_per_key)
         << "Key " << keys[i] << " dim mismatch";
     for (int j = 0; j < floats_per_key; j++) {

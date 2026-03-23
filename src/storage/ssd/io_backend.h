@@ -25,7 +25,8 @@ struct IOConfig {
   BackendType type;
   int queue_cnt;
   std::string file_path;
-  PageID_t page_id_offset = 0;  // Starting LBA offset for SPDK raw device partitioning
+  PageID_t page_id_offset =
+      0; // Starting LBA offset for SPDK raw device partitioning
   IOConfig(BackendType t           = BackendType::SPDK,
            int q                   = 512,
            const std::string& path = "/tmp/test.db",
@@ -35,7 +36,8 @@ struct IOConfig {
 
 class IOBackend {
 public:
-  IOBackend(IOConfig& config) : next_page_id(config.page_id_offset), queue_cnt(config.queue_cnt) {}
+  IOBackend(IOConfig& config)
+      : next_page_id(config.page_id_offset), queue_cnt(config.queue_cnt) {}
   virtual ~IOBackend() {}
   virtual void init() = 0;
 
@@ -49,12 +51,8 @@ public:
     WritePageSync(new_page_id, empty_page);
     return new_page_id;
   }
-  PageID_t GetNextPageID() {
-    return next_page_id;
-  }
-  void SetNextPageID(PageID_t page_id) {
-    next_page_id = page_id;
-  }
+  PageID_t GetNextPageID() { return next_page_id; }
+  void SetNextPageID(PageID_t page_id) { next_page_id = page_id; }
 
   void ReadPage(coroutine<void>::push_type& sink,
                 uint64_t index,
@@ -92,7 +90,7 @@ public:
   virtual char* AllocateBuffer() = 0;
   // Allocate a contiguous buffer of page_count pages (zero-filled).
   virtual char* AllocateBuffer(uint64_t page_count) = 0;
-  virtual void FreeBuffer(char* buf) = 0;
+  virtual void FreeBuffer(char* buf)                = 0;
 
   virtual void PollCompletion() = 0;
 
