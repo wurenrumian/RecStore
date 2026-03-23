@@ -1,8 +1,7 @@
-name: Build (CPU)
+name: Build Artifacts (CPU)
 
 on:
   push:
-    branches: [ main ]
     paths:
       - 'src/**'
       - 'model_zoo/**'
@@ -21,6 +20,7 @@ on:
 
 jobs:
   build:
+    name: Build Artifacts
     runs-on: ubuntu-latest
     env:
       TORCH_VERSION: "2.5.0"
@@ -76,11 +76,11 @@ jobs:
           WHL=$(ls -1 binary/torch-${TORCH_VERSION}*linux_x86_64.whl | head -n1)
           python3 -m pip install --no-cache-dir "$WHL"
 
-      - name: Upload torch wheel
+      - name: Upload torch wheel artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: torch-wheel
+          name: recstore-cpu-torch-wheel
           path: binary/torch-${{ env.TORCH_VERSION }}*linux_x86_64.whl
 
       - name: Configure CMake
@@ -99,203 +99,38 @@ jobs:
       - name: Pack artifacts
         run: |
           set -euo pipefail
-          bash ci/pack/pack_artifact.sh build/packed-ps-server.tar.gz build/bin/ps_server
-          bash ci/pack/pack_artifact.sh build/packed-recstore-ops.tar.gz build/lib/lib_recstore_ops.so
-          bash ci/pack/pack_artifact.sh build/packed-ycsb.tar.gz build/bin/ycsb
+          bash ci/pack/pack_artifact.sh build/recstore-cpu-ps-server-package.tar.gz build/bin/ps_server
+          bash ci/pack/pack_artifact.sh build/recstore-cpu-ops-package.tar.gz build/lib/lib_recstore_ops.so
+          bash ci/pack/pack_artifact.sh build/recstore-cpu-ycsb-package.tar.gz build/bin/ycsb
 
-      - name: Upload packed artifacts (bundle)
+      - name: Upload ps_server package artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: packed-bundle
-          path: |
-            build/packed-ps-server.tar.gz
-            build/packed-recstore-ops.tar.gz
-            build/packed-ycsb.tar.gz
+          name: recstore-cpu-ps-server-package
+          path: build/recstore-cpu-ps-server-package.tar.gz
 
-      - name: Upload build artifacts
+      - name: Upload recstore ops package artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recstore-cpu-ops-package
+          path: build/recstore-cpu-ops-package.tar.gz
+
+      - name: Upload ycsb package artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recstore-cpu-ycsb-package
+          path: build/recstore-cpu-ycsb-package.tar.gz
+
+      - name: Upload build logs artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
+          name: recstore-cpu-build-logs
           path: |
             init_env_*.log
             build/CMakeCache.txt
             build/CMakeCache.txt
             build/compile_commands.json
-
-  run-grpc-server:
-    name: Run GRPC & Test OP
-    needs: build
-    runs-on: ubuntu-latest
-    env:
-      TORCH_VERSION: "2.5.0"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: false
-          fetch-depth: 0
-
-      - name: Install host prerequisites
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          bash ci/env/init_host_prereqs.sh
-          # bash ci/fetch_ci.sh
-        
-      - name: Download torch wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: torch-wheel
-          path: wheel
-
-      - name: Install wheel
-        run: |
-          set -euo pipefail
-          ls -la build/lib || true
-          WHL=$(ls -1 wheel/torch-${TORCH_VERSION}*linux_x86_64.whl | head -n1)
-          python3 -m pip install --no-cache-dir "$WHL"
-
-      - name: Download packed artifacts bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: packed-bundle
-          path: runner
-
-      - name: Extract package
-        run: |
-          set -euo pipefail
-          mkdir -p runner/extracted
-          tar -xzf runner/packed-ps-server.tar.gz -C runner/extracted
-          tar -xzf runner/packed-recstore-ops.tar.gz -C runner/extracted
-          echo "Extracted contents:" && find runner/extracted -maxdepth 2 -type f -print
-
-      - name: Place RecStore OP into build/lib
-        run: |
-          set -euo pipefail
-          mkdir -p runner/extracted/package/lib
-          if [ -f runner/extracted/package/lib/lib_recstore_ops.so ]; then
-            echo "lib_recstore_ops.so already present in package/lib; skipping copy"
-          elif [ -f runner/extracted/package/deps/lib/lib_recstore_ops.so ]; then
-            cp runner/extracted/package/deps/lib/lib_recstore_ops.so runner/extracted/package/lib/
-          else
-            echo "lib_recstore_ops.so not found in packed recstore ops" && exit 1
-          fi
-          mkdir -p build/lib
-          cp -f runner/extracted/package/lib/lib_recstore_ops.so build/lib/
-          if [ -d runner/extracted/package/deps/lib ]; then
-            cp -f runner/extracted/package/deps/lib/*.so* build/lib/ || true
-            echo "Copied runtime deps (*.so*) to build/lib"
-          fi
-
-      - name: Install torchrec and dependencies
-        run: |
-          set -euo pipefail
-          bash dockerfiles/init_dlrm.sh --mirror=0
-
-      - name: Fix config to reduce resource usage
-        run: |
-          set -euo pipefail
-          bash ci/env/ci_fix_config.sh || true
-
-      - name: Show recstore_config after fix
-        run: |
-          set -euo pipefail
-          echo "===== recstore_config.json (after fix) ====="
-          cat recstore_config.json || true
-
-      - name: Run ps_server
-        run: |
-          set -euo pipefail
-          export GLOG_logtostderr=1
-          export GLOG_v=1
-          PKG_ROOT=runner/extracted/package
-          python3 ci/pack/runner.py "${PKG_ROOT}" bin/ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/ps_server_run.log --inject-rpath --keep-alive
-
-      # - name: Show grpc_ps_server log
-      #   if: always()
-      #   run: |
-      #     set -euo pipefail
-      #     echo "===== grpc_ps_server_run.log ====="
-      #     cat runner/logs/grpc_ps_server_run.log || true
-
-      - name: Run ci/test/test_op.sh
-        run: |
-          set -euo pipefail
-          bash ci/test/test_op.sh
-
-      - name: Stop ps_server
-        run: |
-          set -euo pipefail
-          pkill -f ps_server || true
-
-      - name: Upload run logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: grpc-run-logs
-          path: runner/logs/
-
-  run-ycsb-benchmark:
-    name: Run YCSB Benchmark
-    needs: build
-    runs-on: ubuntu-latest
-    env:
-      TORCH_VERSION: "2.5.0"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: false
-          fetch-depth: 0
-
-      - name: Install host prerequisites
-        run: |
-          set -euo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          bash ci/env/init_host_prereqs.sh
-        
-      - name: Download torch wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: torch-wheel
-          path: wheel
-
-      - name: Install wheel
-        run: |
-          set -euo pipefail
-          WHL=$(ls -1 wheel/torch-${TORCH_VERSION}*linux_x86_64.whl | head -n1)
-          python3 -m pip install --no-cache-dir "$WHL"
-
-      - name: Download packed artifacts bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: packed-bundle
-          path: runner
-
-      - name: Extract YCSB package
-        run: |
-          set -euo pipefail
-          mkdir -p runner/extracted-ycsb
-          tar -xzf runner/packed-ycsb.tar.gz -C runner/extracted-ycsb
-          echo "Extracted YCSB contents:" && find runner/extracted-ycsb -maxdepth 3
-
-      - name: Run YCSB Test Scripts
-        run: |
-          set -euo pipefail
-          
-          # Use the newly created scripts to run the test
-          # The script handles environment setup (using the detected package path) and test execution
-          
-          # Point the script to the extracted package location
-          PKG_ROOT=$(pwd)/runner/extracted-ycsb/package
-          
-          bash ci/test/test_ycsb.sh "${PKG_ROOT}"
-
-      - name: Upload YCSB logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ycsb-test-logs
-          path: dbtestlog/*.log
