@@ -4,6 +4,32 @@ RecStore 内置了完善的性能埋点与分析机制，涵盖了从 PyTorch OP
 
 ## 1. 快速使用
 
+### Grafana
+
+编译时开启性能上报宏：
+
+```bash linenums="1" hl_lines="2 3"
+cmake .. \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DUSE_PERF_REPORT=ON
+```
+
+运行时确保 `recstore_config.json` 中 `report_API` 指向可写入 ClickHouse 的 report 服务，然后启动训练/服务端即可自动上报，可以在配置 Grafana 的端口进行查看看板。
+
+??? info "启用 Grafana 和相关上报命令"
+
+    ```bash title="启动 ClickHouse"
+    systemctl is-active --quiet clickhouse-server || sudo systemctl start clickhouse-server; echo "✅ ClickHouse is running."
+    ```
+
+    ```bash title="启动 Grafana"
+    systemctl is-active --quiet grafana-server || sudo systemctl start grafana-server; echo "✅ Grafana is running (http://localhost:3000)."
+    ```
+
+    ```bash title="启动 Report Service（端口需要和  recstore_config.json 对齐）"
+    pkill -f "uvicorn report_service:app" 2>/dev/null; nohup uvicorn report_service:app --host 127.0.0.1 --port 8080 > report_service.log 2>&1 & echo "✅ Report Service is running (http://127.0.0.1:8080)."
+    ```
+
 ### bRPC 内置 CPU Profiler
 
 RecStore 支持直接用 bRPC builtin profiler 进行热点分析，适合 Get/Update 等多种 RPC 混合流量场景。
@@ -107,31 +133,76 @@ tensorboard --logdir=./logs --port=6006
 
 ## 2. 性能埋点关键字
 
-RecStore 使用 `xmh::Timer` (位于 `src/base/timer.h`) 进行全链路的耗时打点。数据流向如下：
+??? warning "本段落内容在最新版本可能被弃用，请参考下面 Grafana report"
 
-### 写路径自顶向下
+    RecStore 使用 `xmh::Timer` (位于 `src/base/timer.h`) 进行全链路的耗时打点。数据流向如下：
 
-| 层级 (Layer) | Timer 名称 | 说明 | 代码位置 |
-| :--- | :--- | :--- | :--- |
-| **PyTorch OP** | `OP.EmbWrite.Total` | Python 端调用 C++ OP 的总耗时 | `src/framework/pytorch/op_torch.cc` |
-| | `OP.EmbWrite.Call` | 核心逻辑调用耗时 | |
-| **C++ Client** | `ClientOp.EmbWrite.Total` | 客户端操作总耗时 | `src/framework/op.cc` |
-| | `ClientOp.EmbWrite.BuildVector` | Tensor 转 C++ Vector 的开销 | |
-| **gRPC Client** | `Client.PutParameter.Total` | RPC 请求总耗时 | `src/ps/grpc/dist_grpc_ps_client.cpp` |
-| | `Client.PutParameter.Serialize` | 序列化 Data Request 耗时 | |
-| | `Client.PutParameter.RPC` | 网络传输 + 服务端处理总耗时 | |
-| **Server** | `PS.PutParameter.Handle` | 服务端处理总耗时 | `src/ps/grpc/grpc_ps_server.cpp` |
-| | `PS.PutParameter.KVPutAll` | 写入底层 KV 存储的耗时 | |
+    ### 写路径自顶向下
 
-### 读路径自顶向下
+    | 层级 (Layer) | Timer 名称 | 说明 | 代码位置 |
+    | :--- | :--- | :--- | :--- |
+    | **PyTorch OP** | `OP.EmbWrite.Total` | Python 端调用 C++ OP 的总耗时 | `src/framework/pytorch/op_torch.cc` |
+    | | `OP.EmbWrite.Call` | 核心逻辑调用耗时 | |
+    | **C++ Client** | `ClientOp.EmbWrite.Total` | 客户端操作总耗时 | `src/framework/op.cc` |
+    | | `ClientOp.EmbWrite.BuildVector` | Tensor 转 C++ Vector 的开销 | |
+    | **gRPC Client** | `Client.PutParameter.Total` | RPC 请求总耗时 | `src/ps/grpc/dist_grpc_ps_client.cpp` |
+    | | `Client.PutParameter.Serialize` | 序列化 Data Request 耗时 | |
+    | | `Client.PutParameter.RPC` | 网络传输 + 服务端处理总耗时 | |
+    | **Server** | `PS.PutParameter.Handle` | 服务端处理总耗时 | `src/ps/grpc/grpc_ps_server.cpp` |
+    | | `PS.PutParameter.KVPutAll` | 写入底层 KV 存储的耗时 | |
 
-| 层级 (Layer) | Timer 名称 | 说明 | 代码位置 |
-| :--- | :--- | :--- | :--- |
-| **PyTorch OP** | `OP.EmbRead.Total` | Python 端调用 C++ OP 的总耗时 | `src/framework/pytorch/op_torch.cc` |
-| | `OP.EmbRead.ToCPUKeys` | Embedding Key 从 GPU 拷贝到 CPU 的耗时 | |
-| **gRPC Client** | `Client.GetParameter.Total` | RPC 请求总耗时 | `src/ps/grpc/dist_grpc_ps_client.cpp` |
-| | `Client.GetParameter.AsyncWait` | 异步等待网络回包的耗时（反映服务端处理+网络延迟） | |
-| **Server** | `KV BatchGet` | 底层 KV 引擎批量读取耗时 | `src/storage/kv_engines.md` |
+    ### 读路径自顶向下
 
-??? tip "什么是 Timer?"
-    `xmh::Timer` 是一个高性能的 C++ 计时器工具类。它通过 `Timer::Start("Name")` 和 `Timer::Stop("Name")` 记录代码块耗时，并自动统计 P50、P99 等分位数值，定期输出到日志文件中。
+    | 层级 (Layer) | Timer 名称 | 说明 | 代码位置 |
+    | :--- | :--- | :--- | :--- |
+    | **PyTorch OP** | `OP.EmbRead.Total` | Python 端调用 C++ OP 的总耗时 | `src/framework/pytorch/op_torch.cc` |
+    | | `OP.EmbRead.ToCPUKeys` | Embedding Key 从 GPU 拷贝到 CPU 的耗时 | |
+    | **gRPC Client** | `Client.GetParameter.Total` | RPC 请求总耗时 | `src/ps/grpc/dist_grpc_ps_client.cpp` |
+    | | `Client.GetParameter.AsyncWait` | 异步等待网络回包的耗时（反映服务端处理+网络延迟） | |
+    | **Server** | `KV BatchGet` | 底层 KV 引擎批量读取耗时 | `src/storage/kv_engines.md` |
+
+    ??? tip "什么是 Timer?"
+        `xmh::Timer` 是一个高性能的 C++ 计时器工具类。它通过 `Timer::Start("Name")` 和 `Timer::Stop("Name")` 记录代码块耗时，并自动统计 P50、P99 等分位数值，定期输出到日志文件中。
+
+
+## 3. Grafana report
+
+RecStore 的 Grafana 看板基于 `report()` 上报链路，完整链路为：
+
+`RecStore (C++/Python 调用 report)` -> `HTTP report_API` -> `ClickHouse` -> `Grafana`
+
+#### 上报协议与入口
+
+- 上报接口由 `recstore_config.json` 中 `report_API` 指定（默认：`http://127.0.0.1:8081/report`）。
+- `report()` 会构造 JSON 并异步发送，核心字段如下：
+
+| 字段名 | 含义 | 示例 |
+| :--- | :--- | :--- |
+| `table_name` | 目标报表/逻辑表名 | `op_latency` |
+| `unique_id` | 单次请求或链路标识 | `EmbRead|1711111111000000` |
+| `metric_name` | 指标名称 | `recstore_us` |
+| `metric_value` | 指标数值（double） | `532.0` |
+
+对应实现可参考：
+
+- `src/base/report/report_client.cpp`
+- `src/base/report/report_client.h`
+
+#### 常见 report 表与指标（来自当前代码）
+
+| 表名 | 常见指标名 | 说明 |
+| :--- | :--- | :--- |
+| `op_latency` | `recstore_us`、`recserver_us` | 端到端或服务端处理耗时 |
+| `embread_stages` | `duration_us`、`request_size`、`cache_lookup_us`、`deserialize_duration_us` | EmbRead 细分阶段耗时与规模 |s
+| `ps_client_latency` | `latency_us` | PS 客户端侧延迟 |
+| `ps_server_latency` | `latency_us` | PS 服务端侧延迟 |
+| `emb_read_flame_map` | `level`、`value`、`self`、`start` | 火焰图分层结构数据 |
+
+典型调用位置：
+
+- `src/framework/op.cc`
+- `src/ps/grpc/grpc_ps_server.cpp`
+- `src/ps/brpc/brpc_ps_client.cpp`
+- `src/ps/brpc/brpc_ps_server.cpp`
+- `src/ps/grpc/grpc_ps_client.cpp`
+- `src/ps/base/cache_ps_impl.h`
