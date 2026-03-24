@@ -328,6 +328,31 @@ mkdir -p "${MARKER_DIR}"
 [ "$1" = "--clean" ]&&{ echo "Cleaning all markers..."; rm -rf "${MARKER_DIR:?}"; exit 0; };
 marker_path(){ echo "${MARKER_DIR}/${1}.done"; }
 steps=($(grep -oE '^step_[a-zA-Z0-9_]+\(\)' "$SCRIPT_PATH" | cut -d '(' -f1))
-for STEP in "${steps[@]}"; do MARKER=$(marker_path "$STEP"); [ -f "$MARKER" ]&&{ echo "Step $STEP: Skipping (already completed)"; }||{ echo "Step $STEP: Running..."; $STEP; touch "$MARKER"; }; done
+declare -a step_names=()
+declare -A step_status=()
+declare -A step_duration_sec=()
+
+for STEP in "${steps[@]}"; do
+    step_names+=("$STEP")
+    step_start_ts=$(date +%s)
+    MARKER=$(marker_path "$STEP")
+
+    if [ -f "$MARKER" ]; then
+        echo "Step $STEP: Skipping (already completed)"
+        step_status["$STEP"]="SKIPPED"
+    else
+        echo "Step $STEP: Running..."
+        $STEP
+        touch "$MARKER"
+        step_status["$STEP"]="DONE"
+    fi
+
+    step_end_ts=$(date +%s)
+    step_duration_sec["$STEP"]=$((step_end_ts - step_start_ts))
+done
 
 echo "Environment setup completed successfully."
+echo "Step duration summary:"
+for STEP in "${step_names[@]}"; do
+    printf "  - %-24s [%7s] %6ss\n" "$STEP" "${step_status[$STEP]}" "${step_duration_sec[$STEP]}"
+done
