@@ -47,5 +47,6 @@
         "port": 15000,
         "shard": 1
     },
-    "report_API": "http://127.0.0.1:8081/report"
+    "report_API": "http://127.0.0.1:8081/report",
+    "$schema": "./ci/schema/recstore_config.schema.json"
 }
