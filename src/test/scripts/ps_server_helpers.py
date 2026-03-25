@@ -114,9 +114,15 @@ def should_skip_server_start():
     configured_ports = get_ports_from_config()
     running, open_ports = check_ps_server_running(configured_ports)
     all_ports_ready = bool(configured_ports) and len(open_ports) == len(configured_ports)
+    partial_ports_open = running and not all_ports_ready
     
     if no_server:
         return True, "NO_PS_SERVER"
+
+    if partial_ports_open:
+        raise RuntimeError(
+            f"ps_server ports are partially available: expected={configured_ports}, open={open_ports}"
+        )
 
     if is_ci:
         if all_ports_ready:
