@@ -236,8 +236,8 @@ private:
     LOG(INFO) << "[PS] PutParameter: " << size << " keys";
     uint64_t total_bytes = 0;
 
-    cache_ps_->PutParameter(reader, 0);
     for (int i = 0; i < size; i++) {
+      cache_ps_->PutSingleParameter(reader->item(i), 0);
       total_bytes += reader->item(i)->dim * sizeof(float);
     }
     LOG(INFO) << "[PS] PutParameter done: " << size << " keys";
