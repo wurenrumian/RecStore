@@ -111,19 +111,20 @@ def should_skip_server_start():
     """Determine if we should skip starting ps_server."""
     is_ci = os.environ.get('CI') == 'true' or os.environ.get('GITHUB_ACTIONS') == 'true'
     no_server = os.environ.get('NO_PS_SERVER', '').lower() in ('1', 'true', 'yes')
+    configured_ports = get_ports_from_config()
+    running, open_ports = check_ps_server_running(configured_ports)
+    all_ports_ready = bool(configured_ports) and len(open_ports) == len(configured_ports)
     
     if no_server:
         return True, "NO_PS_SERVER"
 
     if is_ci:
-        running, ports = check_ps_server_running()
-        if running:
-            return True, f"ci_reuse_running:{ports}"
-        return False, "ci_server_not_running"
+        if all_ports_ready:
+            return True, f"ci_reuse_running:{open_ports}"
+        return False, f"ci_server_not_ready: expected={configured_ports}, open={open_ports}"
     
-    running, ports = check_ps_server_running()
-    if running:
-        return True, f"already_running:{ports}"
+    if all_ports_ready:
+        return True, f"already_running:{open_ports}"
     
     return False, None
 
