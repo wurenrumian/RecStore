@@ -155,6 +155,11 @@ step_spdk() {
 # "
 
 step_torch() {
+    if [ "${CI:-}" = "1" ] || [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ] || [ -n "${GITLAB_CI:-}" ] || [ -n "${JENKINS_URL:-}" ] || [ -n "${BUILD_BUILDID:-}" ]; then
+        echo "Skipping torch install because CI environment detected"
+        return 0
+    fi
+
     mkdir -p ${PROJECT_PATH}/binary
     cd ${PROJECT_PATH}/binary
     ################################################################################
