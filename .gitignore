@@ -41,3 +41,4 @@ dlrm_venv/
 libtorch/
 libreport.so
 .worktrees/
+docs/superpowers/
