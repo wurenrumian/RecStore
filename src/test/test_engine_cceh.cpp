@@ -20,7 +20,7 @@ protected:
         {"path", test_dir_},
         {"capacity", 100000},
         {"value_size", 128},
-        {"type", "SPDK"},
+        {"type", "IOURING"},
         {"queue_size", 512}};
     kv_engine_ = std::make_unique<KVEngineCCEH>(config_);
   }
@@ -224,6 +224,89 @@ TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
     ASSERT_EQ(values_out[i].Size(), floats_per_key)
         << "Key " << keys[i] << " dim mismatch";
     for (int j = 0; j < floats_per_key; j++) {
+      EXPECT_FLOAT_EQ(values_out[i].Data()[j], write_data[i][j])
+          << "Key " << keys[i] << " float[" << j << "] mismatch";
+    }
+  }
+}
+
+// 测试不同 value size 下 Put/Get 的正确性
+// 覆盖场景：小于一页、恰好一页、跨两页、跨多页
+TEST_F(KVEngineCCEHTest, VariableValueSize_PutGet) {
+  // 每组：(floats数量, 说明)
+  // PAGE_SIZE=4096，头4字节存长度，所以：
+  //   <= 1023 floats (4092B) → 1页
+  //   == 1024 floats (4096B) → 需要2页（4092+4）
+  //   == 2048 floats (8192B) → 2页
+  //   == 12800 floats (51200B) → 13页，对应 ml20m 场景
+  const std::vector<std::pair<int, std::string>> cases = {
+      {16, "small 64B"},
+      {32, "default 128B"},
+      {1023, "exactly fills one page"},
+      {1024, "just spills to two pages"},
+      {2048, "two full pages"},
+      {12800, "ml20m scenario 51200B"},
+  };
+
+  for (const auto& [num_floats, desc] : cases) {
+    uint64_t key = 90000 + num_floats;
+
+    // 构造数据：第 j 个 float = num_floats * 1.0f + j
+    std::vector<float> write_data(num_floats);
+    for (int j = 0; j < num_floats; j++)
+      write_data[j] = num_floats * 1.0f + j;
+
+    std::string value_in(reinterpret_cast<const char*>(write_data.data()),
+                         num_floats * sizeof(float));
+    kv_engine_->Put(key, value_in, 0);
+
+    std::string value_out;
+    kv_engine_->Get(key, value_out, 0);
+
+    ASSERT_EQ(value_out.size(), (size_t)(num_floats * sizeof(float)))
+        << "[" << desc << "] size mismatch";
+
+    const float* out_ptr = reinterpret_cast<const float*>(value_out.data());
+    for (int j = 0; j < num_floats; j++) {
+      EXPECT_FLOAT_EQ(out_ptr[j], write_data[j])
+          << "[" << desc << "] float[" << j << "] mismatch";
+    }
+  }
+}
+
+// 测试 BatchPut/BatchGet 在混合 value size 下的正确性
+// 同一个 batch 里每个 key 的 value 大小不同
+TEST_F(KVEngineCCEHTest, VariableValueSize_BatchPutBatchGet) {
+  // 每个 key 用不同的 floats 数量，覆盖单页、跨页等场景
+  const std::vector<int> sizes_per_key = {
+      16, 32, 512, 1023, 1024, 1025, 2048, 4096, 12800};
+  const int num_keys = sizes_per_key.size();
+
+  std::vector<uint64_t> keys(num_keys);
+  std::vector<std::vector<float>> write_data(num_keys);
+  std::vector<base::ConstArray<float>> values_in(num_keys);
+
+  for (int i = 0; i < num_keys; i++) {
+    keys[i] = 80000 + i;
+    int nf  = sizes_per_key[i];
+    write_data[i].resize(nf);
+    for (int j = 0; j < nf; j++)
+      write_data[i][j] = i * 1000.0f + j;
+    values_in[i] = base::ConstArray<float>(write_data[i].data(), nf);
+  }
+
+  base::ConstArray<uint64_t> keys_array(keys.data(), num_keys);
+  kv_engine_->BatchPut(keys_array, &values_in, 0);
+
+  std::vector<base::ConstArray<float>> values_out;
+  kv_engine_->BatchGet(keys_array, &values_out, 0);
+
+  ASSERT_EQ((int)values_out.size(), num_keys);
+  for (int i = 0; i < num_keys; i++) {
+    int nf = sizes_per_key[i];
+    ASSERT_EQ(values_out[i].Size(), nf)
+        << "Key " << keys[i] << " (size=" << nf << ") dim mismatch";
+    for (int j = 0; j < nf; j++) {
       EXPECT_FLOAT_EQ(values_out[i].Data()[j], write_data[i][j])
           << "Key " << keys[i] << " float[" << j << "] mismatch";
     }
