@@ -169,11 +169,26 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         """Enable/disable fused embedding path at runtime."""
         self._enable_fusion = bool(enabled)
 
+    def _clear_per_feature_prefetch_state(self) -> None:
+        self._prefetch_handles.clear()
+
+    def _clear_fused_prefetch_state(self) -> None:
+        self._fused_prefetch_slots.clear()
+        self._sync_fused_prefetch_slot_state()
+
+    def _clear_prefetch_state(self) -> None:
+        self._clear_per_feature_prefetch_state()
+        self._clear_fused_prefetch_state()
+
     def set_prefetch_handles(self, handles: Dict[str, Any]):
         """Set prefetch handles plus optional stats metadata.
 
         Accepts: { feature_key: handle } OR { feature_key: (handle, num_ids, issue_ts) }
         """
+        if not handles:
+            self._clear_prefetch_state()
+            return
+        self._clear_fused_prefetch_state()
         import time
         parsed: Dict[str, int] = {}
         now = time.time()
@@ -211,6 +226,7 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         prefetcher; they are currently unused but kept to avoid argument errors when
         passed through from the producer thread.
         """
+        self._clear_per_feature_prefetch_state()
         import time
         slot = {
             "handle": int(handle),
