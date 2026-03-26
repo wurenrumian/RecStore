@@ -26,6 +26,14 @@ class InitDlrmScriptTest(unittest.TestCase):
         self.assertIn('FBGEMM_REF="${FBGEMM_REF:-v1.1.2}"', script)
         self.assertIn('TORCHREC_REF="${TORCHREC_REF:-v1.1.0}"', script)
 
+    def test_skips_source_build_when_cuda_toolkit_is_unavailable(self) -> None:
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        script = (repo_root / 'dockerfiles' / 'init_dlrm.sh').read_text()
+
+        self.assertIn('command -v nvcc >/dev/null 2>&1', script)
+        self.assertIn('Skipping TorchRec/FBGEMM source build because CUDA toolkit is not available', script)
+        self.assertIn('Detected CPU-only torch install; skipping TorchRec/FBGEMM source build', script)
+
 
 if __name__ == '__main__':
     unittest.main()

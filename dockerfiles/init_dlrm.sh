@@ -94,6 +94,16 @@ echo "Detected torch version: ${TORCH_VERSION}"
 echo "Detected torch cuda: ${TORCH_CUDA_VERSION}"
 echo "Detected torch cxx11abi: ${TORCH_CXX11_ABI}"
 
+if [ "${TORCH_CUDA_VERSION}" = "cpu" ]; then
+    echo "Detected CPU-only torch install; skipping TorchRec/FBGEMM source build"
+    exit 0
+fi
+
+if ! command -v nvcc >/dev/null 2>&1; then
+    echo "Skipping TorchRec/FBGEMM source build because CUDA toolkit is not available"
+    exit 0
+fi
+
 echo "Building TorchRec stack from source against the current torch install"
 echo "Aligning extension builds with torch cxx11abi=${TORCH_CXX11_ABI}"
 mkdir -p "$WORKSPACE_ROOT"
