@@ -1,25 +1,26 @@
-import threading
 import queue
-from typing import Dict, Tuple, Optional, Callable, Any
-import torch
+import threading
+from typing import Dict, Optional, Tuple
 
-class RecStoreDataset:
-    def __init__(
-        self,
-        dataloader,
-        client,
-        key_extractor: Callable[[Any], Dict[str, torch.Tensor]],
-        prefetch_count: int = 2
-    ):
+import torch
+from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
+
+
+class PrefetchingIterator:
+    def __init__(self, dataloader, ebc_module, prefetch_count: int = 2):
+        """
+        dataloader: base DataLoader yielding (dense, KJT, labels)
+        ebc_module: RecStoreEmbeddingBagCollection instance
+        prefetch_count: queue depth
+        NOTE: Must call restart() at each new epoch.
+        """
         self._dataloader = dataloader
-        self._client = client
-        self._key_extractor = key_extractor
         self._prefetch_count = prefetch_count
         self._thread: Optional[threading.Thread] = None
-        self._queue = queue.Queue(maxsize=self._prefetch_count)
+        self._queue: "queue.Queue[Optional[Tuple[torch.Tensor, KeyedJaggedTensor, torch.Tensor, Dict[str, object]]]]" = queue.Queue(maxsize=self._prefetch_count)
         self._stop = False
         self._exhausted = False
-        self._producer_error: Exception | None = None
+        self._producer_error: Optional[BaseException] = None
         self._iter = iter(self._dataloader)
         self._start_thread()
 
@@ -27,13 +28,14 @@ class RecStoreDataset:
         try:
             while not self._stop:
                 batch = next(self._iter)
-                self._key_extractor(batch)
-                self._queue.put((batch, {}))
+                dense, sparse, labels = batch
+                # Strict-step mode keeps producer-side batch preparation, but
+                # it must not issue embedding prefetches for a future step.
+                self._queue.put((dense, sparse, labels, {}))
         except StopIteration:
             self._exhausted = True
             self._queue.put(None)
         except Exception as e:
-            print(f"[RecStoreDataset] Error: {e}")
             self._producer_error = e
             self._exhausted = True
             self._queue.put(None)
@@ -43,6 +45,7 @@ class RecStoreDataset:
         self._thread.start()
 
     def restart(self):
+        """Restart iteration for a new epoch."""
         self.stop(join=True)
         self._queue = queue.Queue(maxsize=self._prefetch_count)
         self._stop = False
@@ -55,14 +58,24 @@ class RecStoreDataset:
         return self
 
     def __next__(self):
+        if self._producer_error is not None:
+            raise RuntimeError("PrefetchingIterator producer failed") from self._producer_error
+        if self._exhausted and self._queue.empty():
+            raise StopIteration
+
         item = self._queue.get()
         if item is None:
             if self._producer_error is not None:
-                raise RuntimeError("RecStoreDataset producer failed") from self._producer_error
-            if self._exhausted:
+                raise RuntimeError("PrefetchingIterator producer failed") from self._producer_error
+            self._exhausted = True
+            try:
                 self._queue.put_nowait(None)
+            except queue.Full:
+                pass
             raise StopIteration
-        return item
+
+        dense, sparse, labels, handles = item
+        return dense, sparse, labels, handles
 
     def stop(self, join: bool = False):
         self._stop = True
@@ -74,4 +87,4 @@ class RecStoreDataset:
         if self._thread and self._thread.is_alive() and join:
             self._thread.join(timeout=1)
             if self._thread.is_alive():
-                raise RuntimeError("RecStoreDataset producer thread did not stop cleanly")
+                raise RuntimeError("PrefetchingIterator producer thread did not stop cleanly")

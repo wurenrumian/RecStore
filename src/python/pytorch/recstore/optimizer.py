@@ -68,6 +68,7 @@ def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
         )
         summed_grads.index_add_(0, inverse_indices, all_grads)
 
+        # Backend sparse optimizers own learning-rate application for these modules.
         handles.append(kv_client.update_async(name=name, ids=unique_ids, grads=summed_grads))
     return handles
 
