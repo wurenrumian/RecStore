@@ -1,1 +1,0 @@
-RECSTORE_PATH="/home/xieminhui/RecStore"

@@ -65,9 +65,8 @@ step_glog() {
     rm -rf _build
     mkdir -p _build
     cd _build
-    CXXFLAGS="-fPIC" cmake .. ${CMAKE_REQUIRE} && make ${MAKE_OPTS} && make ${MAKE_OPTS} DESTDIR=${PROJECT_PATH}/third_party/glog/glog-install-fPIC install
+    CXXFLAGS="-fPIC" cmake .. -DCMAKE_BUILD_TYPE=Release ${CMAKE_REQUIRE} && make ${MAKE_OPTS} && make ${MAKE_OPTS} DESTDIR=${PROJECT_PATH}/third_party/glog/glog-install-fPIC install
     sudo make install
-    make clean
 }
 
 step_fmt() {
@@ -76,7 +75,7 @@ step_fmt() {
     rm -rf _build
     mkdir -p _build
     cd _build
-    CXXFLAGS="-fPIC" cmake .. ${CMAKE_REQUIRE}
+    CXXFLAGS="-fPIC" cmake .. -DCMAKE_BUILD_TYPE=Release ${CMAKE_REQUIRE}
     make ${MAKE_OPTS}
     sudo make install
 }
@@ -91,10 +90,9 @@ step_folly() {
     rm -rf _build
     mkdir -p _build
     cd _build
-    CFLAGS='-fPIC' CXXFLAGS='-fPIC -Wl,-lrt' cmake .. -DCMAKE_INCLUDE_PATH=${PROJECT_PATH}/third_party/glog/glog-install-fPIC/usr/local/include -DCMAKE_LIBRARY_PATH=${PROJECT_PATH}/third_party/glog/glog-install-fPIC/usr/local/lib ${CMAKE_REQUIRE}
+    CFLAGS='-fPIC' CXXFLAGS='-fPIC -Wl,-lrt' cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INCLUDE_PATH=${PROJECT_PATH}/third_party/glog/glog-install-fPIC/usr/local/include -DCMAKE_LIBRARY_PATH=${PROJECT_PATH}/third_party/glog/glog-install-fPIC/usr/local/lib ${CMAKE_REQUIRE}
     make ${MAKE_OPTS}
     make ${MAKE_OPTS} DESTDIR=${PROJECT_PATH}/third_party/folly/folly-install-fPIC install
-    make clean
 }
 
 # step_gtest() {
@@ -107,10 +105,9 @@ step_gperftools() {
     rm -rf _build
     mkdir -p _build
     cd _build
-    CFLAGS='-fPIC' CXXFLAGS='-fPIC -Wl,-lrt' CC=/usr/bin/gcc CXX=/usr/bin/g++ cmake .. ${CMAKE_REQUIRE}
+    CFLAGS='-fPIC' CXXFLAGS='-fPIC -Wl,-lrt' CC=/usr/bin/gcc CXX=/usr/bin/g++ cmake .. -DCMAKE_BUILD_TYPE=Release ${CMAKE_REQUIRE}
     make ${MAKE_OPTS}
     sudo make install
-    make clean
 }
 
 step_cityhash() {
@@ -118,7 +115,6 @@ step_cityhash() {
     ./configure
     make ${MAKE_OPTS}
     sudo make install
-    make clean
 }
 
 # cd ${PROJECT_PATH}/third_party/rocksdb/ && rm -rf _build && mkdir _build && cd _build && cmake .. && make -j20 && sudo make install
@@ -253,6 +249,7 @@ step_GRPC() {
     pushd cmake/build
     cmake -DgRPC_INSTALL=ON \
         -DgRPC_BUILD_TESTS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=$MY_INSTALL_DIR \
         $CMAKE_REQUIRE \
         ../..
@@ -297,29 +294,35 @@ step_brpc() {
     sudo apt install -y libleveldb-dev
     # protobuf
     cd ${PROJECT_PATH}/third_party/grpc/third_party/protobuf
-    rm -rf _build
-    mkdir _build && cd _build
-    cmake .. -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-        -DBUILD_SHARED_LIBS=ON \
-        ${CMAKE_REQUIRE} \
-        -DCMAKE_INSTALL_PREFIX=${PROJECT_PATH}/third_party/protobuf-install
+    if [ ! -d "_build" ]; then
+        mkdir _build
+    fi
+    cd _build
+    if [ ! -f "Makefile" ]; then
+        cmake .. -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DBUILD_SHARED_LIBS=ON \
+            ${CMAKE_REQUIRE} \
+            -DCMAKE_INSTALL_PREFIX=${PROJECT_PATH}/third_party/protobuf-install
+    fi
     make ${MAKE_OPTS}
     make ${MAKE_OPTS} install
     
     # brpc
     cd ${PROJECT_PATH}/third_party/brpc
-    rm -rf _build
-    mkdir -p _build
+    if [ ! -d "_build" ]; then
+        mkdir -p _build
+    fi
     cd _build
-    # when cmake done please check the protobuf path is correct ${PROJECT_PATH}/third_party/protobuf-install
-    # and check the openssl path is correct /usr/lib/x86_64-linux-gnu/libssl.so(system path)
-    cmake ..   -DProtobuf_INCLUDE_DIR=${PROJECT_PATH}/third_party/protobuf-install/include \
-        -DProtobuf_LIBRARIES=${PROJECT_PATH}/third_party/protobuf-install/lib/libprotobuf.so   \
-        -DProtobuf_PROTOC_EXECUTABLE=${PROJECT_PATH}/third_party/protobuf-install/bin/protoc \
-        ${CMAKE_REQUIRE} \
-        -DCMAKE_INSTALL_PREFIX=${PROJECT_PATH}/third_party/brpc-install \
-        -DWITH_GLOG=ON
+    if [ ! -f "Makefile" ]; then
+        cmake .. -DProtobuf_INCLUDE_DIR=${PROJECT_PATH}/third_party/protobuf-install/include \
+            -DProtobuf_LIBRARIES=${PROJECT_PATH}/third_party/protobuf-install/lib/libprotobuf.so   \
+            -DProtobuf_PROTOC_EXECUTABLE=${PROJECT_PATH}/third_party/protobuf-install/bin/protoc \
+            -DCMAKE_BUILD_TYPE=Release \
+            ${CMAKE_REQUIRE} \
+            -DCMAKE_INSTALL_PREFIX=${PROJECT_PATH}/third_party/brpc-install \
+            -DWITH_GLOG=ON
+    fi
     make ${MAKE_OPTS}
     make ${MAKE_OPTS} install
 }
@@ -328,6 +331,31 @@ mkdir -p "${MARKER_DIR}"
 [ "$1" = "--clean" ]&&{ echo "Cleaning all markers..."; rm -rf "${MARKER_DIR:?}"; exit 0; };
 marker_path(){ echo "${MARKER_DIR}/${1}.done"; }
 steps=($(grep -oE '^step_[a-zA-Z0-9_]+\(\)' "$SCRIPT_PATH" | cut -d '(' -f1))
-for STEP in "${steps[@]}"; do MARKER=$(marker_path "$STEP"); [ -f "$MARKER" ]&&{ echo "Step $STEP: Skipping (already completed)"; }||{ echo "Step $STEP: Running..."; $STEP; touch "$MARKER"; }; done
+declare -a step_names=()
+declare -A step_status=()
+declare -A step_duration_sec=()
+
+for STEP in "${steps[@]}"; do
+    step_names+=("$STEP")
+    step_start_ts=$(date +%s)
+    MARKER=$(marker_path "$STEP")
+
+    if [ -f "$MARKER" ]; then
+        echo "Step $STEP: Skipping (already completed)"
+        step_status["$STEP"]="SKIPPED"
+    else
+        echo "Step $STEP: Running..."
+        $STEP
+        touch "$MARKER"
+        step_status["$STEP"]="DONE"
+    fi
+
+    step_end_ts=$(date +%s)
+    step_duration_sec["$STEP"]=$((step_end_ts - step_start_ts))
+done
 
 echo "Environment setup completed successfully."
+echo "Step duration summary:"
+for STEP in "${step_names[@]}"; do
+    printf "  - %-24s [%7s] %6ss\n" "$STEP" "${step_status[$STEP]}" "${step_duration_sec[$STEP]}"
+done

@@ -703,12 +703,19 @@ void ExtendibleHash::LoadFakeData(int64_t key_capacity, int value_size) {
 }
 
 void ExtendibleHash::clear() {
+  std::unordered_map<Block*, bool> block_set;
   for (size_t i = 0; i < dir.capacity; ++i) {
-    delete dir._[i];
+    block_set[dir._[i]] = true;
+  }
+  for (auto& pair : block_set) {
+    delete pair.first;
   }
   delete[] dir._;
-  dir          = Directory(1);
-  global_depth = 0;
+
+  dir.capacity = Directory::kDefaultDirectorySize;
+  dir._        = new Block*[dir.capacity];
+  global_depth = static_cast<size_t>(log2(dir.capacity));
+
   for (unsigned i = 0; i < dir.capacity; ++i) {
     dir._[i]          = new Block(global_depth);
     dir._[i]->pattern = i;

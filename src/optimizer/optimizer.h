@@ -6,8 +6,10 @@
 #include <cmath>
 #include <stdexcept>
 #include "sparse_tensor.h"
-#include "../base_ps/base_client.h"
+#include "ps/base/base_client.h"
+#include "ps/base/parameters.h"
 
+using ::ParameterCompressReader;
 using recstore::EmbeddingTableConfig;
 
 class Optimizer {
@@ -22,11 +24,11 @@ public:
   }
 
   virtual void Init(const std::vector<std::string> table_name,
-                    const EmbeddingTableConfig& config) = 0;
+                    const EmbeddingTableConfig& config,
+                    BaseKV* base_kv) = 0;
 
   virtual void Update(std::string table,
-                      const std::vector<uint64_t>& keys,
-                      const std::vector<std::vector<float>>& grads,
+                      const ParameterCompressReader* reader,
                       unsigned tid) = 0;
 };
 
@@ -38,10 +40,10 @@ public:
   explicit SGD(float lr = 0.01) : learning_rate_(lr) {}
 
   void Init(const std::vector<std::string> table_name,
-            const EmbeddingTableConfig& config) override;
+            const EmbeddingTableConfig& config,
+            BaseKV* base_kv) override;
   void Update(std::string table,
-              const std::vector<uint64_t>& keys,
-              const std::vector<std::vector<float>>& grads,
+              const ParameterCompressReader* reader,
               unsigned tid) override;
 };
 
@@ -55,10 +57,10 @@ public:
       : learning_rate_(lr), epsilon_(epsilon) {}
 
   void Init(const std::vector<std::string> table_name,
-            const EmbeddingTableConfig& config) override;
+            const EmbeddingTableConfig& config,
+            BaseKV* base_kv) override;
   void Update(std::string table,
-              const std::vector<uint64_t>& keys,
-              const std::vector<std::vector<float>>& grads,
+              const ParameterCompressReader* reader,
               unsigned tid) override;
 };
 
@@ -72,9 +74,9 @@ public:
       : learning_rate_(lr), epsilon_(epsilon) {}
 
   void Init(const std::vector<std::string> table_name,
-            const EmbeddingTableConfig& config) override;
+            const EmbeddingTableConfig& config,
+            BaseKV* base_kv) override;
   void Update(std::string table,
-              const std::vector<uint64_t>& keys,
-              const std::vector<std::vector<float>>& grads,
+              const ParameterCompressReader* reader,
               unsigned tid) override;
 };

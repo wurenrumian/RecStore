@@ -4,29 +4,59 @@
 #include <iostream>
 #ifdef __linux__
 #  include <execinfo.h>
+#  include <sys/stat.h>
 #endif
 
 namespace base {
 
 bool ShmFile::InitializeFsDax(const std::string& filename, int64 size) {
   ClearFsDax();
-  if (!fs::exists(filename)) {
-    fs::create_directory(fs::path(filename).parent_path());
-    LOG(INFO) << "Create ShmFile: " << filename << ", size: " << size;
 
-    system(folly::sformat("fallocate -l {} {}", size, filename).c_str());
-  }
-
-  size_ = fs::file_size(filename);
-
-  if (size_ != size) {
-    LOG(ERROR) << "Size Error: " << size_ << " vs " << size;
+  std::error_code ec;
+  bool file_exists = fs::exists(filename, ec);
+  if (ec) {
+    LOG(ERROR) << "fs::exists failed for " << filename << ": " << ec.message();
     return false;
   }
 
-  fd_ = open(filename.c_str(), 0666);
+  if (!file_exists) {
+    fs::create_directories(fs::path(filename).parent_path(), ec);
+    if (ec) {
+      LOG(ERROR) << "fs::create_directories failed: " << ec.message();
+      return false;
+    }
+    LOG(INFO) << "Create ShmFile: " << filename << ", size: " << size;
+  }
+
+  fd_ = open(filename.c_str(), O_RDWR | O_CREAT, 0666);
   if (fd_ < 0) {
     LOG(ERROR) << "Failed to open file " << filename << ": " << strerror(errno);
+    return false;
+  }
+
+  if (!file_exists) {
+    int ret = posix_fallocate(fd_, 0, size);
+    if (ret != 0) {
+      LOG(ERROR) << "posix_fallocate failed: " << strerror(ret);
+      close(fd_);
+      fd_ = -1;
+      return false;
+    }
+  }
+
+  struct stat st;
+  if (fstat(fd_, &st) != 0) {
+    LOG(ERROR) << "fstat failed: " << strerror(errno);
+    close(fd_);
+    fd_ = -1;
+    return false;
+  }
+  size_ = st.st_size;
+
+  if (size_ != size) {
+    LOG(ERROR) << "Size Error: " << size_ << " vs " << size;
+    close(fd_);
+    fd_ = -1;
     return false;
   }
 
@@ -49,8 +79,9 @@ bool ShmFile::InitializeDevDax(const std::string& filename, int64 size) {
     filename_ = filename;
   }
 
-  if (!fs::exists(filename)) {
-    fs::create_directory(fs::path(filename).parent_path());
+  std::error_code ec;
+  if (!fs::exists(filename, ec)) {
+    fs::create_directories(fs::path(filename).parent_path(), ec);
     LOG(INFO) << "Create ShmFile: " << filename << ", size: " << size;
     std::ofstream output(filename);
     output.write("a", 1);
@@ -63,7 +94,8 @@ bool ShmFile::InitializeDevDax(const std::string& filename, int64 size) {
 bool ShmFile::Initialize(const std::string& filename, int64 size) {
   LOG(INFO) << "[ShmFile::Initialize] type_=" << type_
             << ", filename=" << filename << ", size=" << size;
-  if (!fs::exists("/dev/dax0.0") && type_ == "DRAM") {
+  std::error_code ec;
+  if (!fs::exists("/dev/dax0.0", ec) && type_ == "DRAM") {
     LOG(INFO) << "[ShmFile::Initialize] /dev/dax0.0 not found; override type_ "
                  "DRAM -> SSD";
     type_ = "SSD";
@@ -108,7 +140,8 @@ void ShmFile::ClearFsDax() {
   }
 }
 void ShmFile::Clear() {
-  if (fs::exists("/dev/dax0.0")) {
+  std::error_code ec;
+  if (fs::exists("/dev/dax0.0", ec)) {
     ClearDevDax();
   } else {
     ClearFsDax();

@@ -123,6 +123,12 @@ std::invalid_argument。
 （完）
 */
 
+/*
+另：可查阅
+- KV 引擎实现 https://recstore.github.io/RecStore/storage/kv_engines/
+- 内存管理 https://recstore.github.io/RecStore/storage/memory/
+*/
+
 class BaseKV {
 public:
   virtual ~BaseKV() { std::cout << "exit BaseKV" << std::endl; }
@@ -136,6 +142,12 @@ public:
   virtual void Get(const uint64_t key, std::string& value, unsigned tid) = 0;
   virtual void
   Put(const uint64_t key, const std::string_view& value, unsigned tid) = 0;
+
+  virtual void BatchPut(base::ConstArray<uint64_t> keys,
+                        std::vector<base::ConstArray<float>>* values,
+                        unsigned tid) {
+    LOG(FATAL) << "not implemented";
+  }
 
   virtual void BatchPut(coroutine<void>::push_type& sink,
                         base::ConstArray<uint64_t> keys,
@@ -172,7 +184,9 @@ public:
     delete[] values;
   };
 
-  virtual void clear() { LOG(FATAL) << "not implemented"; };
+  virtual void clear() {
+    LOG(WARNING) << "clear() not fully implemented for this KV engine";
+  };
 
 protected:
 };

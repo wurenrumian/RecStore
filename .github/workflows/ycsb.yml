@@ -1,0 +1,88 @@
+name: Publish YCSB Summary
+
+on:
+  workflow_run:
+    workflows: ["Run Tests (CPU)"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  ycsb-bench:
+    name: Publish YCSB Benchmark Summary
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve PR number
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = context.payload.workflow_run.pull_requests || [];
+            if (!prs.length) {
+              core.setFailed('No pull request is associated with this workflow_run.');
+              return;
+            }
+            core.setOutput('number', String(prs[0].number));
+
+      - name: Download YCSB logs artifact
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: recstore-cpu-ycsb-logs
+          path: ycsb-logs
+
+      - name: Generate benchmark summary markdown
+        run: |
+          set -euo pipefail
+          bash ci/benchmark/ycsb.sh ycsb-logs /tmp/ycsb_comment.md
+
+      - name: Upsert PR comment
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- ycsb-benchmark-comment -->';
+            const body = fs.readFileSync('/tmp/ycsb_comment.md', 'utf8');
+            const issue_number = Number(process.env.PR_NUMBER);
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find(c =>
+              c.user?.type === 'Bot' &&
+              typeof c.body === 'string' &&
+              c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number,
+                body,
+              });
+            }

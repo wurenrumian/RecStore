@@ -33,6 +33,7 @@ prefetch_depth=$DEFAULT_PREFETCH_DEPTH
 fuse_emb_tables=$DEFAULT_FUSE_EMB
 fuse_k=$DEFAULT_FUSE_K
 trace_file=$DEFAULT_TRACE_FILE
+allow_tf32=false
 
 show_help() {
     echo "DLRM Training Script with Performance Metrics"
@@ -62,6 +63,7 @@ show_help() {
     echo "  --disable-fuse-emb          Disable embedding table fusion"
     echo "  --fuse-k K                  Bit prefix shift k (default: $DEFAULT_FUSE_K)"
     echo "  --trace-file PATH           Chrome trace output file (optional)"
+    echo "  --allow-tf32                Enable TF32 for MatMul"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -174,6 +176,40 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ;;
+        --ps-host)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                ps_host="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+        --ps-port)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                ps_port="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+        --embedding-storage)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                embedding_storage="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+        --allow-tf32)
+            allow_tf32=true
+            shift
+            ;;
         *)
             echo "Error: Unknown option $1" >&2
             show_help
@@ -212,7 +248,7 @@ fi
 fi
 echo "=========================================="
 
-source ${VENV_BASH}
+# source ${VENV_BASH}
 
 if [[ ! -f "$script_to_run" ]]; then
     echo "Error: Script not found at $script_to_run" >&2
@@ -235,6 +271,15 @@ for file in "${required_files[@]}"; do
 done
 
 echo "✓ All required data files found"
+
+if [ -f "$processed_dataset_path/day_0_labels.npy" ]; then
+    detected_size=$(python3 -c "import numpy as np; print(np.load('${processed_dataset_path}/day_0_labels.npy', mmap_mode='r').shape[0])")
+    if [ -n "$detected_size" ]; then
+        echo "Auto-detected dataset size: $detected_size"
+        dataset_size=$detected_size
+    fi
+fi
+
 echo ""
 
 start_time=$(date +%s.%N)
@@ -242,6 +287,10 @@ start_seconds=$(date +%s)
 
 echo "Starting training..."
 extra_args=()
+if [ "$allow_tf32" = true ]; then
+    extra_args+=(--allow_tf32)
+fi
+
 if [ "$mode" = "RecStore" ]; then
     if [ "$enable_prefetch" = true ]; then
         extra_args+=(--enable_prefetch)
@@ -256,12 +305,25 @@ if [ "$mode" = "RecStore" ]; then
     if [ -n "$trace_file" ]; then
         extra_args+=(--trace_file "$trace_file")
     fi
+    if [ -n "$ps_port" ]; then
+        extra_args+=(--ps-port "$ps_port")
+    fi
+else 
+    # TorchRec mode args
+    if [ -n "$embedding_storage" ]; then
+         extra_args+=(--embedding_storage "$embedding_storage")
+    fi
+    if [ -n "$trace_file" ]; then
+        extra_args+=(--trace_file "$trace_file")
+    fi
 fi
-torchrun --nnodes 1 \
+echo "Executing command: python -m torch.distributed.run --nnodes 1 --nproc_per_node 1 --rdzv_backend c10d --rdzv_endpoint localhost --rdzv_id run-$(date +%s) --role trainer $script_to_run --single_day_mode --in_memory_binary_criteo_path $processed_dataset_path --batch_size $batch_size --learning_rate $learning_rate --epochs $epochs --pin_memory --mmap_mode --embedding_dim 128 ${extra_args[@]} --adagrad"
+
+python -m torch.distributed.run --nnodes 1 \
     --nproc_per_node 1 \
     --rdzv_backend c10d \
     --rdzv_endpoint localhost \
-    --rdzv_id 54321 \
+    --rdzv_id run-$(date +%s) \
     --role trainer $script_to_run \
     --single_day_mode \
     --in_memory_binary_criteo_path $processed_dataset_path \
@@ -293,9 +355,9 @@ echo "=========================================="
 
 
 total_seconds=$(echo "$end_time - $start_time" | bc)
-uid="dlrm_${dataset_size}_${mode}_${epochs}_gpu"
+# uid="dlrm_${dataset_size}_${mode}_${epochs}_gpu"
 echo "Uploading training duration: $total_seconds seconds"
-python report_uploader.py dlrm_training_metrics "$uid" training_duration_seconds "$total_seconds"
-if [ $? -ne 0 ]; then
-    echo "Warning: Data upload failed. Continuing with summary output."
-fi
+# python report_uploader.py dlrm_training_metrics "$uid" training_duration_seconds "$total_seconds"
+# if [ $? -ne 0 ]; then
+#     echo "Warning: Data upload failed. Continuing with summary output."
+# fi

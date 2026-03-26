@@ -13,13 +13,17 @@ if [ ! -f "${LIB_PATH}" ]; then
     exit 1
 fi
 
-if [[ "$@" != *"--mock"* ]]; then
-  echo "Not in mock mode; skipping Python execution."
+if [[ "$@" == *"--mock"* ]]; then
+  echo "In mock mode; skipping Python execution."
   exit 0
 fi
 
 export LD_LIBRARY_PATH="${REPO_ROOT}/build/lib:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH="${PY_PKG_ROOT}:${PYTHONPATH:-}"
+
+if [[ "${CI:-false}" == "true" ]] || [[ "${GITHUB_ACTIONS:-false}" == "true" ]]; then
+  echo "CI environment detected: tests will reuse existing ps_server or start one if needed"
+fi
 
 echo "[1/2] Running pytorch_client_test"
 (
@@ -32,5 +36,11 @@ echo "[2/2] Running dist_emb_unittest"
   cd "${PY_PKG_ROOT}"
   python3 -m unittest recstore.unittest.test_dist_emb
 )
+
+# echo "[3/3] Running ebc_precision_unittest"
+# (
+#   cd "${PY_PKG_ROOT}"
+#   python3 -m unittest recstore.unittest.test_ebc_precision_wrapper
+# )
 
 echo "All Python tests finished successfully."

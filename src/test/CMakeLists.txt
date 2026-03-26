@@ -1,5 +1,7 @@
 find_package(folly REQUIRED)
 
+add_subdirectory(small_tests)
+
 # add_executable(test_f14_slab
 #     test_f14_slab.cpp 
 # )
@@ -117,3 +119,15 @@ target_link_libraries(test_index PUBLIC
     gtest_main 
     pthread
 )
+
+# report 单元测试
+if(CMAKE_BUILD_TYPE MATCHES "Debug" AND USE_PERF_REPORT)
+    add_executable(test_report test_report.cpp)
+    target_link_libraries(test_report PUBLIC
+        report_client
+        gtest
+        gtest_main
+        pthread
+    )
+    add_test(NAME test_report COMMAND test_report)
+endif()

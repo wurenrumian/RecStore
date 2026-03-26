@@ -29,3 +29,14 @@ void SparseTensor::Put(
   auto _key = concatKeyAndTag(key, tag);
   kv->Put(_key, value, tid);
 }
+
+void SparseTensor::BatchGet(const std::vector<uint64_t>& keys,
+                            std::vector<base::ConstArray<float>>* values,
+                            unsigned tid) {
+  std::vector<uint64_t> hashed_keys;
+  hashed_keys.reserve(keys.size());
+  for (auto k : keys) {
+    hashed_keys.push_back(concatKeyAndTag(k, tag));
+  }
+  kv->BatchGet(base::ConstArray<uint64_t>(hashed_keys), values, tid);
+}

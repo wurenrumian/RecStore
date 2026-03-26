@@ -39,3 +39,5 @@ log
 dockerfiles/init_env.log
 dlrm_venv/
 libtorch/
+libreport.so
+.worktrees/

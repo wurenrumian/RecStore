@@ -105,6 +105,14 @@ public:
       return 0;
     }
   }
+
+  template <typename RawItemT>
+  void BatchAddItems(const std::vector<RawItemT>& items) {
+    for (const auto& item : items) {
+      FlatItemDetail<ItemT>::CompressAppend(item, &item_data_);
+      offsets_.push_back(item_data_.size());
+    }
+  }
   int ToBlock(std::vector<std::string>* blocks) {
     std::string* pblock = nullptr;
     int size            = 0;
@@ -137,6 +145,17 @@ public:
     block->append(reinterpret_cast<const char*>(&offsets_[0]),
                   offsets_.size() * sizeof(int));
     block->append(item_data_.data(), item_data_.size());
+    Clear();
+  }
+
+  template <typename BufferT>
+  void AppendToIOBuf(BufferT* buf) {
+    if (offsets_.size() < 2)
+      return;
+    offsets_[0] = offsets_.size() - 1;
+    buf->append(reinterpret_cast<const char*>(&offsets_[0]),
+                offsets_.size() * sizeof(int));
+    buf->append(item_data_.data(), item_data_.size());
     Clear();
   }
 
@@ -184,6 +203,18 @@ public:
     new_block->append(reinterpret_cast<const char*>(&keys_[0]),
                       keys_.size() * sizeof(uint64_t));
     value_compressor_.AppendToBlock(new_block);
+    Clear();
+  }
+
+  template <typename BufferT>
+  void AppendToIOBuf(BufferT* buf) {
+    if (keys_.size() < 1)
+      return;
+    int key_num = keys_.size();
+    buf->append(reinterpret_cast<const char*>(&key_num), sizeof(int));
+    buf->append(reinterpret_cast<const char*>(&keys_[0]),
+                keys_.size() * sizeof(uint64_t));
+    value_compressor_.AppendToIOBuf(buf);
     Clear();
   }
 

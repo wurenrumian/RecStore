@@ -1,7 +1,7 @@
 #pragma once
 
 #include "base/tensor.h"
-#include "base_ps/base_client.h"
+#include "ps/base/base_client.h"
 #include <string>
 #include <mutex>
 #include <unordered_map>
@@ -10,6 +10,7 @@
 using base::RecTensor;
 
 namespace recstore {
+void ConfigureLogging();
 enum class InitStrategyType { Normal, Uniform, Xavier, Zero };
 
 struct InitStrategy {
@@ -87,6 +88,11 @@ public:
                                  // prefetch_id is complete.
   virtual void GetPretchResult(uint64_t prefetch_id,
                                std::vector<std::vector<float>>* values) = 0;
+  virtual void GetPretchResultFlat(
+      uint64_t prefetch_id,
+      std::vector<float>* values,
+      int64_t* num_rows,
+      int64_t embedding_dim) = 0;
 
   virtual uint64_t
   EmbWriteAsync(const RecTensor& keys,
@@ -132,12 +138,17 @@ public:
   void WaitForPrefetch(uint64_t prefetch_id) override;
   void GetPretchResult(uint64_t prefetch_id,
                        std::vector<std::vector<float>>* values) override;
+  void GetPretchResultFlat(uint64_t prefetch_id,
+                           std::vector<float>* values,
+                           int64_t* num_rows,
+                           int64_t embedding_dim) override;
   uint64_t EmbWriteAsync(const base::RecTensor& keys,
                          const base::RecTensor& values) override;
   bool IsWriteDone(uint64_t write_id) override;
   void WaitForWrite(uint64_t write_id) override;
   void SaveToFile(const std::string& path) override;
   void LoadFromFile(const std::string& path) override;
+  void SetPSConfig(const std::string& host, int port);
 
 private:
   int64_t embedding_dim_;

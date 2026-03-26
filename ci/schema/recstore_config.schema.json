@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://recstore.local/schema/recstore_config.schema.json",
+  "title": "RecStore Config Schema",
+  "description": "Schema for recstore_config.json. Includes structural checks, keyword(enum) checks, and conditional checks for HYBRID mode.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "cache_ps",
+    "distributed_client",
+    "client"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema URI/path for IDE auto-discovery."
+    },
+    "cache_ps": {
+      "type": "object",
+      "description": "Parameter server runtime and storage settings.",
+      "additionalProperties": true,
+      "required": [
+        "ps_type",
+        "max_batch_keys_size",
+        "num_threads",
+        "num_shards",
+        "servers",
+        "base_kv_config"
+      ],
+      "properties": {
+        "ps_type": {
+          "type": "string",
+          "enum": [
+            "GRPC",
+            "BRPC"
+          ],
+          "description": "Keyword check: transport type must be one of GRPC or BRPC."
+        },
+        "max_batch_keys_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum key count per batch request on server side."
+        },
+        "num_threads": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Server worker threads."
+        },
+        "num_shards": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Shard count. Should align with servers length."
+        },
+        "servers": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Server endpoint list.",
+          "items": {
+            "$ref": "#/$defs/serverNode"
+          }
+        },
+        "base_kv_config": {
+          "$ref": "#/$defs/baseKvConfig"
+        }
+      }
+    },
+    "distributed_client": {
+      "type": "object",
+      "description": "Distributed client routing and request split settings.",
+      "additionalProperties": true,
+      "required": [
+        "num_shards",
+        "hash_method",
+        "servers"
+      ],
+      "properties": {
+        "num_shards": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Distributed shard count. Should align with cache_ps.num_shards."
+        },
+        "hash_method": {
+          "type": "string",
+          "enum": [
+            "city_hash",
+            "simple_mod"
+          ],
+          "description": "Keyword check: hash strategy."
+        },
+        "max_keys_per_request": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 500,
+          "description": "Max keys per single shard request."
+        },
+        "servers": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Distributed shard endpoint list.",
+          "items": {
+            "$ref": "#/$defs/serverNode"
+          }
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "description": "Single-node client target server.",
+      "additionalProperties": true,
+      "required": [
+        "host",
+        "port",
+        "shard"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target host."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Target port."
+        },
+        "shard": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target shard id."
+        }
+      }
+    },
+    "report_API": {
+      "type": "string",
+      "pattern": "^https?://.+",
+      "default": "http://127.0.0.1:8081/report",
+      "description": "HTTP endpoint for async report() ingestion service (typically writes to ClickHouse for Grafana dashboards)."
+    }
+  },
+  "$defs": {
+    "serverNode": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "host",
+        "port",
+        "shard"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Server host/IP."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Server port."
+        },
+        "shard": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Shard index for this node."
+        }
+      }
+    },
+    "baseKvConfig": {
+      "type": "object",
+      "description": "Underlying KV engine config.",
+      "additionalProperties": true,
+      "required": [
+        "path",
+        "index_type",
+        "value_type"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Storage base path."
+        },
+        "index_type": {
+          "type": "string",
+          "enum": [
+            "DRAM",
+            "SSD"
+          ],
+          "description": "Keyword check: index storage type."
+        },
+        "value_type": {
+          "type": "string",
+          "enum": [
+            "DRAM",
+            "SSD",
+            "HYBRID"
+          ],
+          "description": "Keyword check: value storage type."
+        },
+        "capacity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required when value_type is DRAM/SSD."
+        },
+        "value_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required when value_type is DRAM/SSD."
+        },
+        "shmcapacity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required when value_type is HYBRID."
+        },
+        "ssdcapacity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required when value_type is HYBRID."
+        },
+        "value_memory_management": {
+          "type": "string",
+          "enum": [
+            "PersistLoopShmMalloc",
+            "R2ShmMalloc"
+          ],
+          "default": "PersistLoopShmMalloc",
+          "description": "Keyword check: memory manager type."
+        },
+        "queue_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional queue size used by some SSD paths."
+        },
+        "type": {
+          "type": "string",
+          "description": "Compatibility field observed in CI snippets."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "HYBRID"
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "shmcapacity",
+              "ssdcapacity"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "enum": [
+                  "DRAM",
+                  "SSD"
+                ]
+              }
+            },
+            "required": [
+              "value_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "capacity",
+              "value_size"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

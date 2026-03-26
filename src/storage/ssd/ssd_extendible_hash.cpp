@@ -4,14 +4,28 @@
 ExtendibleHashSSD::ExtendibleHashSSD(const IndexConfig& config)
     : Index(config), hash_table_(nullptr) {
   LOG(INFO) << "SSD Index init";
-  auto path_it = config.json_config_.find("path");
-  if (path_it == config.json_config_.end()) {
+  auto path_it         = config.json_config_.find("path");
+  auto queue_cnt_it    = config.json_config_.find("queue_cnt");
+  auto backend_type_it = config.json_config_.find("type");
+  if (path_it == config.json_config_.end())
     throw std::invalid_argument("IndexConfig missing 'path'");
-  }
+  if (queue_cnt_it == config.json_config_.end())
+    throw std::invalid_argument("IndexConfig missing 'queue_cnt'");
+  if (backend_type_it == config.json_config_.end())
+    throw std::invalid_argument("IndexConfig missing 'type'");
   std::string base_path = path_it->get<std::string>();
   std::string db_path   = base_path + "/cceh_index.db";
   filename_             = db_path;
-  hash_table_           = new CCEH(); // 传入消息队列大小
+  queue_cnt_            = queue_cnt_it->get<int>();
+  std::string type_str  = backend_type_it->get<std::string>();
+  if (type_str == "SPDK")
+    backend_type_ = BackendType::SPDK;
+  else if (type_str == "IOURING")
+    backend_type_ = BackendType::IOURING;
+  else
+    throw std::invalid_argument("Invalid backend type: " + type_str);
+  IOConfig io_config{backend_type_, queue_cnt_, filename_};
+  hash_table_ = new CCEH(io_config); // 传入消息队列大小
 }
 
 ExtendibleHashSSD::~ExtendibleHashSSD() {
@@ -123,7 +137,8 @@ void ExtendibleHashSSD::clear() {
   hash_table_ = nullptr;
   base::file_util::Delete(filename_, false);
   // Recreate a new CCEH at the same path.
-  hash_table_ = new CCEH(); // 传入消息队列大小
+  IOConfig io_config{backend_type_, queue_cnt_, filename_};
+  hash_table_ = new CCEH(io_config); // 传入消息队列大小
 }
 
 void ExtendibleHashSSD::DebugInfo() const {

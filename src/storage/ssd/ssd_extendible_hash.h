@@ -6,6 +6,7 @@
 #include "../hybrid/index.h" // generic index interface definition
 #include "../../base/base.h"
 #include "../../base/factory.h"
+#include "storage/ssd/io_backend.h"
 class ExtendibleHashSSD : public Index {
 public:
   explicit ExtendibleHashSSD(const IndexConfig& config);
@@ -35,6 +36,8 @@ public:
 
 private:
   std::string filename_;
+  int queue_cnt_;
+  BackendType backend_type_;
   CCEH* hash_table_;
 };
 

@@ -1,5 +1,5 @@
 #include "framework/op.h"
-#include "grpc_ps/grpc_ps_client.h"
+#include "ps/grpc/grpc_ps_client.h"
 #include "base/factory.h"
 #include <iostream>
 #include <stdexcept>
@@ -14,28 +14,14 @@
 #include <string>
 #include <fstream>
 
-// Assuming InitStrategyType is defined in base/tensor.h
 #include "base/tensor.h"
 #include "op.h"
+#include <glog/logging.h>
+#ifdef ENABLE_PERF_REPORT
+#  include "base/report/report_client.h"
+#endif
 
 namespace recstore {
-
-// Log level: 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG
-static int get_log_level() {
-  static int level = []() {
-    const char* env = std::getenv("RECSTORE_LOG_LEVEL");
-    if (!env)
-      return 1; // Default INFO
-    return std::atoi(env);
-  }();
-  return level;
-}
-#define RECSTORE_LOG(level, msg)                                               \
-  do {                                                                         \
-    if (get_log_level() >= level) {                                            \
-      std::cout << msg << std::endl;                                           \
-    }                                                                          \
-  } while (0)
 
 json load_config_from_file(const std::string& config_path) {
   std::ifstream file(config_path);
@@ -121,23 +107,32 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 
 #ifndef USE_FAKE_KVCLIENT
 
-#  include "grpc_ps/grpc_ps_client.h"
+#  include "ps/grpc/grpc_ps_client.h"
 namespace recstore {
 
 BasePSClient* create_ps_client_from_config(const json& config) {
-  json client_config;
-  if (config.contains("client")) {
-    client_config = config["client"];
-  } else {
-    client_config = json{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}};
-  }
-
   std::string ps_type = "GRPC";
   try {
     if (config.contains("cache_ps") && config["cache_ps"].contains("ps_type")) {
       ps_type = config["cache_ps"]["ps_type"].get<std::string>();
     }
   } catch (...) {
+  }
+
+  if (false && config.contains("distributed_client")) {
+    std::string type_key =
+        (ps_type == "BRPC") ? "distributed_brpc" : "distributed_grpc";
+    BasePSClient* client =
+        base::Factory<BasePSClient, json>::NewInstance(type_key, config);
+    if (client)
+      return client;
+  }
+
+  json client_config;
+  if (config.contains("client")) {
+    client_config = config["client"];
+  } else {
+    client_config = json{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}};
   }
 
   std::string type_key = (ps_type == "BRPC") ? "brpc" : "grpc";
@@ -149,53 +144,75 @@ BasePSClient* create_ps_client_from_config(const json& config) {
   return client;
 }
 
+json GetGlobalConfig() {
+  try {
+    auto current_path = std::filesystem::current_path();
+    LOG(INFO) << "Current working directory: " << current_path.string();
+
+    std::filesystem::path config_path;
+    bool config_found = false;
+
+    for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
+      if (std::filesystem::exists(p / "recstore_config.json")) {
+        config_path  = p / "recstore_config.json";
+        config_found = true;
+        LOG(INFO) << "Found config file at: " << config_path.string();
+        break;
+      }
+    }
+
+    if (!config_found) {
+      throw std::runtime_error(
+          "Could not find 'recstore_config.json' in current or any parent "
+          "directory starting from: " +
+          current_path.string());
+    }
+
+    std::ifstream test_file(config_path);
+    if (!test_file.good()) {
+      throw std::runtime_error(
+          "Config file not found: " + config_path.string() +
+          ". Please ensure recstore_config.json exists "
+          "in the project root directory.");
+    }
+    test_file.close();
+
+    return load_config_from_file(config_path);
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Failed to load config: " << std::string(e.what());
+    return json::object();
+  }
+}
+
+void ConfigureLogging() {
+  static std::once_flag log_init_flag;
+  std::call_once(log_init_flag, []() {
+    std::cerr << "[Debug] ConfigureLogging called. Setting flags." << std::endl;
+    FLAGS_log_dir         = "/tmp";
+    FLAGS_alsologtostderr = false;
+    FLAGS_logtostderr     = false;
+    FLAGS_stderrthreshold = google::ERROR;
+
+    google::SetLogDestination(google::INFO, "/tmp/recstore_op_layer_INFO_");
+    google::SetLogDestination(
+        google::WARNING, "/tmp/recstore_op_layer_WARNING_");
+    google::SetLogDestination(google::ERROR, "/tmp/recstore_op_layer_ERROR_");
+
+    google::InitGoogleLogging("recstore_op_layer");
+  });
+}
+
 KVClientOp::KVClientOp() {
+  ConfigureLogging();
+
   if (!ps_client_) {
     try {
-      auto current_path = std::filesystem::current_path();
-      RECSTORE_LOG(
-          2, "[INFO] Current working directory: " + current_path.string());
+      json config = GetGlobalConfig();
+      ps_client_  = create_ps_client_from_config(config);
 
-      std::filesystem::path config_path;
-      bool config_found = false;
-
-      for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
-        if (std::filesystem::exists(p / "recstore_config.json")) {
-          config_path  = p / "recstore_config.json";
-          config_found = true;
-          RECSTORE_LOG(2,
-                       "[INFO] Found config file at: " + config_path.string());
-          break;
-        }
-      }
-
-      if (!config_found) {
-        throw std::runtime_error(
-            "Could not find 'recstore_config.json' in current or any parent "
-            "directory starting from: " +
-            current_path.string());
-      }
-
-      std::ifstream test_file(config_path);
-      if (!test_file.good()) {
-        throw std::runtime_error(
-            "Config file not found: " + config_path.string() +
-            ". Please ensure recstore_config.json exists "
-            "in the project root directory.");
-      }
-      test_file.close();
-
-      json config = load_config_from_file(config_path);
-
-      ps_client_ = create_ps_client_from_config(config);
-
-      RECSTORE_LOG(2,
-                   "[INFO] PS client initialized successfully from config: " +
-                       config_path.string());
+      LOG(INFO) << "PS client initialized successfully.";
     } catch (const std::exception& e) {
-      RECSTORE_LOG(
-          0,
-          "[ERROR] Failed to initialize PS client: " + std::string(e.what()));
+      LOG(ERROR) << "Failed to initialize PS client: " << std::string(e.what());
       throw;
     }
   }
@@ -203,30 +220,78 @@ KVClientOp::KVClientOp() {
 
 BasePSClient* KVClientOp::ps_client_ = nullptr;
 
+void KVClientOp::SetPSConfig(const std::string& host, int port) {
+  if (ps_client_) {
+    delete ps_client_;
+    ps_client_ = nullptr;
+  }
+
+  json file_config = GetGlobalConfig();
+  int final_port   = port;
+  if (final_port <= 0) {
+    if (file_config.contains("client") &&
+        file_config["client"].contains("port")) {
+      final_port = file_config["client"]["port"].get<int>();
+    } else if (file_config.contains("cache_ps") &&
+               file_config["cache_ps"].contains("servers") &&
+               file_config["cache_ps"]["servers"].is_array() &&
+               !file_config["cache_ps"]["servers"].empty()) {
+      final_port = file_config["cache_ps"]["servers"][0]["port"].get<int>();
+    } else {
+      final_port = 15000;
+    }
+  }
+
+  std::string final_host = host;
+  if (final_host.empty()) {
+    final_host = "127.0.0.1";
+  }
+
+  json config = file_config;
+  if (!config.contains("client")) {
+    config["client"] = json::object();
+  }
+  config["client"]["host"]  = final_host;
+  config["client"]["port"]  = final_port;
+  config["client"]["shard"] = 0;
+
+  ps_client_ = create_ps_client_from_config(config);
+  LOG(INFO) << "Re-initialized PS client with host=" << final_host
+            << " port=" << final_port;
+}
+
 void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   if (ps_client_ == nullptr) {
     throw std::runtime_error("PS client is not initialized. Please call "
                              "KVClientOp::SetPSClient() first.");
   }
 
-  RECSTORE_LOG(0,
-               "[DEBUG][op.cc] EmbRead: keys.shape="
-                   << keys.shape(0) << ", values.shape=[" << values.shape(0)
-                   << ", " << values.shape(1) << "]");
-  RECSTORE_LOG(0,
-               "[DEBUG][op.cc] EmbRead: keys.data="
-                   << keys.data_as<uint64_t>()
-                   << ", values.data=" << values.data_as<float>());
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string report_id =
+      "op::EmbRead|" + std::to_string(static_cast<uint64_t>(start_us));
+  std::string unique_id =
+      "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
+#  endif
+
+  LOG(INFO) << "EmbRead: keys.shape=" << keys.shape(0) << ", values.shape=["
+            << values.shape(0) << ", " << values.shape(1) << "]";
+  LOG(INFO) << "EmbRead: keys.data=" << keys.data_as<uint64_t>()
+            << ", values.data=" << values.data_as<float>();
   if (keys.shape(0) > 0) {
     std::ostringstream oss;
-    oss << "[DEBUG][op.cc] EmbRead: keys start with: ";
+    oss << "EmbRead: keys start with: ";
     for (int i = 0; i < std::min((int64_t)10, keys.shape(0)); ++i)
       oss << keys.data_as<uint64_t>()[i] << ", ";
-    RECSTORE_LOG(0, oss.str());
+    LOG(INFO) << oss.str();
   }
   if (values.shape(0) > 0) {
     std::ostringstream oss;
-    oss << "[DEBUG][op.cc] EmbRead: values start with: ";
+    oss << "EmbRead: values start with: ";
     for (int i = 0; i < std::min((int64_t)10, values.shape(0)); ++i) {
       oss << "[";
       for (int j = 0; j < std::min((int64_t)10, values.shape(1)); ++j) {
@@ -234,7 +299,7 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
       }
       oss << "] ";
     }
-    RECSTORE_LOG(0, oss.str());
+    LOG(INFO) << oss.str();
   }
   validate_keys(keys);
   validate_embeddings(values, "Values");
@@ -253,14 +318,42 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   const size_t total = static_cast<size_t>(L) * static_cast<size_t>(D);
   std::fill_n(values_data, total, 0.0f);
 
-  // std::cout << "[EmbRead] Reading " << L << " embeddings of dimension " <<
-  // base::EMBEDDING_DIMENSION_D << std::endl;
-
   bool success = ps_client_->GetParameter(keys_array, values_data);
   if (!success) {
     throw std::runtime_error("Failed to read embeddings from PS client.");
   }
-  // std::cout << "[EmbRead] Read operation complete." << std::endl;
+
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  std::string op_latency_key =
+      "EmbRead|" + std::to_string(static_cast<uint64_t>(start_us));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "duration_us",
+         static_cast<double>(duration));
+
+  report("embread_stages",
+         report_id.c_str(),
+         "request_size",
+         static_cast<double>(keys.shape(0)));
+
+  FlameGraphData op_data = {
+      "op::EmbRead",
+      start_us,
+      0, // level
+      static_cast<double>(duration),
+      static_cast<double>(duration)};
+  report_flame_graph("emb_read_flame_map", unique_id.c_str(), op_data);
+#  endif
 }
 
 void KVClientOp::EmbUpdate(const base::RecTensor& keys,
@@ -275,6 +368,10 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
     throw std::runtime_error("PS client is not initialized. Please call "
                              "KVClientOp::SetPSClient() first.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
 
   validate_keys(keys);
   validate_embeddings(grads, "Grads");
@@ -296,18 +393,29 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   base::ConstArray<uint64_t> keys_array(keys_data, L);
 
   const float* grads_data = grads.data_as<float>();
-  std::vector<std::vector<float>> grads_vector;
-  grads_vector.reserve(L);
-  for (int64_t i = 0; i < L; ++i) {
-    std::vector<float> row(D);
-    std::memcpy(row.data(), grads_data + i * D, D * sizeof(float));
-    grads_vector.push_back(std::move(row));
-  }
-
-  int ret = ps_client_->UpdateParameter(table_name, keys_array, &grads_vector);
+  int ret =
+      ps_client_->UpdateParameterFlat(table_name, keys_array, grads_data, L, D);
   if (ret != 0) {
     throw std::runtime_error("Failed to update embeddings via PS client.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbUpdate|" + std::to_string(static_cast<uint64_t>(start_us));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
+#  endif
 }
 
 bool KVClientOp::InitEmbeddingTable(const std::string& table_name,
@@ -317,7 +425,28 @@ bool KVClientOp::InitEmbeddingTable(const std::string& table_name,
                              "KVClientOp::SetPSClient() first.");
   }
 
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
   int ret = ps_client_->InitEmbeddingTable(table_name, config);
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "InitEmbeddingTable|" + std::to_string(static_cast<uint64_t>(start_us));
+  // report(table_name, key, metric_name, value)
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
+#  endif
   return ret == 0;
 }
 
@@ -326,6 +455,10 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
     throw std::runtime_error("PS client is not initialized. Please call "
                              "KVClientOp::SetPSClient() first.");
   }
+
+#  ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+#  endif
 
   validate_keys(keys);
   validate_embeddings(values, "Values");
@@ -342,8 +475,6 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
   const uint64_t* keys_data = keys.data_as<uint64_t>();
   base::ConstArray<uint64_t> keys_array(keys_data, L);
   const float* values_data = values.data_as<float>();
-  // std::cout << "[EmbRead] Reading " << L << " embeddings of dimension " <<
-  // base::EMBEDDING_DIMENSION_D << std::endl;
 
   const int64_t total_values = L * D;
   if (values_shape[0] * values_shape[1] != total_values) {
@@ -368,20 +499,20 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
     values_vector.push_back(std::move(row));
   }
 
-  RECSTORE_LOG(2, "=== Keys Array Info ===");
-  RECSTORE_LOG(2, "Keys size: " << L);
+  LOG(INFO) << "=== Keys Array Info ===";
+  LOG(INFO) << "Keys size: " << L;
   if (L > 0) {
     std::ostringstream keys_stream;
     keys_stream << "First 3 keys: ";
     for (int64_t i = 0; i < std::min(L, static_cast<int64_t>(3)); ++i) {
       keys_stream << keys_array[i] << " ";
     }
-    RECSTORE_LOG(2, keys_stream.str());
+    LOG(INFO) << keys_stream.str();
   }
 
-  RECSTORE_LOG(2, "=== Values Vector Info ===");
-  RECSTORE_LOG(2, "Values total elements: " << total_values);
-  RECSTORE_LOG(2, "Embedding dimension D: " << D);
+  LOG(INFO) << "=== Values Vector Info ===";
+  LOG(INFO) << "Values total elements: " << total_values;
+  LOG(INFO) << "Embedding dimension D: " << D;
   if (L > 0 && D > 0) {
     std::ostringstream values_stream;
     values_stream << "First 3 embeddings (each first 3 items): ";
@@ -392,14 +523,31 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
       }
       values_stream << "] ";
     }
-    RECSTORE_LOG(2, values_stream.str());
+    LOG(INFO) << values_stream.str();
   }
 
   bool success = ps_client_->PutParameter(keys_array, values_vector);
   if (!success) {
     throw std::runtime_error("Failed to write embeddings to PS client.");
   }
-  // std::cout << "[EmbRead] Read operation complete." << std::endl;
+
+#  ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  double start_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count();
+  std::string op_latency_key =
+      "EmbWrite|" + std::to_string(static_cast<uint64_t>(start_us));
+  report("op_latency",
+         op_latency_key.c_str(),
+         "recstore_us",
+         static_cast<double>(duration));
+#  endif
 }
 
 void KVClientOp::EmbInit(const base::RecTensor& keys,
@@ -428,22 +576,21 @@ void KVClientOp::GetPretchResult(uint64_t prefetch_id,
   ps_client_->GetPrefetchResult(prefetch_id, values);
 }
 
+void KVClientOp::GetPretchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
+  ps_client_->GetPrefetchResultFlat(
+      prefetch_id, values, num_rows, embedding_dim);
+}
+
 bool KVClientOp::IsWriteDone(uint64_t write_id) {
   // return ps_client_->IsWriteDone(write_id);
   throw std::runtime_error("Not impl");
 }
 
-namespace testing {
-
-// void ClearEmbeddingTableForTesting() {
-//     bool success = GetGRPCClientInstance().ClearPS();
-//     if (!success) {
-//         throw std::runtime_error("Failed to clear remote Parameter Server
-//         state during testing.");
-//     }
-// }
-
-} // namespace testing
+namespace testing {} // namespace testing
 
 } // namespace recstore
 

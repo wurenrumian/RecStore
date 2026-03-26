@@ -1,4 +1,4 @@
-#!/usr//bin/env python3
+#!/usr/bin/env python3
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -8,68 +8,89 @@ import argparse
 import itertools
 import os
 import sys
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterator, List, Optional
 
 import torch
 import torchmetrics as metrics
-from pyre_extensions import none_throws
 from torch import distributed as dist
 from torch.utils.data import DataLoader
 from torchrec import EmbeddingBagCollection
 from torchrec.datasets.criteo import DEFAULT_CAT_NAMES, DEFAULT_INT_NAMES
-from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.comm import get_local_size
 from torchrec.distributed.model_parallel import (
     DistributedModelParallel,
     get_default_sharders,
 )
 from torchrec.distributed.planner import EmbeddingShardingPlanner, Topology
-from torchrec.distributed.planner.storage_reservations import (
-    HeuristicalStorageReservation,
-)
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
-from torchrec.optim.apply_optimizer_in_backward import apply_optimizer_in_backward
-from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
-from torchrec.optim.optimizers import in_backward_optimizer_filter
 from tqdm import tqdm
+from torch.profiler import profile, record_function, ProfilerActivity, schedule, tensorboard_trace_handler
 
-from torch.profiler import profile, record_function, ProfilerActivity
-
+# Set paths to import custom modules
+RECSTORE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src'))
 DLRM_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+if RECSTORE_PATH not in sys.path:
+    sys.path.insert(0, RECSTORE_PATH)
 if DLRM_PATH not in sys.path:
     sys.path.insert(0, DLRM_PATH)
 
-from dlrm import DLRM, DLRM_DCN, DLRM_Projection, DLRMTrain
+
+
+from dlrm_torchrec_model import create_dlrm_model, DLRM
+import dlrm_torchrec_model
+print(f"DEBUG: dlrm_torchrec_model imported from: {dlrm_torchrec_model.__file__}")
+
+try:
+    from profiling_utils import print_env_config, CudaTimer
+except ImportError:
+    sys.path.append(os.path.dirname(__file__))
+    try:
+        from profiling_utils import print_env_config, CudaTimer
+    except ImportError:
+        print("Warning: Could not import profiling_utils")
+        def print_env_config(mode): pass
+        class CudaTimer:
+            def __init__(self, enable=True): pass
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def elapsed_ms(self): return 0.0
+
 
 try:
     from data.custom_dataloader import get_dataloader
-    from lr_scheduler import LRPolicyScheduler
-    from multi_hot import Multihot, RestartableMap
 except ImportError:
     try:
         from ..data.custom_dataloader import get_dataloader
-        from ..lr_scheduler import LRPolicyScheduler
-        from ..multi_hot import Multihot, RestartableMap
     except ImportError:
         print("Warning: Could not import custom dataloader modules")
         def get_dataloader(args, backend, stage):
             raise NotImplementedError("Please ensure custom dataloader modules are available")
 
-TRAIN_PIPELINE_STAGES = 3
+try:
+    from report_uploader import report_metric
+except ImportError:
+    print("Warning: Could not import report_uploader. Reporting disabled.")
+    def report_metric(*args): return True
 
+def report_latency(name: str, ms_value: float, storage_arg: str):
+    device_str = "GPU" if torch.cuda.is_available() else "CPU"
+    storage_map = {
+        "hbm": "HBM",
+        "uvm": "RAM",
+        "ssd": "SSD"
+    }
+    storage_str = storage_map.get(storage_arg, "hbm")
+    
+    val_us = ms_value * 1000.0
+    key = f"{name}_{device_str}_{storage_str}"
+    report_metric("op_latency", key, "latency_us", val_us)
 
-class InteractionType(Enum):
-    ORIGINAL = "original"
-    DCN = "dcn"
-    PROJECTION = "projection"
-
-    def __str__(self):
-        return self.value
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="torchrec dlrm example trainer for single day data")
+    parser = argparse.ArgumentParser(description="torchrec dlrm training with standard backend")
     parser.add_argument(
         "--epochs",
         type=int,
@@ -83,28 +104,16 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="batch size to use for training",
     )
     parser.add_argument(
-        "--drop_last_training_batch",
-        dest="drop_last_training_batch",
-        action="store_true",
-        help="Drop last non-full training batch",
-    )
-    parser.add_argument(
         "--test_batch_size",
         type=int,
         default=None,
         help="batch size to use for validation and testing",
     )
     parser.add_argument(
-        "--num_embeddings",
-        type=int,
-        default=None,
-        help="number of embeddings (hashes) per sparse feature",
-    )
-    parser.add_argument(
-        "--num_embeddings_per_feature",
-        type=str,
-        default=None,
-        help="comma separated list of number of embeddings per sparse feature",
+        "--drop_last_training_batch",
+        dest="drop_last_training_batch",
+        action="store_true",
+        help="Drop last non-full training batch",
     )
     parser.add_argument(
         "--embedding_dim",
@@ -113,23 +122,16 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="number of embedding dimensions",
     )
     parser.add_argument(
-        "--interaction_type",
-        type=InteractionType,
-        choices=list(InteractionType),
-        default=InteractionType.ORIGINAL,
-        help="type of interaction layer to use",
-    )
-    parser.add_argument(
         "--dcn_num_layers",
         type=int,
         default=3,
-        help="number of DCN layers",
+        help="number of DCN layers (ignored in this impl, for compatibility)",
     )
     parser.add_argument(
         "--dcn_low_rank_dim",
         type=int,
         default=512,
-        help="low rank dimension for DCN",
+        help="low rank dimension for DCN (ignored)",
     )
     parser.add_argument(
         "--over_arch_layer_sizes",
@@ -174,30 +176,6 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Path to preprocessed Criteo dataset",
     )
     parser.add_argument(
-        "--synthetic_multi_hot_criteo_path",
-        type=str,
-        default=None,
-        help="Path to synthetic multi-hot Criteo dataset",
-    )
-    parser.add_argument(
-        "--dataset_name",
-        type=str,
-        default="criteo_1tb",
-        help="Dataset name (criteo_1tb or criteo_kaggle)",
-    )
-    parser.add_argument(
-        "--shuffle_batches",
-        dest="shuffle_batches",
-        action="store_true",
-        help="Shuffle batches",
-    )
-    parser.add_argument(
-        "--shuffle_training_set",
-        dest="shuffle_training_set",
-        action="store_true",
-        help="Shuffle training set",
-    )
-    parser.add_argument(
         "--validation_freq_within_epoch",
         type=int,
         default=None,
@@ -219,16 +197,41 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         "--train_ratio",
         type=float,
         default=0.8,
-        help="Ratio of data to use for training (rest for validation) in single day mode",
+        help="Ratio of data to use for training in single day mode",
+    )
+    # Ignored args to maintain compatibility with run_single_day.sh calling convention
+    parser.add_argument("--num_embeddings", type=int, default=None)
+    parser.add_argument("--num_embeddings_per_feature", type=str, default=None)
+    parser.add_argument("--interaction_type", type=str, default="original")
+    parser.add_argument(
+        "--trace_file",
+        type=str,
+        default=None,
+        help="Profiler chrome trace file path",
+    )
+    parser.add_argument(
+        "--allow_tf32",
+        action="store_true",
+        help="Enable TensorFloat-32 mode for matrix multiplications on A100 (or newer) GPUs.",
+    )
+    parser.add_argument(
+        "--embedding_storage",
+        type=str,
+        default="hbm",
+        choices=["hbm", "uvm", "ssd"],
+        help="Storage type for embeddings: hbm (GPU memory), uvm (Unified Virtual Memory/RAM), ssd (SSD/Disk)",
     )
     
     args = parser.parse_args(argv)
-    
+
     if args.single_day_mode:
         if args.in_memory_binary_criteo_path is None:
             raise ValueError("--in_memory_binary_criteo_path must be specified for single day mode")
+        
+        # Hardcoded embedding sizes for Day 0 (Criteo 1TB)
+        # Consistent with dlrm_main_single_day.py
         if args.num_embeddings_per_feature is None:
-            LIMIT_FEATURE = 100000
+            LIMIT_FEATURE = 800000
             orig_list = [
                 40000000, 39060, 17295, 7424, 20265, 3, 7122, 1543, 63,
                 40000000, 3067956, 405282, 10, 2209, 11938, 155, 4, 976,
@@ -236,197 +239,375 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
             ]
             clamped = [str(min(v, LIMIT_FEATURE)) for v in orig_list]
             args.num_embeddings_per_feature = ",".join(clamped)
+        
         if not args.adagrad:
             args.learning_rate = 0.005
             args.adagrad = True
-        print("Single day mode enabled for TorchRec native benchmark.")
+        
+        print(f"Single day mode enabled. Training with day_0 data only.")
     
     return args
-
-# --- 恢复 TorchRec 分布式训练的辅助函数 ---
-def _evaluate(
-    limit_batches: Optional[int],
-    pipeline: TrainPipelineSparseDist,
-    eval_dataloader: DataLoader,
-    stage: str,
-) -> float:
-    pipeline._model.eval()
-    device = pipeline._device
-    iterator = itertools.islice(iter(eval_dataloader), limit_batches)
-    auroc = metrics.AUROC(task="binary").to(device)
-
-    is_rank_zero = dist.get_rank() == 0
-    if is_rank_zero:
-        pbar = tqdm(
-            iter(int, 1),
-            desc=f"Evaluating {stage} set",
-            total=len(eval_dataloader) if limit_batches is None else limit_batches,
-            disable=False,
-        )
-    with torch.no_grad():
-        while True:
-            try:
-                _loss, logits, labels = pipeline.progress(iterator)
-                auroc.update(logits.squeeze(), labels.squeeze().long())
-                if is_rank_zero:
-                    pbar.update(1)
-            except StopIteration:
-                break
-    
-    auroc_result = auroc.compute().item()
-    if is_rank_zero:
-        print(f"AUROC over {stage} set: {auroc_result:.4f}")
-    return auroc_result
-
-def _train(
-    pipeline: TrainPipelineSparseDist,
-    train_dataloader: DataLoader,
-    val_dataloader: DataLoader,
-    epoch: int,
-    validation_freq: Optional[int],
-    limit_train_batches: Optional[int],
-    limit_val_batches: Optional[int],
-) -> None:
-    pipeline._model.train()
-    iterator = itertools.islice(iter(train_dataloader), limit_train_batches)
-    is_rank_zero = dist.get_rank() == 0
-    if is_rank_zero:
-        pbar = tqdm(
-            iter(int, 1),
-            desc=f"Epoch {epoch}",
-            total=len(train_dataloader) if limit_train_batches is None else limit_train_batches,
-            disable=False,
-        )
-    
-    total_loss = 0.0
-    for it, _ in enumerate(iterator):
-        try:
-            loss, _, _ = pipeline.progress(iter([_]))
-            total_loss += loss.item()
-            if is_rank_zero:
-                pbar.update(1)
-                if (it + 1) % 100 == 0:
-                    print(f"Batch {it+1}: Avg Loss = {total_loss / (it+1):.4f}")
-            if validation_freq and (it + 1) % validation_freq == 0:
-                _evaluate(limit_val_batches, pipeline, val_dataloader, "val")
-                pipeline._model.train()
-        except StopIteration:
-            break
 
 def main(argv: List[str]) -> None:
     args = parse_args(argv)
     
-    if args.seed is not None:
-        torch.manual_seed(args.seed)
-    
     if torch.cuda.is_available():
         dist.init_process_group(backend="nccl")
-        device = torch.device("cuda", dist.get_rank())
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        device = torch.device(f"cuda:{rank}")
         torch.cuda.set_device(device)
     else:
         dist.init_process_group(backend="gloo")
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
         device = torch.device("cpu")
     
-    train_dataloader = get_dataloader(args, "nccl" if torch.cuda.is_available() else "gloo", "train")
-    val_dataloader = get_dataloader(args, "nccl" if torch.cuda.is_available() else "gloo", "val")
-
-    def custom_collate(batch):
-        if not batch: return None
-        dense, sparse, labels = zip(*batch)
-        dense_batch = torch.stack([torch.as_tensor(d, dtype=torch.float32) for d in dense])
-        labels_batch = torch.stack([torch.as_tensor(l, dtype=torch.float32).view(1) for l in labels])
-        
-        from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
-        feature_names = DEFAULT_CAT_NAMES
-        sparse_mat = torch.stack([s.to(torch.long) for s in sparse], dim=0)
-        B = sparse_mat.shape[0]
-        values = torch.cat([sparse_mat[:, i] for i in range(26)], dim=0)
-        lengths = torch.ones(B * len(feature_names), dtype=torch.int32)
-        
-        return dense_batch, KeyedJaggedTensor.from_lengths_sync(keys=feature_names, values=values, lengths=lengths), labels_batch
+    print(f"Distributed training initialized:")
+    print(f"  Rank: {rank}")
+    print(f"  World size: {world_size}")
+    print(f"  Device: {device}")
     
-    train_dataloader = DataLoader(train_dataloader.dataset, batch_size=args.batch_size, shuffle=True, drop_last=args.drop_last_training_batch, pin_memory=args.pin_memory, collate_fn=custom_collate, num_workers=0)
-    val_dataloader = DataLoader(val_dataloader.dataset, batch_size=args.test_batch_size or args.batch_size, shuffle=False, drop_last=False, pin_memory=args.pin_memory, collate_fn=custom_collate, num_workers=0)
+    # [FIX] Enable TF32 if requested (matches dlrm_main_origin.py)
+    if hasattr(args, "allow_tf32") and args.allow_tf32:
+        torch.backends.cuda.matmul.allow_tf32 = True
+        print(f"TF32 Enabled: {torch.backends.cuda.matmul.allow_tf32}")
 
+    print_env_config("TorchRec")
+    print(f"DEBUG: args.trace_file = {args.trace_file}")
+
+    
+    # Load data using existing loader logic
+    train_dataloader = get_dataloader(args, "gloo", "train")
+    val_dataloader = get_dataloader(args, "gloo", "val")
+    
+    def custom_collate(batch):
+        if not batch:
+            return batch
+        
+        dense_features = []
+        sparse_features = []
+        labels = []
+        
+        for dense, sparse, label in batch:
+            dense_features.append(torch.as_tensor(dense, dtype=torch.float32))
+            sparse_features.append(sparse)
+            labels.append(torch.as_tensor(label, dtype=torch.float32))
+        
+        dense_batch = torch.stack(dense_features)
+        labels_batch = torch.stack(labels)
+
+        from torchrec import KeyedJaggedTensor
+        feature_names = [f"cat_{i}" for i in range(26)]
+        
+        sparse_mat = torch.stack([s.to(torch.long) for s in sparse_features], dim=0) # (B, 26)
+        B = sparse_mat.shape[0]
+        
+        with record_function("## dataset_kjt_conversion"):
+            values = []
+            lengths = []
+            
+            for i in range(26):
+                # Get all values for feature i across batch
+                feat_values = sparse_mat[:, i] # (B,)
+                values.append(feat_values)
+                lengths.extend([1] * B)
+                
+            values_tensor = torch.cat(values)
+            lengths_tensor = torch.tensor(lengths, dtype=torch.int32, device=values_tensor.device)
+            
+            sparse_kjt = KeyedJaggedTensor(
+                keys=feature_names,
+                values=values_tensor,
+                lengths=lengths_tensor,
+            )
+        
+        return dense_batch, sparse_kjt, labels_batch
+
+    
+    train_loader = DataLoader(
+        train_dataloader.dataset,
+        batch_size=train_dataloader.batch_size,
+        shuffle=True,
+        drop_last=args.drop_last_training_batch,
+        pin_memory=args.pin_memory,
+        collate_fn=custom_collate,
+        num_workers=4
+    )
+    
+    val_loader = DataLoader(
+        val_dataloader.dataset,
+        batch_size=val_dataloader.batch_size,
+        shuffle=False,
+        drop_last=False,
+        pin_memory=args.pin_memory,
+        collate_fn=custom_collate,
+        num_workers=4
+    )
+
+    # Model Setup
     num_embeddings_per_feature = [int(x) for x in args.num_embeddings_per_feature.split(",")]
     
-    eb_configs = [
-        EmbeddingBagConfig(
-            name=f"t_{feature_name}",
-            embedding_dim=args.embedding_dim,
-            num_embeddings=num_embeddings_per_feature[feature_idx],
-            feature_names=[feature_name],
-        )
-        for feature_idx, feature_name in enumerate(DEFAULT_CAT_NAMES)
-    ]
-    
-    ebc = EmbeddingBagCollection(tables=eb_configs, device=device)
-    
-    if args.interaction_type == InteractionType.DCN:
-        model = DLRM_DCN(embedding_bag_collection=ebc, dense_in_features=13, dense_arch_layer_sizes=[int(x) for x in args.dense_arch_layer_sizes.split(",")], over_arch_layer_sizes=[int(x) for x in args.over_arch_layer_sizes.split(",")], dcn_num_layers=args.dcn_num_layers, dcn_low_rank_dim=args.dcn_low_rank_dim, dense_device=device)
+    if args.dense_arch_layer_sizes:
+        dense_sizes = [int(x) for x in args.dense_arch_layer_sizes.split(",")]
     else:
-        model = DLRM(embedding_bag_collection=ebc, dense_in_features=13, dense_arch_layer_sizes=[int(x) for x in args.dense_arch_layer_sizes.split(",")], over_arch_layer_sizes=[int(x) for x in args.over_arch_layer_sizes.split(",")], dense_device=device)
+        dense_sizes = [512, 256, args.embedding_dim]
 
-    model = model.to(device)
+    if args.over_arch_layer_sizes:
+        over_sizes = [int(x) for x in args.over_arch_layer_sizes.split(",")]
+    else:
+         over_sizes = [512, 256, 128]
 
+    model = create_dlrm_model(
+        num_embeddings_per_feature=num_embeddings_per_feature,
+        embedding_dim=args.embedding_dim,
+        dense_in_features=13,
+        dense_arch_layer_sizes=dense_sizes,
+        over_arch_layer_sizes=over_sizes,
+        device=device,
+    )
+
+    # Wrap with DistributedModelParallel
+    use_dmp = (world_size > 1) or (args.embedding_storage != "hbm")
+    
+    if use_dmp and torch.cuda.is_available():
+        from torchrec.distributed.planner import ParameterConstraints
+        from torchrec.distributed.embedding_types import EmbeddingComputeKernel
+
+        constraints = {}
+        if args.embedding_storage in ["uvm", "ssd"]:
+             # [FIX] Force UVM/CPU placement matches RecStore's DRAM usage
+             constraints = {
+                f"cat_{i}": ParameterConstraints(
+                    compute_kernels=[EmbeddingComputeKernel.FUSED_UVM_CACHING]
+                )
+                for i in range(26)
+            }
+             print(f"Applying constraints for {args.embedding_storage} storage: FUSED_UVM_CACHING")
+
+        # Create sharding plan
+        planner = EmbeddingShardingPlanner(
+            topology=Topology(
+                world_size=world_size,
+                compute_device=device.type,
+            ),
+            constraints=constraints,
+        )
+        
+        # Explicitly generate plan with default sharders
+        sharders = get_default_sharders()
+        plan = planner.plan(model, sharders)
+        
+        model = DistributedModelParallel(
+            module=model,
+            device=device,
+            plan=plan,
+            sharders=sharders,
+        )
+    else:
+        model = model.to(device)
+
+    # Optimizer
     if args.adagrad:
         optimizer = torch.optim.Adagrad(model.parameters(), lr=args.learning_rate)
     else:
         optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate)
-
+    
     criterion = torch.nn.BCEWithLogitsLoss()
     auroc = metrics.AUROC(task="binary").to(device)
-
-    from torch.profiler import profile, ProfilerActivity, schedule
-    from torch.profiler import tensorboard_trace_handler
     
+    # Training Loop
+    # Profiler setup
+    def trace_handler(p):
+        print(f"DEBUG: trace_handler called. Rank={dist.get_rank()}, trace_file={args.trace_file}")
+        if dist.get_rank() == 0:
+            if args.trace_file:
+                print(f"DEBUG: Exporting chrome trace to {args.trace_file}")
+                p.export_chrome_trace(args.trace_file)
+            else:
+                print(f"DEBUG: Exporting tensorboard trace")
+                tensorboard_trace_handler("./logs_recstore")(p)
+
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=schedule(wait=1, warmup=1, active=3, repeat=1),
-        on_trace_ready=tensorboard_trace_handler("./logs_torchrec") if dist.get_rank() == 0 else None,
+        schedule=schedule(wait=1, warmup=3, active=5, repeat=1),
+        on_trace_ready=trace_handler,
         record_shapes=True,
         profile_memory=True,
         with_stack=True
     ) as prof:
         for epoch in range(args.epochs):
             model.train()
+        
+            train_loss = 0.0
+            train_auroc = 0.0
+            num_batches = 0
+            forward_time_total = 0.0
+            backward_time_total = 0.0
+            opt_time_total = 0.0
+            emb_time_total = 0.0
+            nn_time_total = 0.0
+            
+            use_cuda_timing = torch.cuda.is_available() and device.type == 'cuda'
+            if use_cuda_timing:
+                fwd_start = torch.cuda.Event(enable_timing=True)
+                fwd_end = torch.cuda.Event(enable_timing=True)
+                bwd_start = torch.cuda.Event(enable_timing=True)
+                bwd_end = torch.cuda.Event(enable_timing=True)
+                opt_start = torch.cuda.Event(enable_timing=True)
+                opt_end = torch.cuda.Event(enable_timing=True)
+            
             print(f"Epoch {epoch + 1}/{args.epochs}")
             
-            for batch in tqdm(train_dataloader, desc="Training"):
-                dense, sparse, labels = batch
-                dense = dense.to(device)
-                sparse = sparse.to(device)
-                labels = labels.to(device)
-                
-                optimizer.zero_grad()
-                outputs = model(dense, sparse)
-                loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
-
-                prof.step()
-
-            print(f"Epoch {epoch + 1} training finished.")
-
-            model.eval()
-            auroc.reset()
-            with torch.no_grad():
-                for batch in tqdm(val_dataloader, desc="Validation"):
-                    dense, sparse, labels = batch
-                    dense = dense.to(device)
-                    sparse = sparse.to(device)
+            for batch_idx, (dense_features, sparse_features, labels) in enumerate(tqdm(train_loader, desc="Training")):
+                with record_function("## train_step"):
+                    dense_features = dense_features.to(device)
+                    sparse_features = sparse_features.to(device)
                     labels = labels.to(device)
+                    
+                    optimizer.zero_grad()
+                    
+                    # Forward
+                    with record_function("## forward"):
+                        if use_cuda_timing:
+                            fwd_start.record()
+                        else:
+                            t_fwd_start = time.time()
+                            
 
-                    outputs = model(dense, sparse)
-                    auroc.update(outputs.squeeze(), labels.squeeze().long())
-            
-            val_auroc = auroc.compute().item()
-            print(f"Validation AUROC for Epoch {epoch + 1}: {val_auroc:.4f}")
+                        width_record = CudaTimer(use_cuda_timing)
+                        with width_record:
+                             outputs = model(dense_features, sparse_features)
+                        
+                        if use_cuda_timing:
+                            fwd_end.record()
+                        else:
+                            t_fwd_end = time.time()
+                        
+                        loss = criterion(outputs, labels.float())
+                        
+                        if use_cuda_timing:
+                            fwd_end.record()
+                        else:
+                            t_fwd_end = time.time()
+                    
+                    # Backward
+                    with record_function("## backward"):
+                        if use_cuda_timing:
+                            bwd_start.record()
+                        else:
+                            t_bwd_start = time.time()
+                            
+                        loss.backward()
 
-        print("Training completed!")
-    
+                        if use_cuda_timing:
+                            bwd_end.record()
+                        else:
+                            t_bwd_end = time.time()
+
+                    # Optimizer Step
+                    with record_function("## optimizer"):
+                        if use_cuda_timing:
+                            opt_start.record()
+                        else:
+                            t_opt_start = time.time()
+
+                        # optimizer.step() includes sparse update for Fused optimizers
+                        width_record_opt = CudaTimer(use_cuda_timing)
+                        with width_record_opt:
+                             optimizer.step()
+                        
+                        emb_ms = 0.0
+                        nn_ms = 0.0
+                        dense1_ms = 0.0
+                        dense2_ms = 0.0
+                        raw_model = model.module if hasattr(model, "module") else model
+                        
+                        if use_cuda_timing:
+                            opt_end.record()
+                            torch.cuda.synchronize()
+                            fwd_ms = fwd_start.elapsed_time(fwd_end)
+                            bwd_ms = bwd_start.elapsed_time(bwd_end)
+                            opt_ms = opt_start.elapsed_time(opt_end)
+                            
+                            if hasattr(raw_model, "timings"):
+                                events = raw_model.timings
+                                emb_ms = events["emb_start"].elapsed_time(events["emb_end"])
+                                dense1_ms = events["dense_start"].elapsed_time(events["dense_end"])
+                                dense2_ms = events["dense2_start"].elapsed_time(events["dense2_end"])
+                                nn_ms = dense1_ms + dense2_ms
+                        else:
+                            t_opt_end = time.time()
+                            fwd_ms = (t_fwd_end - t_fwd_start) * 1000.0
+                            bwd_ms = (t_bwd_end - t_bwd_start) * 1000.0
+                            opt_ms = (t_opt_end - t_opt_start) * 1000.0
+                            
+                            if hasattr(raw_model, "timings_cpu"):
+                                emb_ms = raw_model.timings_cpu.get("sparse_ms", 0.0)
+                                nn_ms = raw_model.timings_cpu.get("dense_ms", 0.0)
+                    
+                    forward_time_total += fwd_ms
+                    backward_time_total += bwd_ms
+                    opt_time_total += opt_ms
+                    emb_time_total += emb_ms
+                    nn_time_total += nn_ms
+                    
+                    # Report latencies
+                    report_latency("Forward", fwd_ms, args.embedding_storage)
+                    report_latency("Backward", bwd_ms, args.embedding_storage)
+                    report_latency("Optimizer", opt_ms, args.embedding_storage)
+                    report_latency("Embedding", emb_ms, args.embedding_storage)
+                    report_latency("Dense", nn_ms, args.embedding_storage)
+                    
+                    train_loss += loss.item()
+                    auroc_score = auroc(torch.sigmoid(outputs.squeeze()), labels)
+                    train_auroc += auroc_score.item()
+                    num_batches += 1
+                    
+                    if batch_idx % 1 == 0:
+                         print(f"Batch {batch_idx}: Loss={loss.item():.4f} AUROC={auroc_score.item():.4f} FWD={fwd_ms:.2f} (Emb={emb_ms:.2f} NN={nn_ms:.2f} [D1={dense1_ms:.2f} D2={dense2_ms:.2f}]) BWD={bwd_ms:.2f} OPT={opt_ms:.2f}")
+
+
+            print(f"DEBUG: Calling prof.step() for batch {batch_idx}")
+            prof.step()
+
+        avg_train_loss = train_loss / num_batches if num_batches else 0.0
+        avg_train_auroc = train_auroc / num_batches if num_batches else 0.0
+        avg_fwd = forward_time_total / num_batches if num_batches else 0.0
+        avg_bwd = backward_time_total / num_batches if num_batches else 0.0
+        avg_opt = opt_time_total / num_batches if num_batches else 0.0
+        avg_emb = emb_time_total / num_batches if num_batches else 0.0
+        avg_nn = nn_time_total / num_batches if num_batches else 0.0
+        
+        print(f"Epoch {epoch + 1} - Training Loss: {avg_train_loss:.4f}, Training AUROC: {avg_train_auroc:.4f}, AvgFWD(ms): {avg_fwd:.2f} (Emb: {avg_emb:.2f} NN: {avg_nn:.2f}), AvgBWD(ms): {avg_bwd:.2f}, AvgOPT(ms): {avg_opt:.2f}")
+        
+        # Validation
+        model.eval()
+        val_loss = 0.0
+        val_auroc = 0.0
+        val_num_batches = 0
+        
+        with torch.no_grad():
+             for batch in tqdm(val_loader, desc="Validation"):
+                dense_features = batch[0].to(device)
+                sparse_features = batch[1].to(device)
+                labels = batch[2].to(device)
+                
+                outputs = model(dense_features, sparse_features)
+                loss = criterion(outputs, labels.float())
+                
+                val_loss += loss.item()
+                auroc_score = auroc(outputs.squeeze(), labels)
+                val_auroc += auroc_score.item()
+                val_num_batches += 1
+        
+        avg_val_loss = val_loss / val_num_batches if val_num_batches else 0.0
+        avg_val_auroc = val_auroc / val_num_batches if val_num_batches else 0.0
+        
+        print(f"Epoch {epoch + 1} - Validation Loss: {avg_val_loss:.4f}, Validation AUROC: {avg_val_auroc:.4f}")
+        
+    print("Training completed!")
     dist.destroy_process_group()
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-

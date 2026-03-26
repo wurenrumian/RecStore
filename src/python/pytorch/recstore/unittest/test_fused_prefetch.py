@@ -1,7 +1,7 @@
 import unittest
 import torch
 
-from ...torchrec.EmbeddingBag import RecStoreEmbeddingBagCollection
+from ...torchrec_kv.EmbeddingBag import RecStoreEmbeddingBagCollection
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
 
 

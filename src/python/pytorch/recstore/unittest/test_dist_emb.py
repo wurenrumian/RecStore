@@ -7,6 +7,58 @@ from ..DistEmb import DistEmbedding
 from ..KVClient import get_kv_client
 from ..optimizer import SparseSGD
 
+_server_runner = None
+
+
+def setUpModule():
+    """Start ps_server if needed before running tests."""
+    global _server_runner
+    
+    test_scripts_path = os.path.join(
+        os.path.dirname(__file__), '../../../../test/scripts'
+    )
+    if test_scripts_path not in sys.path:
+        sys.path.insert(0, test_scripts_path)
+    
+    from ps_server_helpers import should_skip_server_start, get_server_config
+    
+    skip_server, reason = should_skip_server_start()
+    if skip_server:
+        print(f"\n[{reason}] Running tests without starting ps_server\n")
+        return
+    
+    config = get_server_config()
+    
+    print(f"\n{'='*70}")
+    print("Starting PS Server for DistEmb Tests")
+    print(f"Server path: {config['server_path']}")
+    print(f"{'='*70}\n")
+    
+    from ps_server_runner import PSServerRunner
+    _server_runner = PSServerRunner(
+        server_path=config['server_path'],
+        config_path=config['config_path'],
+        log_dir=config['log_dir'],
+        timeout=config['timeout'],
+        num_shards=config['num_shards'],
+        verbose=True
+    )
+    
+    if not _server_runner.start():
+        raise RuntimeError("Failed to start PS Server")
+
+
+def tearDownModule():
+    """Stop ps_server after tests complete."""
+    global _server_runner
+    
+    if _server_runner is not None:
+        print(f"\n{'='*70}")
+        print("Stopping PS Server")
+        print(f"{'='*70}\n")
+        _server_runner.stop()
+        _server_runner = None
+
 class TestDistEmb(unittest.TestCase):
 
     @classmethod

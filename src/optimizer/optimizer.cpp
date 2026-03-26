@@ -2,69 +2,90 @@
 #include <cstring>
 
 void SGD::Init(const std::vector<std::string> table_name,
-               const EmbeddingTableConfig& config) {
+               const EmbeddingTableConfig& config,
+               BaseKV* base_kv) {
+  LOG(INFO) << "SGD::Init called with " << table_name.size() << " table(s)";
   for (const auto& name : table_name) {
+    LOG(INFO) << "  Initializing table: '" << name << "' with shape ["
+              << config.num_embeddings << ", " << config.embedding_dim << "]";
+    SparseTensor* param_tensor  = new SparseTensor();
+    std::vector<uint64_t> shape = {config.num_embeddings, config.embedding_dim};
+    TAG_TYPE tag                = 0; // PARAMETER tag
+    param_tensor->init(
+        const_cast<std::string&>(name), PARAMETER, tag, shape, base_kv);
+    tensor_map_[name] = param_tensor;
   }
+  LOG(INFO) << "SGD::Init completed. tensor_map_ now has " << tensor_map_.size()
+            << " entries";
 }
 
-void SGD::Update(std::string table,
-                 const std::vector<uint64_t>& keys,
-                 const std::vector<std::vector<float>>& grads,
-                 unsigned tid) {
-  std::vector<std::vector<float>> current_values(keys.size());
+void SGD::Update(
+    std::string table, const ParameterCompressReader* reader, unsigned tid) {
   auto it = tensor_map_.find(table);
-
   if (it == tensor_map_.end()) {
+    LOG(ERROR) << "Table not found in SGD optimizer: '" << table << "'";
     throw std::runtime_error("Table not found: " + table);
   }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string value;
-    it->second->Get(keys[i], value, tid);
-    if (value.empty()) {
-      current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
-      } else {
-        float* data       = (float*)value.data();
-        current_values[i] = std::vector<float>(data, data + grads[i].size());
+  int size = reader->item_size();
+  std::vector<uint64_t> keys;
+  keys.reserve(size);
+  for (int i = 0; i < size; ++i) {
+    keys.push_back(reader->item(i)->key);
+  }
+
+  std::vector<base::ConstArray<float>> current_values;
+  it->second->BatchGet(keys, &current_values, tid);
+
+  for (int i = 0; i < size; ++i) {
+    const auto* item = reader->item(i);
+    if (current_values[i].Size() == 0) {
+      // If key not found, we fallback to Put to initialize it
+      std::vector<float> zero_init(item->dim, 0.0f);
+      for (int j = 0; j < item->dim; ++j) {
+        zero_init[j] = -learning_rate_ * item->data()[j];
       }
+      std::string val_str(
+          (char*)zero_init.data(), zero_init.size() * sizeof(float));
+      it->second->Put(item->key, val_str, tid);
+      continue;
     }
-  }
 
-  std::vector<std::vector<float>> updated_values;
-  updated_values.reserve(keys.size());
+    float* data = const_cast<float*>(current_values[i].Data());
+    int dim     = std::min(current_values[i].Size(), item->dim);
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::vector<float> updated(grads[i].size());
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      updated[j] = current_values[i][j] - learning_rate_ * grads[i][j];
+#pragma omp simd
+    for (int j = 0; j < dim; ++j) {
+      data[j] -= learning_rate_ * item->data()[j];
     }
-    updated_values.push_back(updated);
-  }
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string value((char*)updated_values[i].data(),
-                      updated_values[i].size() * sizeof(float));
-    it->second->Put(keys[i], value, tid);
   }
 }
 
 void AdaGrad::Init(const std::vector<std::string> table_name,
-                   const EmbeddingTableConfig& config) {
+                   const EmbeddingTableConfig& config,
+                   BaseKV* base_kv) {
   for (const auto& name : table_name) {
+    SparseTensor* param_tensor  = new SparseTensor();
+    std::vector<uint64_t> shape = {config.num_embeddings, config.embedding_dim};
+    TAG_TYPE tag                = 0;
+    param_tensor->init(
+        const_cast<std::string&>(name), PARAMETER, tag, shape, base_kv);
+    tensor_map_[name] = param_tensor;
+
+    std::string acc_table_name = name + "_accumulated_grad";
+    SparseTensor* acc_tensor   = new SparseTensor();
+    acc_tensor->init(
+        const_cast<std::string&>(acc_table_name),
+        MOMENT_1,
+        tag,
+        shape,
+        base_kv);
+    tensor_map_[acc_table_name] = acc_tensor;
   }
 }
 
-void AdaGrad::Update(std::string table,
-                     const std::vector<uint64_t>& keys,
-                     const std::vector<std::vector<float>>& grads,
-                     unsigned tid) {
-  std::vector<std::vector<float>> current_values(keys.size());
-  std::vector<std::vector<float>> accumulated_gradients_squared(keys.size());
-
+void AdaGrad::Update(
+    std::string table, const ParameterCompressReader* reader, unsigned tid) {
   auto param_it = tensor_map_.find(table);
   if (param_it == tensor_map_.end()) {
     throw std::runtime_error("Table not found: " + table);
@@ -77,85 +98,66 @@ void AdaGrad::Update(std::string table,
         "Accumulated gradient table not found: " + acc_table);
   }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string value;
-    param_it->second->Get(keys[i], value, tid);
-    if (value.empty()) {
-      current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
-      } else {
-        float* data       = (float*)value.data();
-        current_values[i] = std::vector<float>(data, data + grads[i].size());
-      }
-    }
-
-    acc_it->second->Get(keys[i], value, tid);
-    if (value.empty()) {
-      accumulated_gradients_squared[i] =
-          std::vector<float>(grads[i].size(), 0.0f);
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        accumulated_gradients_squared[i] =
-            std::vector<float>(grads[i].size(), 0.0f);
-      } else {
-        float* data = (float*)value.data();
-        accumulated_gradients_squared[i] =
-            std::vector<float>(data, data + grads[i].size());
-      }
-    }
+  int size = reader->item_size();
+  std::vector<uint64_t> keys;
+  keys.reserve(size);
+  for (int i = 0; i < size; ++i) {
+    keys.push_back(reader->item(i)->key);
   }
 
-  std::vector<std::vector<float>> updated_values;
-  std::vector<std::vector<float>> updated_accumulated_gradients;
+  std::vector<base::ConstArray<float>> current_values;
+  std::vector<base::ConstArray<float>> acc_values;
+  param_it->second->BatchGet(keys, &current_values, tid);
+  acc_it->second->BatchGet(keys, &acc_values, tid);
 
-  updated_values.reserve(keys.size());
-  updated_accumulated_gradients.reserve(keys.size());
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::vector<float> updated(grads[i].size());
-    std::vector<float> updated_acc_grad(grads[i].size());
-
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      updated_acc_grad[j] =
-          accumulated_gradients_squared[i][j] + grads[i][j] * grads[i][j];
-      float adaptive_lr =
-          learning_rate_ / (std::sqrt(updated_acc_grad[j]) + epsilon_);
-      updated[j] = current_values[i][j] - adaptive_lr * grads[i][j];
+  for (int i = 0; i < size; ++i) {
+    const auto* item = reader->item(i);
+    if (current_values[i].Size() == 0 || acc_values[i].Size() == 0) {
+      // Fallback to sequential initialization if not found
+      // (This is rare in training but kept for robustness)
+      continue;
     }
 
-    updated_values.push_back(updated);
-    updated_accumulated_gradients.push_back(updated_acc_grad);
-  }
+    float* param_data = const_cast<float*>(current_values[i].Data());
+    float* acc_data   = const_cast<float*>(acc_values[i].Data());
+    int dim           = std::min(current_values[i].Size(), item->dim);
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string param_value((char*)updated_values[i].data(),
-                            updated_values[i].size() * sizeof(float));
-    std::string acc_value(
-        (char*)updated_accumulated_gradients[i].data(),
-        updated_accumulated_gradients[i].size() * sizeof(float));
-
-    param_it->second->Put(keys[i], param_value, tid);
-    acc_it->second->Put(keys[i], acc_value, tid);
+#pragma omp simd
+    for (int j = 0; j < dim; ++j) {
+      acc_data[j] += item->data()[j] * item->data()[j];
+      float adaptive_lr = learning_rate_ / (std::sqrt(acc_data[j]) + epsilon_);
+      param_data[j] -= adaptive_lr * item->data()[j];
+    }
   }
 }
 
 void RowWiseAdaGrad::Init(const std::vector<std::string> table_name,
-                          const EmbeddingTableConfig& config) {
+                          const EmbeddingTableConfig& config,
+                          BaseKV* base_kv) {
   for (const auto& name : table_name) {
+    SparseTensor* param_tensor  = new SparseTensor();
+    std::vector<uint64_t> shape = {config.num_embeddings, config.embedding_dim};
+    TAG_TYPE tag                = 0;
+    param_tensor->init(
+        const_cast<std::string&>(name), PARAMETER, tag, shape, base_kv);
+    tensor_map_[name] = param_tensor;
+
+    std::string acc_table_name      = name + "_rowwise_accumulated_grad";
+    SparseTensor* acc_tensor        = new SparseTensor();
+    std::vector<uint64_t> acc_shape = {
+        config.num_embeddings, 1}; // One value per row
+    acc_tensor->init(
+        const_cast<std::string&>(acc_table_name),
+        MOMENT_1,
+        tag,
+        acc_shape,
+        base_kv);
+    tensor_map_[acc_table_name] = acc_tensor;
   }
 }
 
-void RowWiseAdaGrad::Update(std::string table,
-                            const std::vector<uint64_t>& keys,
-                            const std::vector<std::vector<float>>& grads,
-                            unsigned tid) {
-  std::vector<std::vector<float>> current_values(keys.size());
-  std::vector<std::vector<float>> accumulated_gradients_squared(keys.size());
-
+void RowWiseAdaGrad::Update(
+    std::string table, const ParameterCompressReader* reader, unsigned tid) {
   auto param_it = tensor_map_.find(table);
   if (param_it == tensor_map_.end()) {
     throw std::runtime_error("Table not found: " + table);
@@ -168,72 +170,41 @@ void RowWiseAdaGrad::Update(std::string table,
         "Row-wise accumulated gradient table not found: " + acc_table);
   }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string value;
-    param_it->second->Get(keys[i], value, tid);
-    if (value.empty()) {
-      current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count != grads[i].size()) {
-        current_values[i] = std::vector<float>(grads[i].size(), 0.0f);
-      } else {
-        float* data       = (float*)value.data();
-        current_values[i] = std::vector<float>(data, data + grads[i].size());
-      }
-    }
-
-    acc_it->second->Get(keys[i], value, tid);
-    if (value.empty()) {
-      accumulated_gradients_squared[i] = std::vector<float>(1, 0.0f);
-    } else {
-      size_t float_count = value.size() / sizeof(float);
-      if (float_count < 1) {
-        accumulated_gradients_squared[i] = std::vector<float>(1, 0.0f);
-      } else {
-        float* data                      = (float*)value.data();
-        accumulated_gradients_squared[i] = std::vector<float>(data, data + 1);
-      }
-    }
+  int size = reader->item_size();
+  std::vector<uint64_t> keys;
+  keys.reserve(size);
+  for (int i = 0; i < size; ++i) {
+    keys.push_back(reader->item(i)->key);
   }
 
-  std::vector<std::vector<float>> updated_values;
-  std::vector<std::vector<float>> updated_accumulated_gradients;
+  std::vector<base::ConstArray<float>> current_values;
+  std::vector<base::ConstArray<float>> acc_values;
+  param_it->second->BatchGet(keys, &current_values, tid);
+  acc_it->second->BatchGet(keys, &acc_values, tid);
 
-  updated_values.reserve(keys.size());
-  updated_accumulated_gradients.reserve(keys.size());
+  for (int i = 0; i < size; ++i) {
+    const auto* item = reader->item(i);
+    if (current_values[i].Size() == 0 || acc_values[i].Size() == 0) {
+      continue;
+    }
 
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::vector<float> updated(grads[i].size());
-    std::vector<float> updated_acc_grad(1);
+    float* param_data = const_cast<float*>(current_values[i].Data());
+    float* acc_data   = const_cast<float*>(acc_values[i].Data());
+    int dim           = std::min(current_values[i].Size(), item->dim);
 
     float grad_square_mean = 0.0;
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      grad_square_mean += grads[i][j] * grads[i][j];
+#pragma omp simd reduction(+ : grad_square_mean)
+    for (int j = 0; j < dim; ++j) {
+      grad_square_mean += item->data()[j] * item->data()[j];
     }
-    grad_square_mean /= grads[i].size();
+    grad_square_mean /= dim;
 
-    updated_acc_grad[0] =
-        accumulated_gradients_squared[i][0] + grad_square_mean;
+    acc_data[0] += grad_square_mean;
 
-    float adaptive_lr =
-        learning_rate_ / (std::sqrt(updated_acc_grad[0]) + epsilon_);
-    for (size_t j = 0; j < grads[i].size(); ++j) {
-      updated[j] = current_values[i][j] - adaptive_lr * grads[i][j];
+    float adaptive_lr = learning_rate_ / (std::sqrt(acc_data[0]) + epsilon_);
+#pragma omp simd
+    for (int j = 0; j < dim; ++j) {
+      param_data[j] -= adaptive_lr * item->data()[j];
     }
-
-    updated_values.push_back(updated);
-    updated_accumulated_gradients.push_back(updated_acc_grad);
-  }
-
-  for (size_t i = 0; i < keys.size(); ++i) {
-    std::string param_value((char*)updated_values[i].data(),
-                            updated_values[i].size() * sizeof(float));
-    std::string acc_value(
-        (char*)updated_accumulated_gradients[i].data(),
-        updated_accumulated_gradients[i].size() * sizeof(float));
-
-    param_it->second->Put(keys[i], param_value, tid);
-    acc_it->second->Put(keys[i], acc_value, tid);
   }
 }

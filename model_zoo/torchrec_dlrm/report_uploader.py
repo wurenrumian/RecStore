@@ -2,7 +2,9 @@ import sys
 import ctypes
 import os
 
-LIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "libreport.so")
+LIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../build/lib/libreport.so")
+if not os.path.exists(LIB_PATH):
+    LIB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "libreport.so")
 
 try:
     lib = ctypes.CDLL(LIB_PATH)

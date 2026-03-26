@@ -1,6 +1,27 @@
 import torch
 import os
+import time
+import ctypes
 from typing import Optional, Tuple, List, Any, Callable
+
+def get_reporter():
+    if not hasattr(get_reporter, 'lib'):
+        script_dir = os.path.dirname(__file__)
+        lib_path = os.path.abspath(os.path.join(script_dir, '../../../../build/lib/libreport.so'))
+        if os.path.exists(lib_path):
+            lib = ctypes.CDLL(lib_path)
+            lib.report.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_double]
+            lib.report.restype = ctypes.c_bool
+            get_reporter.lib = lib
+        else:
+            get_reporter.lib = None
+    return get_reporter.lib
+
+def report_metric(table: str, uid: str, metric: str, value: float) -> bool:
+    lib = get_reporter()
+    if lib:
+        return lib.report(table.encode('utf-8'), uid.encode('utf-8'), metric.encode('utf-8'), float(value))
+    return False
 
 class RecStoreClient:
     _instance = None
@@ -35,8 +56,10 @@ class RecStoreClient:
         self._data_name_list = set()
         self._gdata_name_list = set()
         self._role = role
+        self._next_async_handle = 1
+        self._pending_async_ops = {}
         self._initialized = True
-        print(f"RecStoreClient initialized. Loaded library from: {library_path}")
+        # print(f"RecStoreClient initialized. Loaded library from: {library_path}")
 
     @property
     def role(self) -> str:
@@ -105,8 +128,15 @@ class RecStoreClient:
             print(f"Tensor '{name}' already exists. Skipping initialization.")
             return
 
-        print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
-        print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
+        # print(f"Initializing tensor '{name}' with shape {shape} and dtype {dtype} (base_offset={base_offset}).")
+        
+        num_embeddings, embedding_dim = shape
+        # print(f"[DEBUG] Calling init_embedding_table for '{name}' with num_embeddings={num_embeddings}, embedding_dim={embedding_dim}")
+        success = self.ops.init_embedding_table(name, int(num_embeddings), int(embedding_dim))
+        # print(f"[DEBUG] init_embedding_table returned: {success}")
+        if not success:
+            raise RuntimeError(f"Failed to initialize embedding table '{name}' on backend.")
+        
         self._tensor_meta[name] = {'shape': shape, 'dtype': dtype}
         self._full_data_shape[name] = shape
         self._data_name_list.add(name)
@@ -201,7 +231,17 @@ class RecStoreClient:
         # Some upstream code may pass CUDA tensors; backend ops are CPU-only.
         if ids.device.type != 'cpu':
             ids = ids.to('cpu')
-        return self.ops.emb_read(ids, embedding_dim)
+            
+        start_t = time.time()
+        res = self.ops.emb_read(ids, embedding_dim)
+        end_t = time.time()
+        
+        start_us = int(start_t * 1e6)
+        duration_us = (end_t - start_t) * 1e6
+        report_metric("embread_stages", f"KVClient::pull|{start_us}", "duration_us", duration_us)
+        report_metric("embread_stages", f"KVClient::pull|{start_us}", "request_size", float(ids.numel()))
+        
+        return res
 
     def push(self, name: str, ids: torch.Tensor, data: torch.Tensor):
         """Push data to KVServer.
@@ -239,19 +279,71 @@ class RecStoreClient:
 
     def wait_and_get(self, prefetch_id: int, embedding_dim: int, device: torch.device = torch.device("cpu")) -> torch.Tensor:
         """Block until prefetch completes and return embeddings of shape [N, D]."""
+        start_t = time.time()
         out = self.ops.emb_wait_result(int(prefetch_id), int(embedding_dim))
+        end_t = time.time()
+        
+        start_us = int(start_t * 1e6)
+        duration_us = (end_t - start_t) * 1e6
+        report_metric("embread_stages", f"KVClient::wait_and_get|{start_us}", "duration_us", duration_us)
+        
         if device.type == "cuda":
             out = out.to(device)
         return out
 
-    # def update(self, name: str, ids: torch.Tensor, grads: torch.Tensor):
-    #     """
-    #     Pushes gradients to update the given IDs of a named tensor.
-    #     This is an additional method from original client, kept for utility.
-    #     """
-    #     if name not in self._tensor_meta:
-    #         raise RuntimeError(f"Tensor '{name}' has not been initialized.")
-    #     self.ops.emb_update(ids, grads)
+    def update(self, name: str, ids: torch.Tensor, grads: torch.Tensor):
+        """
+        Pushes gradients to update the given IDs of a named tensor via embupdate.
+        This performs SGD-style update: param = param - lr * grad
+        Note: The learning rate is handled by the optimizer, grads should already be scaled.
+        """
+        handle = self.update_async(name, ids, grads)
+        self.wait(handle)
+
+    def update_async(self, name: str, ids: torch.Tensor, grads: torch.Tensor) -> int:
+        """Queue an embedding update and return a handle for explicit synchronization."""
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor '{name}' has not been initialized.")
+        
+        if not isinstance(ids, torch.Tensor):
+            raise TypeError("ids must be a torch.Tensor")
+        if ids.dtype != torch.int64:
+            ids = ids.to(dtype=torch.int64)
+        if not ids.is_contiguous():
+            ids = ids.contiguous()
+        if ids.device.type != 'cpu':
+            ids = ids.to('cpu')
+        
+        if not isinstance(grads, torch.Tensor):
+            raise TypeError("grads must be a torch.Tensor")
+        if grads.dtype != torch.float32:
+            grads = grads.to(dtype=torch.float32)
+        if not grads.is_contiguous():
+            grads = grads.contiguous()
+        if grads.device.type != 'cpu':
+            grads = grads.to('cpu')
+
+        handle = self._next_async_handle
+        self._next_async_handle += 1
+        self._pending_async_ops[handle] = (
+            name,
+            ids.clone(),
+            grads.clone(),
+        )
+        return handle
+
+    def wait(self, handle: int) -> None:
+        """Wait for a queued async operation and apply it if still pending."""
+        pending = self._pending_async_ops.pop(int(handle), None)
+        if pending is None:
+            return
+        name, ids, grads = pending
+        self.ops.emb_update_table(name, ids, grads)
+
+    def flush_async_updates(self) -> None:
+        """Synchronously apply all queued async update operations."""
+        for handle in list(self._pending_async_ops.keys()):
+            self.wait(handle)
 
     def get_data_meta(self, name: str) -> Tuple[torch.dtype, Tuple[int, ...], None]:
         """Get meta data (data_type, data_shape, partition_policy)"""
@@ -280,6 +372,14 @@ class RecStoreClient:
             the number of nonzero in this data.
         """
         raise NotImplementedError("count_nonzero is not implemented for the ops-based client.")
+
+    def set_ps_config(self, host: str, port: int):
+        """
+        Dynamically configure the PS Client host and port.
+        This forces re-initialization of the backend PS client.
+        """
+        print(f"[RecStoreClient] Setting PS config to {host}:{port}")
+        self.ops.set_ps_config(host, int(port))
 
 def get_kv_client() -> RecStoreClient:
     """
