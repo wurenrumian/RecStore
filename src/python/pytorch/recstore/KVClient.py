@@ -294,8 +294,9 @@ class RecStoreClient:
     def update(self, name: str, ids: torch.Tensor, grads: torch.Tensor):
         """
         Pushes gradients to update the given IDs of a named tensor via embupdate.
-        This performs SGD-style update: param = param - lr * grad
-        Note: The learning rate is handled by the optimizer, grads should already be scaled.
+        Backend optimizers apply their own learning rate when consuming these grads.
+        Callers should pass aggregated raw gradients unless they are intentionally
+        targeting a backend path that expects pre-scaled values.
         """
         handle = self.update_async(name, ids, grads)
         self.wait(handle)

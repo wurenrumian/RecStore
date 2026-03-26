@@ -7,7 +7,7 @@ from ._sparse_test_utils import KVClientIsolationMixin, build_features
 
 
 class TestSparseOptimizerStaging(KVClientIsolationMixin, unittest.TestCase):
-    def test_ebc_update_happens_in_optimizer_step_not_backward(self):
+    def test_ebc_update_submits_unscaled_grads_for_backend_optimizer(self):
         ebc, fake = self.build_module()
         optimizer = SparseSGD([ebc], lr=0.1)
         features = build_features()
@@ -28,8 +28,8 @@ class TestSparseOptimizerStaging(KVClientIsolationMixin, unittest.TestCase):
         self.assertTrue(torch.equal(keys, torch.tensor([1, 3], dtype=torch.int64)))
         expected_grads = torch.tensor(
             [
-                [0.2, 0.2, 0.2, 0.2],
-                [0.1, 0.1, 0.1, 0.1],
+                [2.0, 2.0, 2.0, 2.0],
+                [1.0, 1.0, 1.0, 1.0],
             ],
             dtype=torch.float32,
         )
