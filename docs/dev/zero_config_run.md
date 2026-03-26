@@ -2,6 +2,8 @@
 
 为了方便开发者快速体验 RecStore 而无需在本地搭建复杂的编译环境，我们提供了基于 GitHub Actions 构建产物的免编译运行方式。
 
+同时，仓库也提供了手动触发的 GitHub Release 工作流，可以把同一套 CPU 产物发布到 **Releases** 页面，方便直接下载固定版本。
+
 ???+ Warning "注意"
     该方式仅支持 Linux 环境，以及由于 Actions 环境限制，构建是纯 CPU 版本，可能不支持 GPU 环境。
     
@@ -17,6 +19,8 @@
     *   `packed-bundle`: 包含编译好的 `ps_server` 可执行文件和 `lib_recstore_ops.so` 动态库。
     *   `torch-wheel`: 包含与 RecStore 兼容的 PyTorch 安装包（.whl）。
     *   `recstore-ops`: 包含 RecStore OP 层的动态库（.so）。
+
+如果仓库维护者已经执行过手动 Release 工作流，也可以直接从 **Releases** 页面下载对应版本的 `ps_server`、`recstore_ops`、`ycsb` 和 torch wheel。
 
 ## 2. 环境准备
 
@@ -95,3 +99,9 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$(pwd)/runner/package/lib:$(pwd)/runner/
     ```
 
     该错误是由于 GLIBC 版本不兼容导致的，可能需要升级 GLIBC 到更高版本。
+
+## 4. Release 包说明
+
+- Release 包会刻意排除宿主机应自行提供的核心运行库，例如 `ld-linux*`、`libc.so*`、`libm.so*`、`libpthread.so*` 等。
+- 这样做是为了避免把 GitHub Actions 构建机上的 loader / GLIBC 一起打包，导致目标机器出现更隐蔽的兼容性错误。
+- 因此，Release 包仍然要求目标 Linux 环境提供兼容的系统运行时；推荐 Ubuntu 20.04/22.04 或相近发行版。

@@ -102,6 +102,18 @@ jobs:
           cd build
           make -j4
 
+      - name: Normalize recstore ops artifact name
+        run: |
+          set -euo pipefail
+          if [ -f build/lib/lib_recstore_ops.so ]; then
+            echo "build/lib/lib_recstore_ops.so already exists"
+          elif [ -f build/lib/_recstore_ops.so ]; then
+            cp -f build/lib/_recstore_ops.so build/lib/lib_recstore_ops.so
+          else
+            echo "Neither build/lib/lib_recstore_ops.so nor build/lib/_recstore_ops.so exists" >&2
+            exit 1
+          fi
+
       - name: Pack artifacts
         run: |
           set -euo pipefail
