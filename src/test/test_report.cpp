@@ -26,7 +26,7 @@ public:
   ScopedEnvVar(const char* key, const char* value) : key_(key) {
     const char* original = std::getenv(key_);
     if (original != nullptr) {
-      had_original_ = true;
+      had_original_   = true;
       original_value_ = original;
     }
 
@@ -64,7 +64,7 @@ private:
   std::filesystem::path original_;
 };
 
-}  // namespace
+} // namespace
 
 TEST(ReportTest, TimelineBasic) {
   {
@@ -83,12 +83,10 @@ TEST(ReportTest, ReportModeCanBeDisabledByEnvVar) {
   xmh::Timer::Init();
 
   EXPECT_FALSE(is_report_remote_enabled_for_test());
-  EXPECT_TRUE(report("cpp_easy_test_report_map",
-                     "env_local_test",
-                     "duration_us",
-                     1.0));
-  EXPECT_DOUBLE_EQ(xmh::Timer::ManualQuery("cpp_easy_test_report_map.duration_us"),
-                   1000.0);
+  EXPECT_TRUE(
+      report("cpp_easy_test_report_map", "env_local_test", "duration_us", 1.0));
+  EXPECT_DOUBLE_EQ(
+      xmh::Timer::ManualQuery("cpp_easy_test_report_map.duration_us"), 1000.0);
 }
 
 TEST(ReportTest, EmptyReportApiDisablesRemoteReporting) {
@@ -96,8 +94,7 @@ TEST(ReportTest, EmptyReportApiDisablesRemoteReporting) {
   ScopedEnvVar report_mode("RECSTORE_REPORT_MODE", nullptr);
 
   const std::filesystem::path temp_dir =
-      std::filesystem::temp_directory_path() /
-      "recstore_test_report_empty_api";
+      std::filesystem::temp_directory_path() / "recstore_test_report_empty_api";
   std::filesystem::create_directories(temp_dir);
 
   const std::filesystem::path config_path = temp_dir / "recstore_config.json";
@@ -109,10 +106,8 @@ TEST(ReportTest, EmptyReportApiDisablesRemoteReporting) {
 
   ScopedCurrentPath cwd_guard(temp_dir);
   EXPECT_FALSE(is_report_remote_enabled_for_test());
-  EXPECT_TRUE(report("cpp_easy_test_report_map",
-                     "config_local_test",
-                     "duration_us",
-                     2.0));
+  EXPECT_TRUE(report(
+      "cpp_easy_test_report_map", "config_local_test", "duration_us", 2.0));
 
   std::filesystem::remove(config_path);
   std::filesystem::remove(temp_dir);
@@ -128,13 +123,10 @@ TEST(ReportTest, JsonlSinkWritesStructuredEvent) {
       "recstore_test_report_jsonl_sink";
   std::filesystem::create_directories(temp_dir);
   const std::filesystem::path output_path = temp_dir / "report_events.jsonl";
-  ScopedEnvVar output_file("RECSTORE_REPORT_JSONL_PATH",
-                           output_path.c_str());
+  ScopedEnvVar output_file("RECSTORE_REPORT_JSONL_PATH", output_path.c_str());
 
-  EXPECT_TRUE(report("cpp_easy_test_report_map",
-                     "jsonl_sink_test",
-                     "latency_ns",
-                     3000.0));
+  EXPECT_TRUE(report(
+      "cpp_easy_test_report_map", "jsonl_sink_test", "latency_ns", 3000.0));
 
   std::ifstream ifs(output_path);
   ASSERT_TRUE(ifs.is_open());

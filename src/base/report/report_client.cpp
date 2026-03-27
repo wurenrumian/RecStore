@@ -72,10 +72,10 @@ struct StructuredReportEvent {
 };
 
 std::string ToLower(std::string value) {
-  std::transform(value.begin(),
-                 value.end(),
-                 value.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
+  std::transform(
+      value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return std::tolower(c);
+      });
   return value;
 }
 
@@ -89,8 +89,7 @@ bool ParseLocalReportMode(const std::string& value) {
 bool ParseRemoteReportMode(const std::string& value) {
   const std::string normalized = ToLower(value);
   return normalized == "grafana" || normalized == "remote" ||
-         normalized == "on" || normalized == "true" ||
-         normalized == "1";
+         normalized == "on" || normalized == "true" || normalized == "1";
 }
 
 LocalSinkMode ResolveLocalSinkMode() {
@@ -136,9 +135,9 @@ json ToJson(const StructuredReportEvent& event) {
 }
 
 void WriteLocalStructuredEvent(const StructuredReportEvent& event) {
-  const json event_json = ToJson(event);
+  const json event_json        = ToJson(event);
   const std::string serialized = event_json.dump();
-  const auto sink_mode = ResolveLocalSinkMode();
+  const auto sink_mode         = ResolveLocalSinkMode();
 
   if (sink_mode == LocalSinkMode::kGlog || sink_mode == LocalSinkMode::kBoth) {
     LOG(INFO) << "REPORT_LOCAL_EVENT " << serialized;
@@ -167,8 +166,7 @@ bool TryRecordLatencyMetricToTimer(const StructuredReportEvent& event) {
   }
 
   xmh::Timer::ManualRecordNs(
-      event.table_name + "." + event.metric_name,
-      value_ns);
+      event.table_name + "." + event.metric_name, value_ns);
   return true;
 }
 
@@ -198,7 +196,7 @@ bool IsRemoteReportEnabled() {
   return ResolveReportMode() == ReportMode::kRemote;
 }
 
-}  // namespace
+} // namespace
 
 size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
   ((std::string*)userp)->append((char*)contents, size * nmemb);
@@ -314,30 +312,27 @@ bool send_json_request(const std::string& json_payload) {
   return true;
 }
 
-bool is_report_remote_enabled_for_test() {
-  return IsRemoteReportEnabled();
-}
+bool is_report_remote_enabled_for_test() { return IsRemoteReportEnabled(); }
 
-bool is_report_local_jsonl_enabled_for_test() {
-  return IsLocalJsonlEnabled();
-}
+bool is_report_local_jsonl_enabled_for_test() { return IsLocalJsonlEnabled(); }
 
 extern "C" bool
 report(const char* table_name,
        const char* unique_id,
        const char* metric_name,
        double metric_value) {
-  const StructuredReportEvent event = {.table_name = table_name,
-                                       .unique_id = unique_id,
-                                       .metric_name = metric_name,
-                                       .metric_value = metric_value,
-                                       .timestamp_us = GetTimestampUs(),
-                                       .source = "report"};
+  const StructuredReportEvent event = {
+      .table_name   = table_name,
+      .unique_id    = unique_id,
+      .metric_name  = metric_name,
+      .metric_value = metric_value,
+      .timestamp_us = GetTimestampUs(),
+      .source       = "report"};
 
   WriteLocalStructuredEvent(event);
   TryRecordLatencyMetricToTimer(event);
 
-  const json j = ToJson(event);
+  const json j             = ToJson(event);
   std::string json_payload = j.dump();
 
   bool success = send_json_request(json_payload);
