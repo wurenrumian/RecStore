@@ -48,6 +48,11 @@ if DLRM_PATH not in sys.path:
     sys.path.insert(0, DLRM_PATH)
 
 from dlrm import DLRM, DLRM_DCN, DLRM_Projection, DLRMTrain
+from launch_config import (
+    apply_launch_config,
+    build_config_from_sources,
+    extract_explicit_config_keys,
+)
 from python.pytorch.torchrec_kv.EmbeddingBag import RecStoreEmbeddingBagCollection
 
 try:
@@ -326,8 +331,28 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Enable TensorFloat-32 mode for matrix multiplications on A100 (or newer) GPUs.",
     )
+    parser.add_argument(
+        "--gin_config",
+        type=str,
+        default=None,
+        help="Path to gin launch config file.",
+    )
+    parser.add_argument(
+        "--gin_binding",
+        dest="gin_bindings",
+        action="append",
+        default=[],
+        help="Gin binding override. Can be passed multiple times.",
+    )
     
     args = parser.parse_args(argv)
+    explicit_config_keys = extract_explicit_config_keys(argv)
+    launch_config = build_config_from_sources(
+        gin_config=args.gin_config,
+        gin_bindings=args.gin_bindings,
+        cli_overrides={},
+    )
+    apply_launch_config(args, launch_config, explicit_config_keys)
 
     if args.single_day_mode:
         if args.in_memory_binary_criteo_path is None:

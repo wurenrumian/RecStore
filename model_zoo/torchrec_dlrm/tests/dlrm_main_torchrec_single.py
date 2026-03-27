@@ -37,8 +37,11 @@ if RECSTORE_PATH not in sys.path:
 if DLRM_PATH not in sys.path:
     sys.path.insert(0, DLRM_PATH)
 
-
-
+from launch_config import (
+    apply_launch_config,
+    build_config_from_sources,
+    extract_explicit_config_keys,
+)
 from dlrm_torchrec_model import create_dlrm_model, DLRM
 import dlrm_torchrec_model
 print(f"DEBUG: dlrm_torchrec_model imported from: {dlrm_torchrec_model.__file__}")
@@ -221,8 +224,28 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         choices=["hbm", "uvm", "ssd"],
         help="Storage type for embeddings: hbm (GPU memory), uvm (Unified Virtual Memory/RAM), ssd (SSD/Disk)",
     )
+    parser.add_argument(
+        "--gin_config",
+        type=str,
+        default=None,
+        help="Path to gin launch config file.",
+    )
+    parser.add_argument(
+        "--gin_binding",
+        dest="gin_bindings",
+        action="append",
+        default=[],
+        help="Gin binding override. Can be passed multiple times.",
+    )
     
     args = parser.parse_args(argv)
+    explicit_config_keys = extract_explicit_config_keys(argv)
+    launch_config = build_config_from_sources(
+        gin_config=args.gin_config,
+        gin_bindings=args.gin_bindings,
+        cli_overrides={},
+    )
+    apply_launch_config(args, launch_config, explicit_config_keys)
 
     if args.single_day_mode:
         if args.in_memory_binary_criteo_path is None:
