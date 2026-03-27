@@ -82,18 +82,33 @@ sudo docker exec -it recstore /bin/bash
 
 进入容器后，运行以下脚本进行一键初始化：
 
-```bash
-# 安装 PyTorch with cxx11abi
-cd binary
-# pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple torch-2.5.0a0+git*.whl
-
-# 初始化环境依赖
-cd ../dockerfiles
+```bash title="初始化环境依赖"
+cd dockerfiles
 bash init_env_inside_docker.sh > init_env.log 2>&1
+
+# 安装 GPU 开发默认依赖（全局安装）
+bash init_dlrm.sh --mirror=0
 ```
 
-???+ note "PyTorch with cxx11abi"
-    RecStore 项目依赖于 PyTorch with cxx11abi，需要自行构建，你可以参考 [项目提供的脚本](dockerfiles/build_torch_wheel.sh) 来安装。
+??? note "默认 GPU 开发版本"
+    当前推荐的 GPU 开发环境版本为：
+
+    - `torch==2.7.1+cu118`
+    - `torchrec==1.2.0`
+    - `fbgemm-gpu==1.2.0`
+    - `torchmetrics==1.0.3`
+
+    其中 `torch` 需要满足 `torch.compiled_with_cxx11_abi() == True`。`dockerfiles/init_dlrm.sh` 默认会复用已经安装好的全局 `torch`，并安装与其匹配的 TorchRec 依赖。
+
+    如需手动安装，可直接执行：
+
+    ```bash
+    python3 -m pip install --index-url https://download.pytorch.org/whl/cu118 torch==2.7.1
+    python3 -m pip install torchrec==1.2.0 fbgemm-gpu==1.2.0 torchmetrics==1.0.3 tqdm
+    ```
+
+??? note "CI 环境说明"
+    CI 当前仍以 CPU-only 为主，用于构建与基础验证。CI 中会继续安装 CPU 版 `torch` 和 `libtorch`，但在无 CUDA toolkit 或 CPU-only `torch` 环境下，`dockerfiles/init_dlrm.sh` 会自动跳过 TorchRec/FBGEMM GPU 依赖安装。
 
 ## 6. 编译 RecStore
 

@@ -49,9 +49,11 @@ Enter the container.
 
 **We provide a script for one-click environment initialization**. Simply run the following command **in the docker** to set up the environment:
 
-	(inside docker) cd binary && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple torch-2.5.0a0+git*.whl
-	(inside docker) cd ../dockerfiles
+	(inside docker) cd dockerfiles
 	(inside docker) bash init_env_inside_docker.sh > init_env.log 2>&1
+
+
+For the DLRM/TorchRec Python stack, follow the global installation flow documented in `docs/quickstart.md`. The repository now defaults to reusing the existing global `torch` installation and then installs the matching TorchRec dependencies.
 
 ## Build RecStore
 

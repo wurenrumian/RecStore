@@ -18,7 +18,6 @@ DEFAULT_FUSE_K=30
 DEFAULT_TRACE_FILE=""
 
 DLRM_PATH="$(pwd)"
-VENV_BASH="${DLRM_PATH}/dlrm_venv/bin/activate"
 TORCHREC_SCRIPT="${DLRM_PATH}/tests/dlrm_main_torchrec_single.py"
 CUSTOM_SCRIPT="${DLRM_PATH}/tests/dlrm_main_single_day.py"
 
@@ -34,6 +33,15 @@ fuse_emb_tables=$DEFAULT_FUSE_EMB
 fuse_k=$DEFAULT_FUSE_K
 trace_file=$DEFAULT_TRACE_FILE
 allow_tf32=false
+
+if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+else
+    echo "Error: Neither python nor python3 is available in PATH" >&2
+    exit 1
+fi
 
 show_help() {
     echo "DLRM Training Script with Performance Metrics"
@@ -236,7 +244,7 @@ echo "Batch Size:               $batch_size"
 echo "Learning Rate:            $learning_rate"
 echo "Epochs:                   $epochs"
 echo "Script Path:              $script_to_run"
-echo "Env. Path:                $VENV_BASH"
+echo "Python:                   $(command -v \"$PYTHON_BIN\")"
 if [ "$mode" = "RecStore" ]; then
 echo "Enable Prefetch:         $enable_prefetch"
 echo "Prefetch Depth:          $prefetch_depth"
@@ -247,8 +255,6 @@ echo "Trace File:              $trace_file"
 fi
 fi
 echo "=========================================="
-
-# source ${VENV_BASH}
 
 if [[ ! -f "$script_to_run" ]]; then
     echo "Error: Script not found at $script_to_run" >&2
@@ -273,7 +279,7 @@ done
 echo "✓ All required data files found"
 
 if [ -f "$processed_dataset_path/day_0_labels.npy" ]; then
-    detected_size=$(python3 -c "import numpy as np; print(np.load('${processed_dataset_path}/day_0_labels.npy', mmap_mode='r').shape[0])")
+    detected_size=$($PYTHON_BIN -c "import numpy as np; print(np.load('${processed_dataset_path}/day_0_labels.npy', mmap_mode='r').shape[0])")
     if [ -n "$detected_size" ]; then
         echo "Auto-detected dataset size: $detected_size"
         dataset_size=$detected_size
@@ -317,9 +323,9 @@ else
         extra_args+=(--trace_file "$trace_file")
     fi
 fi
-echo "Executing command: python -m torch.distributed.run --nnodes 1 --nproc_per_node 1 --rdzv_backend c10d --rdzv_endpoint localhost --rdzv_id run-$(date +%s) --role trainer $script_to_run --single_day_mode --in_memory_binary_criteo_path $processed_dataset_path --batch_size $batch_size --learning_rate $learning_rate --epochs $epochs --pin_memory --mmap_mode --embedding_dim 128 ${extra_args[@]} --adagrad"
+echo "Executing command: $PYTHON_BIN -m torch.distributed.run --nnodes 1 --nproc_per_node 1 --rdzv_backend c10d --rdzv_endpoint localhost --rdzv_id run-$(date +%s) --role trainer $script_to_run --single_day_mode --in_memory_binary_criteo_path $processed_dataset_path --batch_size $batch_size --learning_rate $learning_rate --epochs $epochs --pin_memory --mmap_mode --embedding_dim 128 ${extra_args[@]} --adagrad"
 
-python -m torch.distributed.run --nnodes 1 \
+$PYTHON_BIN -m torch.distributed.run --nnodes 1 \
     --nproc_per_node 1 \
     --rdzv_backend c10d \
     --rdzv_endpoint localhost \

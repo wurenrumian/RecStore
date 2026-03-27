@@ -4,7 +4,7 @@ set -x
 
 # Build a CPU-only, C++11 ABI enabled PyTorch wheel and place it under ${OUT_DIR}.
 # Defaults can be overridden via environment variables.
-TORCH_VERSION=${TORCH_VERSION:-2.5.0}
+TORCH_VERSION=${TORCH_VERSION:-2.7.1}
 TORCH_BRANCH=${TORCH_BRANCH:-v${TORCH_VERSION}}
 PYTHON_BIN=${PYTHON_BIN:-python3}
 OUT_DIR=${OUT_DIR:-$(cd "$(dirname "$0")/.." && pwd)/binary}
