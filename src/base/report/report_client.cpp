@@ -1,4 +1,5 @@
 #include "report_client.h"
+#include "base/timer.h"
 #include <glog/logging.h>
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
@@ -10,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstdlib>
+#include <algorithm>
 
 #include <chrono>
 
@@ -54,14 +56,120 @@ enum class ReportMode {
   kLocal,
 };
 
+enum class LocalSinkMode {
+  kGlog,
+  kJsonl,
+  kBoth,
+};
+
+struct StructuredReportEvent {
+  std::string table_name;
+  std::string unique_id;
+  std::string metric_name;
+  double metric_value;
+  uint64_t timestamp_us;
+  std::string source;
+};
+
+std::string ToLower(std::string value) {
+  std::transform(value.begin(),
+                 value.end(),
+                 value.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+  return value;
+}
+
 bool ParseLocalReportMode(const std::string& value) {
-  return value == "local" || value == "off" || value == "disable" ||
-         value == "disabled" || value == "false" || value == "0";
+  const std::string normalized = ToLower(value);
+  return normalized == "local" || normalized == "off" ||
+         normalized == "disable" || normalized == "disabled" ||
+         normalized == "false" || normalized == "0";
 }
 
 bool ParseRemoteReportMode(const std::string& value) {
-  return value == "grafana" || value == "remote" || value == "on" ||
-         value == "true" || value == "1";
+  const std::string normalized = ToLower(value);
+  return normalized == "grafana" || normalized == "remote" ||
+         normalized == "on" || normalized == "true" ||
+         normalized == "1";
+}
+
+LocalSinkMode ResolveLocalSinkMode() {
+  if (const char* env_mode = std::getenv("RECSTORE_REPORT_LOCAL_SINK");
+      env_mode != nullptr) {
+    const std::string mode = ToLower(env_mode);
+    if (mode == "jsonl") {
+      return LocalSinkMode::kJsonl;
+    }
+    if (mode == "both") {
+      return LocalSinkMode::kBoth;
+    }
+  }
+  return LocalSinkMode::kGlog;
+}
+
+bool IsLocalJsonlEnabled() {
+  const auto mode = ResolveLocalSinkMode();
+  return mode == LocalSinkMode::kJsonl || mode == LocalSinkMode::kBoth;
+}
+
+std::string GetLocalJsonlPath() {
+  if (const char* env_path = std::getenv("RECSTORE_REPORT_JSONL_PATH");
+      env_path != nullptr) {
+    return env_path;
+  }
+  return "recstore_report_events.jsonl";
+}
+
+uint64_t GetTimestampUs() {
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+json ToJson(const StructuredReportEvent& event) {
+  return {{"table_name", event.table_name},
+          {"unique_id", event.unique_id},
+          {"metric_name", event.metric_name},
+          {"metric_value", event.metric_value},
+          {"timestamp_us", event.timestamp_us},
+          {"source", event.source}};
+}
+
+void WriteLocalStructuredEvent(const StructuredReportEvent& event) {
+  const json event_json = ToJson(event);
+  const std::string serialized = event_json.dump();
+  const auto sink_mode = ResolveLocalSinkMode();
+
+  if (sink_mode == LocalSinkMode::kGlog || sink_mode == LocalSinkMode::kBoth) {
+    LOG(INFO) << "REPORT_LOCAL_EVENT " << serialized;
+  }
+
+  if (sink_mode == LocalSinkMode::kJsonl || sink_mode == LocalSinkMode::kBoth) {
+    const std::filesystem::path output_path(GetLocalJsonlPath());
+    const auto parent = output_path.parent_path();
+    if (!parent.empty()) {
+      std::filesystem::create_directories(parent);
+    }
+    std::ofstream ofs(output_path, std::ios::app);
+    ofs << serialized << '\n';
+  }
+}
+
+bool TryRecordLatencyMetricToTimer(const StructuredReportEvent& event) {
+  double value_ns = 0.0;
+  if (event.metric_name == "duration_ns" || event.metric_name == "latency_ns") {
+    value_ns = event.metric_value;
+  } else if (event.metric_name == "duration_us" ||
+             event.metric_name == "latency_us") {
+    value_ns = event.metric_value * 1000.0;
+  } else {
+    return false;
+  }
+
+  xmh::Timer::ManualRecordNs(
+      event.table_name + "." + event.metric_name,
+      value_ns);
+  return true;
 }
 
 ReportMode ResolveReportMode() {
@@ -210,15 +318,26 @@ bool is_report_remote_enabled_for_test() {
   return IsRemoteReportEnabled();
 }
 
+bool is_report_local_jsonl_enabled_for_test() {
+  return IsLocalJsonlEnabled();
+}
+
 extern "C" bool
 report(const char* table_name,
        const char* unique_id,
        const char* metric_name,
        double metric_value) {
-  json j                   = {{"table_name", table_name},
-                              {"unique_id", unique_id},
-                              {"metric_name", metric_name},
-                              {"metric_value", metric_value}};
+  const StructuredReportEvent event = {.table_name = table_name,
+                                       .unique_id = unique_id,
+                                       .metric_name = metric_name,
+                                       .metric_value = metric_value,
+                                       .timestamp_us = GetTimestampUs(),
+                                       .source = "report"};
+
+  WriteLocalStructuredEvent(event);
+  TryRecordLatencyMetricToTimer(event);
+
+  const json j = ToJson(event);
   std::string json_payload = j.dump();
 
   bool success = send_json_request(json_payload);

@@ -12,6 +12,7 @@ bool report(const char* table_name,
 bool send_json_request(const std::string& json_payload);
 
 bool is_report_remote_enabled_for_test();
+bool is_report_local_jsonl_enabled_for_test();
 
 namespace recstore {
 extern thread_local uint64_t g_trace_id;
