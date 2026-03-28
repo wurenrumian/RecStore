@@ -15,7 +15,7 @@ public:
     PMem    = 0b11
   };
 
-  UnifiedPointer() : raw_((static_cast<uint64_t>(Type::Invalid) << 62)) {};
+  UnifiedPointer() : raw_((static_cast<uint64_t>(Type::Invalid) << 62)){};
 
   explicit operator bool() const { return type() != Type::Invalid; }
 

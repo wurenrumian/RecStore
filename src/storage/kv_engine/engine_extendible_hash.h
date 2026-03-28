@@ -14,7 +14,7 @@
 
 class KVEngineExtendibleHash : public BaseKV {
   static constexpr int kKVEngineValidFileSize = 123;
-  static constexpr size_t kLockStripeNum       = 4096;
+  static constexpr size_t kLockStripeNum      = 4096;
 
 public:
   KVEngineExtendibleHash(const BaseKVConfig& config) : BaseKV(config) {

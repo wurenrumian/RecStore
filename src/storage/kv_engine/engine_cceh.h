@@ -52,10 +52,10 @@ public:
       value_offset =
           config.json_config_.value("spdk_value_offset", (uint64_t)1000000);
     }
-    BaseKVConfig index_config = config;
-    BaseKVConfig value_config = config;
-    index_config.json_config_["file_path"] = index_db_path;
-    value_config.json_config_["file_path"] = value_db_path;
+    BaseKVConfig index_config                   = config;
+    BaseKVConfig value_config                   = config;
+    index_config.json_config_["file_path"]      = index_db_path;
+    value_config.json_config_["file_path"]      = value_db_path;
     index_config.json_config_["page_id_offset"] = index_offset;
     value_config.json_config_["page_id_offset"] = value_offset;
 

@@ -12,7 +12,7 @@ using boost::coroutines2::coroutine;
 class Index {
 public:
   virtual ~Index() { std::cout << "exit Index" << std::endl; }
-  explicit Index(const BaseKVConfig& config) {};
+  explicit Index(const BaseKVConfig& config){};
 
   virtual void Get(Key_t key, Value_t& pointer, unsigned tid) = 0;
   virtual void

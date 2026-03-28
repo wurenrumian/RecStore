@@ -133,7 +133,7 @@ class BaseKV {
 public:
   virtual ~BaseKV() { std::cout << "exit BaseKV" << std::endl; }
 
-  explicit BaseKV(const BaseKVConfig& config) {};
+  explicit BaseKV(const BaseKVConfig& config){};
 
   virtual void Util() {
     std::cout << "BaseKV Util: no impl" << std::endl;

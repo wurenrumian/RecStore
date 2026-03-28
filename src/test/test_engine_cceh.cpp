@@ -183,7 +183,7 @@ TEST_F(KVEngineCCEHTest, ConcurrentBatchGet) {
 
 // BatchPut写入 + BatchGet读回，用float数据做roundtrip验证
 TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
-  const int num_keys       = 256;
+  const int num_keys = 256;
   const int floats_per_key = 128 / sizeof(float); // value_size=128 → 32 floats
 
   // 构造每个key对应的float数据，key i 的第 j 个float = i * 100.0f + j
