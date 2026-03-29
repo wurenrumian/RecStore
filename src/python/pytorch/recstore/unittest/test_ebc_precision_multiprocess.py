@@ -143,6 +143,7 @@ def worker(rank, world_size, args, barrier, table_name):
         
         standard_optimizer.step()
         sparse_optimizer.step()
+        sparse_optimizer.flush()
         
         with torch.no_grad():
             updated_std_weights = standard_ebc.state_dict()[f"embedding_bags.{config.name}.weight"][local_start:local_end].cpu()

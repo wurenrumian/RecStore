@@ -31,24 +31,12 @@ check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
   return true;
 }
 
-static bool check_eq_2d(const std::vector<std::vector<float>>& a,
+static bool check_eq_2d(std::vector<std::vector<float>>& a,
                         const std::vector<std::vector<float>>& b) {
-  std::cout << "a: ";
-  for (auto& v : a) {
-    for (auto& vv : v) {
-      std::cout << vv << " ";
-    }
-    std::cout << std::endl;
+  a.resize(b.size());
+  for (size_t i = 0; i < b.size(); ++i) {
+    a[i].resize(b[i].size());
   }
-  std::cout << std::endl;
-  std::cout << "b: ";
-  for (auto& v : b) {
-    for (auto& vv : v) {
-      std::cout << vv << " ";
-    }
-    std::cout << std::endl;
-  }
-  std::cout << std::endl;
   if (a.size() != b.size())
     return false;
   for (int i = 0; i < a.size(); i++) {
@@ -94,6 +82,13 @@ void TestFactoryClient() {
     // read those
     brpc_client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
+
+    std::cout << "load fake data" << std::endl;
+    brpc_client->LoadFakeData(100);
+    std::cout << "load fake data done" << std::endl;
+    std::cout << "dump fake data" << std::endl;
+    brpc_client->DumpFakeData(100);
+    std::cout << "dump fake data done" << std::endl;
 
     std::cout << "All bRPC operations passed!" << std::endl;
   }

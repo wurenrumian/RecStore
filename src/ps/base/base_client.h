@@ -17,7 +17,12 @@ struct EmbeddingTableConfig {
   }
 };
 
-enum class PSCommand { CLEAR_PS, RELOAD_PS, LOAD_FAKE_DATA };
+enum class PSCommand {
+  CLEAR_PS,
+  RELOAD_PS,
+  LOAD_FAKE_DATA,
+  DUMP_FAKE_DATA,
+};
 
 class BasePSClient {
   json json_config_;

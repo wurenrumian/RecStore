@@ -19,11 +19,8 @@
 #include "base/bitmap.h"
 #include "base/counter.h"
 #include "base/hashtable.h"
-#include "malloc.h"
-#include "shm_file.h"
-
-#include "allocator_master.hh" // 引入 r2 的分配器
-#include "allocator.hh"
+#include "memory/malloc.h"
+#include "memory/shm_file.h"
 namespace base {
 
 class PersistSimpleMalloc : public MallocApi {
@@ -614,11 +611,16 @@ private:
   Counter total_loop_malloc_{"total_loop_malloc"};
 
   DISALLOW_COPY_AND_ASSIGN(PersistLoopShmMalloc);
-  r2::AllocatorMaster R2AllocMaster;
 };
 FACTORY_REGISTER(MallocApi,
                  PersistLoopShmMalloc, // 注册名（通常同类名）
                  PersistLoopShmMalloc, // 具体类型
+                 const std::string&,
+                 int64,
+                 const std::string&);
+FACTORY_REGISTER(MallocApi,
+                 PERSIST_LOOP_SLAB,
+                 PersistLoopShmMalloc,
                  const std::string&,
                  int64,
                  const std::string&);

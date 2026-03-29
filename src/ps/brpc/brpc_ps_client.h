@@ -84,6 +84,8 @@ public:
 
   bool LoadFakeData(int64_t data);
 
+  bool DumpFakeData(int64_t n);
+
   bool LoadCkpt(const std::vector<std::string>& model_config_path,
                 const std::vector<std::string>& emb_file_path);
 

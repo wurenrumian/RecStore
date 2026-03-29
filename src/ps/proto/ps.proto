@@ -16,6 +16,7 @@ enum PSCommand{
   CLEAR_PS = 0;
   RELOAD_PS = 1;
   LOAD_FAKE_DATA = 2;
+  DUMP_FAKE_DATA = 3;
 };
 
 message CommandRequest{
@@ -25,7 +26,7 @@ message CommandRequest{
   repeated bytes arg3 = 4;
 };
 message CommandResponse{
-  string reply = 1;
+  bytes reply = 1;
 };
 
 message PutParameterRequest{

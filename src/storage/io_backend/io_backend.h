@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <boost/coroutine2/all.hpp>
 #include <cstdint>
 #include <cstdio>
@@ -27,24 +28,29 @@ public:
       LOG(WARNING) << "IOBackend config missing 'page_id_offset'";
     if (!config.json_config_.contains("queue_cnt"))
       LOG(WARNING) << "IOBackend config missing 'queue_cnt'";
-    next_page_id = config.json_config_.value("page_id_offset", next_page_id);
-    queue_cnt    = config.json_config_.value("queue_cnt", queue_cnt);
+    next_page_id.store(config.json_config_.value("page_id_offset", (PageID_t)1),
+                       std::memory_order_relaxed);
+    queue_cnt = config.json_config_.value("queue_cnt", 512);
   }
   virtual ~IOBackend() {}
   virtual void init() = 0;
 
   PageID_t AllocatePage(coroutine<void>::push_type& sink, uint64_t index) {
-    PageID_t new_page_id = next_page_id++;
+    PageID_t new_page_id = next_page_id.fetch_add(1, std::memory_order_relaxed);
     WritePageAsync(sink, index, new_page_id, empty_page);
     return new_page_id;
   }
   PageID_t AllocatePage() {
-    PageID_t new_page_id = next_page_id++;
+    PageID_t new_page_id = next_page_id.fetch_add(1, std::memory_order_relaxed);
     WritePageSync(new_page_id, empty_page);
     return new_page_id;
   }
-  PageID_t GetNextPageID() { return next_page_id; }
-  void SetNextPageID(PageID_t page_id) { next_page_id = page_id; }
+  PageID_t GetNextPageID() const {
+    return next_page_id.load(std::memory_order_relaxed);
+  }
+  void SetNextPageID(PageID_t page_id) {
+    next_page_id.store(page_id, std::memory_order_relaxed);
+  }
 
   void ReadPage(coroutine<void>::push_type& sink,
                 uint64_t index,
@@ -113,9 +119,9 @@ public:
   }
 
 protected:
-  PageID_t next_page_id;
+  std::atomic<PageID_t> next_page_id{1};
   char* empty_page = nullptr;
-  int queue_cnt;
+  int queue_cnt    = 512;
 
   virtual void ReadPageAsync(coroutine<void>::push_type& sink,
                              uint64_t index,

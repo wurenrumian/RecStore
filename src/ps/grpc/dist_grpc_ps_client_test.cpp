@@ -19,14 +19,19 @@ check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
     return false;
 
   for (int i = 0; i < a.size(); i++) {
+    // std::cout << "a[i]: " << a[i] << ", b[i]: " << b[i] << std::endl;
     if (std::abs(a[i] - b[i]) > 1e-6)
       return false;
   }
   return true;
 }
 
-static bool check_eq_2d(const std::vector<std::vector<float>>& a,
+static bool check_eq_2d(std::vector<std::vector<float>>& a,
                         const std::vector<std::vector<float>>& b) {
+  a.resize(b.size());
+  for (size_t i = 0; i < b.size(); ++i) {
+    a[i].resize(b[i].size());
+  }
   if (a.size() != b.size())
     return false;
   for (int i = 0; i < a.size(); i++) {
@@ -100,18 +105,26 @@ void TestFactoryClient() {
     std::vector<std::vector<float>> values;
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
-
+    std::cout << "pass first check" << std::endl;
     // insert something
     client->PutParameter(keys, rightvalues);
     // read those
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, rightvalues));
+    std::cout << "pass second check" << std::endl;
 
     // clear all
     client->ClearPS();
     // read those
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
+
+    std::cout << "load fake data" << std::endl;
+    client->LoadFakeData(100);
+    std::cout << "load fake data done" << std::endl;
+    std::cout << "dump fake data" << std::endl;
+    client->DumpFakeData(100);
+    std::cout << "dump fake data done" << std::endl;
 
     std::cout << "All distributed PS operations passed!" << std::endl;
   } catch (const std::exception& e) {
@@ -177,7 +190,7 @@ void TestLargeBatch() {
           {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"},
-        {"max_keys_per_request", 50}}}};
+        {"max_keys_per_request", 200}}}};
 
   try {
     DistributedGRPCParameterClient client(config);

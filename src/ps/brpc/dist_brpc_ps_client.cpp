@@ -392,6 +392,39 @@ bool DistributedBRPCParameterClient::ClearPS() {
   return all_success;
 }
 
+bool DistributedBRPCParameterClient::LoadFakeData(int64_t n) {
+  std::vector<std::future<bool>> futures;
+  for (auto& client : clients_) {
+    BRPCParameterClient* raw = client.get();
+    futures.push_back(std::async(std::launch::async, [raw, n]() {
+      return raw->LoadFakeData(n);
+    }));
+  }
+  bool all_success = true;
+  for (auto& future : futures) {
+    if (!future.get()) {
+      all_success = false;
+    }
+  }
+  return all_success;
+}
+
+bool DistributedBRPCParameterClient::DumpFakeData(int64_t n) {
+  std::vector<std::future<bool>> futures;
+  for (auto& client : clients_) {
+    BRPCParameterClient* raw = client.get();
+    futures.push_back(std::async(std::launch::async, [raw, n]() {
+      return raw->DumpFakeData(n);
+    }));
+  }
+  bool all_success = true;
+  for (auto& future : futures) {
+    if (!future.get()) {
+      all_success = false;
+    }
+  }
+  return all_success;
+}
 bool DistributedBRPCParameterClient::LoadCkpt(
     const std::vector<std::string>& model_config_path,
     const std::vector<std::string>& emb_file_path) {

@@ -655,6 +655,16 @@ bool GRPCParameterClient::LoadFakeData(int64_t data) {
   return status.ok();
 }
 
+bool GRPCParameterClient::DumpFakeData(int64_t n) {
+  CommandRequest request;
+  CommandResponse response;
+  request.set_command(PSCommand::DUMP_FAKE_DATA);
+  request.add_arg1(&n, sizeof(int64_t));
+  grpc::ClientContext context;
+  grpc::Status status = stubs_[0]->Command(&context, request, &response);
+  return status.ok();
+}
+
 bool GRPCParameterClient::LoadCkpt(
     const std::vector<std::string>& model_config_path,
     const std::vector<std::string>& emb_file_path) {
@@ -840,6 +850,9 @@ void GRPCParameterClient::Command(recstore::PSCommand command) {
   case recstore::PSCommand::LOAD_FAKE_DATA: {
     int64_t fake_data = 1000;
     LoadFakeData(fake_data);
+  } break;
+  case recstore::PSCommand::DUMP_FAKE_DATA: {
+    DumpFakeData(4096);
   } break;
   default:
     LOG(ERROR) << "Unknown PS command: " << static_cast<int>(command);

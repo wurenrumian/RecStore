@@ -115,6 +115,13 @@ void TestFactoryClient() {
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
 
+    std::cout << "load fake data" << std::endl;
+    client->LoadFakeData(100);
+    std::cout << "load fake data done" << std::endl;
+    std::cout << "dump fake data" << std::endl;
+    client->DumpFakeData(100);
+    std::cout << "dump fake data done" << std::endl;
+
     std::cout << "All distributed bRPC PS operations passed!" << std::endl;
   } catch (const std::exception& e) {
     std::cout << "Test skipped (servers not available): " << e.what()
@@ -178,13 +185,11 @@ void TestLargeBatch() {
          {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
           {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
         {"num_shards", 2},
-        {"hash_method", "city_hash"},
-        {"max_keys_per_request", 50}}}};
+        {"hash_method", "city_hash"}}}};
 
   try {
     DistributedBRPCParameterClient client(config);
 
-    // 准备大批量 keys (超过 max_keys_per_request)
     std::vector<uint64_t> large_keys;
     std::vector<std::vector<float>> large_values;
     for (int i = 0; i < 100; ++i) {

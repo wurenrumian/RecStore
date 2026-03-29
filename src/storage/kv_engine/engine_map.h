@@ -6,7 +6,7 @@
 #include "base/factory.h"
 #include "base_kv.h"
 #include "storage/nvm/pet_kv/shm_common.h"
-#include "memory/persist_malloc.h"
+#include "memory/allocators/persist_loop_slab_allocator.h"
 
 class KVEngineMap : public BaseKV {
   static constexpr int kKVEngineValidFileSize = 123;

@@ -4,7 +4,6 @@
 #include <string>
 #include "base/factory.h"
 #include "base_kv.h"
-#include "memory/persist_malloc.h"
 #include "src/storage/hybrid/value.h"
 #include "storage/hybrid/index.h"
 class KVEngineHybrid : public BaseKV {

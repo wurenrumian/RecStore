@@ -6,6 +6,8 @@
 #include <boost/coroutine2/all.hpp>
 #include <cstdint>
 #include <experimental/filesystem>
+#include <random>
+#include <vector>
 
 #include "base/array.h"
 #include "base/factory.h"

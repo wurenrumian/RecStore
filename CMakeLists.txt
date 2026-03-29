@@ -3,6 +3,27 @@ cmake_minimum_required(VERSION 3.10)
 option(ENABLE_CUDA "Build with CUDA support" ON)
 option(USE_BRPC_CPU_PROFILER "Enable bRPC builtin CPU profiler" OFF)
 
+if(ENABLE_CUDA AND NOT DEFINED CMAKE_CUDA_COMPILER)
+  set(_recstore_nvcc_candidates
+    /usr/local/cuda/bin/nvcc
+    /usr/bin/nvcc
+  )
+  file(GLOB _recstore_nvcc_glob_candidates "/usr/local/cuda-*/bin/nvcc")
+  list(APPEND _recstore_nvcc_candidates ${_recstore_nvcc_glob_candidates})
+
+  foreach(_recstore_nvcc IN LISTS _recstore_nvcc_candidates)
+    if(EXISTS "${_recstore_nvcc}")
+      set(CMAKE_CUDA_COMPILER "${_recstore_nvcc}" CACHE FILEPATH "CUDA compiler" FORCE)
+      get_filename_component(_recstore_cuda_bin "${_recstore_nvcc}" DIRECTORY)
+      get_filename_component(_recstore_cuda_root "${_recstore_cuda_bin}" DIRECTORY)
+      set(CUDAToolkit_ROOT "${_recstore_cuda_root}" CACHE PATH "CUDA toolkit root" FORCE)
+      set(CUDA_TOOLKIT_ROOT_DIR "${_recstore_cuda_root}" CACHE PATH "CUDA toolkit root (FindCUDA compatibility)" FORCE)
+      message(STATUS "Auto-detected nvcc: ${CMAKE_CUDA_COMPILER}")
+      break()
+    endif()
+  endforeach()
+endif()
+
 if(ENABLE_CUDA)
   project(RecStore LANGUAGES CXX CUDA C)
 else()

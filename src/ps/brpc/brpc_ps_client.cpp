@@ -784,6 +784,23 @@ bool BRPCParameterClient::LoadFakeData(int64_t data) {
   return true;
 }
 
+bool BRPCParameterClient::DumpFakeData(int64_t n) {
+  CommandRequest request;
+  CommandResponse response;
+  request.set_command(PSCommand::DUMP_FAKE_DATA);
+  request.add_arg1(&n, sizeof(int64_t));
+
+  brpc::Controller cntl;
+  recstoreps_brpc::ParameterService_Stub stub(channel_.get());
+  stub.Command(&cntl, &request, &response, nullptr);
+
+  if (cntl.Failed()) {
+    LOG(ERROR) << "bRPC DumpFakeData failed: " << cntl.ErrorText();
+    return false;
+  }
+  return true;
+}
+
 bool BRPCParameterClient::LoadCkpt(
     const std::vector<std::string>& model_config_path,
     const std::vector<std::string>& emb_file_path) {
@@ -886,6 +903,9 @@ void BRPCParameterClient::Command(recstore::PSCommand command) {
   case recstore::PSCommand::LOAD_FAKE_DATA: {
     int64_t fake_data = 1000;
     LoadFakeData(fake_data);
+  } break;
+  case recstore::PSCommand::DUMP_FAKE_DATA: {
+    DumpFakeData(4096);
   } break;
   default:
     LOG(ERROR) << "Unknown PS command: " << static_cast<int>(command);

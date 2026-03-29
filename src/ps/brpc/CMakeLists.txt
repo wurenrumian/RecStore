@@ -104,6 +104,8 @@ if(brpc_FOUND)
     target_link_libraries(brpc_ps_client_test PUBLIC
         brpc_ps_client
     )
+    add_test(NAME brpc_ps_client_test COMMAND $<TARGET_FILE:brpc_ps_client_test>)
+    set_tests_properties(brpc_ps_client_test PROPERTIES LABELS "ps_integration")
 
     # bRPC PS Server
     add_executable(brpc_ps_server
@@ -170,7 +172,9 @@ if(brpc_FOUND)
     target_link_libraries(dist_brpc_ps_client_test PUBLIC
         dist_brpc_ps_client
     )
-    
+    add_test(NAME dist_brpc_ps_client_test COMMAND $<TARGET_FILE:dist_brpc_ps_client_test>)
+    set_tests_properties(dist_brpc_ps_client_test PROPERTIES LABELS "ps_integration")
+
     # Export brpc_FOUND to parent scope for unified ps_server
     set(brpc_FOUND TRUE PARENT_SCOPE)
     set(BRPC_LIB ${BRPC_LIB} PARENT_SCOPE)

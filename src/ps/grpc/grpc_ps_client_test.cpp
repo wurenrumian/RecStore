@@ -20,8 +20,12 @@ check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
   return true;
 }
 
-static bool check_eq_2d(const std::vector<std::vector<float>>& a,
+static bool check_eq_2d(std::vector<std::vector<float>>& a,
                         const std::vector<std::vector<float>>& b) {
+  a.resize(b.size());
+  for (size_t i = 0; i < b.size(); ++i) {
+    a[i].resize(b[i].size());
+  }
   if (a.size() != b.size())
     return false;
   for (int i = 0; i < a.size(); i++) {
@@ -51,34 +55,16 @@ void TestFactoryClient() {
   std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
   std::uniform_int_distribution<> distrib(1, 200LL * 1e6);
 
-  // while (1) {
-  //   int perf_count = 500;
-  //   std::vector<uint64_t> keys(perf_count);
-  //   for (int i = 0; i < perf_count; i++) {
-  //     keys[i] = distrib(gen);
-  //   }
-  //   std::vector<std::vector<float>> values;
-  //   xmh::Timer timer_client("client get");
-  //   ConstArray<uint64_t> keys_array(keys);
-  //   client.GetParameter(keys_array, &values);
-  //   timer_client.end();
-  // }
-
   auto grpc_client = dynamic_cast<GRPCParameterClient*>(client.get());
   if (grpc_client) {
-    // grpc_client->ClearPS();
-    // assert empty
     std::vector<uint64_t> keys = {1, 2, 3};
     std::vector<std::vector<float>> emptyvalues(keys.size());
     std::vector<std::vector<float>> rightvalues = {{1}, {2, 2}, {3, 3, 3}};
     std::vector<std::vector<float>> values;
-    // grpc_client->GetParameter(keys, &values);
-    // CHECK(check_eq_2d(values, emptyvalues));
 
     // insert something
     grpc_client->PutParameter(keys, rightvalues);
-    std::cout << "put parameter done" << std::endl;
-    // read those
+
     grpc_client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, rightvalues));
 
@@ -87,6 +73,13 @@ void TestFactoryClient() {
     // read those
     grpc_client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
+
+    std::cout << "load fake data" << std::endl;
+    grpc_client->LoadFakeData(100);
+    std::cout << "load fake data done" << std::endl;
+    std::cout << "dump fake data" << std::endl;
+    grpc_client->DumpFakeData(100);
+    std::cout << "dump fake data done" << std::endl;
   }
 }
 

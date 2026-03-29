@@ -30,6 +30,8 @@ add_executable(grpc_ps_client_test
 target_link_libraries(grpc_ps_client_test PUBLIC
     grpc_ps_client
 )
+add_test(NAME grpc_ps_client_test COMMAND $<TARGET_FILE:grpc_ps_client_test>)
+set_tests_properties(grpc_ps_client_test PROPERTIES LABELS "ps_integration")
 
 # gRPC PS Server
 add_executable(grpc_ps_server
@@ -81,6 +83,8 @@ add_executable(dist_grpc_ps_client_test
 target_link_libraries(dist_grpc_ps_client_test PUBLIC
     dist_grpc_ps_client
 )
+add_test(NAME dist_grpc_ps_client_test COMMAND $<TARGET_FILE:dist_grpc_ps_client_test>)
+set_tests_properties(dist_grpc_ps_client_test PROPERTIES LABELS "ps_integration")
 
 # gRPC PS Client Python Binding
 add_library(grpc_ps_client_python MODULE

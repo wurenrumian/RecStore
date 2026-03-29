@@ -81,6 +81,11 @@ public:
     auto &tls = tls_allocs();
     if (auto it = tls.find(this); it != tls.end()) return it->second;
     Allocator *al = get_allocator();
+    if (!al) {
+      // Fallback to an already-created arena so one failed arena creation
+      // does not make all allocations on this thread fail.
+      al = get_fallback_allocator();
+    }
     if (!al) return nullptr;                 
     tls.emplace(this, al);
     return al;
@@ -123,7 +128,8 @@ public:
     extent_hooks_t* hooks_ptr = &pack->hooks;
     int e = jemallctl("arenas.create", &arena_id, &olen, &hooks_ptr, sizeof(extent_hooks_t*));
     if (e != 0) {
-      LOG(INFO) << "arenas.create fail!";
+      LOG(INFO) << "arenas.create fail, err=" << e
+                << " memory_usable=" << memory_usblae();
       { std::lock_guard<std::mutex> gp(packs_mu()); packs().erase(pack); }
       delete pack;
       return nullptr;
@@ -179,6 +185,15 @@ private:
 
   std::mutex created_mu_;
   std::vector<Entry> created_;
+
+  Allocator* get_fallback_allocator() {
+    std::lock_guard<std::mutex> g(created_mu_);
+    if (created_.empty()) {
+      return nullptr;
+    }
+    return new Allocator(MALLOCX_ARENA(created_.front().arena) |
+                         MALLOCX_TCACHE_NONE);
+  }
 
 
   static std::unordered_set<HooksPack*>& packs() {

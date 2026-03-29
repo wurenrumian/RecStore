@@ -1,10 +1,8 @@
 # src/memory/CMakeLists.txt
 
 add_library(base_memory
-  persist_malloc.cc
+  allocators/persist_loop_slab_allocator.cc
   shm_file.cc
-  allocator_master.hh
-  allocator.hh
 )
 
 target_include_directories(base_memory PRIVATE
