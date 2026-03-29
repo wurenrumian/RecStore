@@ -49,6 +49,14 @@ protected:
     return "KVEngineExtendibleHash";
   }
 
+  static const char* AllocatorTypeFromImpl(const std::string& impl) {
+    if (impl == "PersistLoopShmMalloc")
+      return "PERSIST_LOOP_SLAB";
+    if (impl == "R2ShmMalloc")
+      return "R2_SLAB";
+    return "PERSIST_LOOP_SLAB";
+  }
+
   void SetUp() override {
     const char *idx_c, *val_c, *mm_c;
     std::tie(idx_c, val_c, mm_c) = GetParam();
@@ -73,11 +81,21 @@ protected:
         {"value_type", value_type_},
         {"value_size", value_sz},
         {"capacity", capacity},
-        {"value_memory_management", mem_mgr_}};
+        {"value_memory_management", mem_mgr_},
+        {"allocator_type", AllocatorTypeFromImpl(mem_mgr_)}};
+
+    // CCEH-backed index paths require explicit IO backend settings.
+    if (index_type_ == "SSD") {
+      cfg_.json_config_["io_backend_type"] = "IOURING";
+      cfg_.json_config_["queue_cnt"]       = 512;
+      cfg_.json_config_["page_id_offset"]  = 0;
+      // Needed when ValueManager instantiates SSD index directly (HYBRID value).
+      cfg_.json_config_["file_path"] = test_dir_ + "/index_cceh.db";
+    }
 
     if (value_type_ == "HYBRID") {
-      cfg_.json_config_["shmcapacity"] = capacity * value_sz / 2;
-      cfg_.json_config_["ssdcapacity"] = capacity * value_sz;
+      cfg_.json_config_["DRAM_SIZE"] = capacity * value_sz / 2;
+      cfg_.json_config_["SSD_SIZE"]  = capacity * value_sz;
     }
 
     auto r       = base::ResolveEngine(cfg_);

@@ -271,12 +271,26 @@ def main(args):
             # Print sample trace entry for debugging
             if len(recstore_ebc._trace) > 0:
                 sample_trace = recstore_ebc._trace[0]
-                print(f"  Sample trace: table={sample_trace[0]}, ids shape={sample_trace[1].shape}, grads shape={sample_trace[2].shape}")
+                if isinstance(sample_trace, dict):
+                    sample_name = sample_trace.get("name", "<unknown>")
+                    sample_ids = sample_trace.get("ids", torch.tensor([]))
+                    sample_grads = sample_trace.get("grads")
+                    if sample_grads is None and "grad" in sample_trace and "count" in sample_trace:
+                        sample_grads = sample_trace["grad"].unsqueeze(0).expand(int(sample_trace["count"]), -1)
+                else:
+                    sample_name, sample_ids, sample_grads = sample_trace
+                if sample_grads is None:
+                    sample_grads = torch.tensor([])
+                print(
+                    f"  Sample trace: table={sample_name}, ids shape={sample_ids.shape}, "
+                    f"grads shape={sample_grads.shape}"
+                )
 
         # Perform update step (this uses kv_client.update() via network)
         print(f"Performing optimization step via network-based update...")
         standard_optimizer.step()
         sparse_optimizer.step()
+        sparse_optimizer.flush()
         print(f"✓ Optimization step completed (SparseSGD used kv_client.update())")
 
         with torch.no_grad():

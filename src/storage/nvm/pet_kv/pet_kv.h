@@ -13,7 +13,7 @@
 #include "base/async_time.h"
 #include "base/base.h"
 #include "base/hash.h"
-#include "memory/persist_malloc.h"
+#include "memory/allocators/persist_loop_slab_allocator.h"
 #include "memory/shm_file.h"
 #include "persistence.h"
 #include "pet_hash.h"

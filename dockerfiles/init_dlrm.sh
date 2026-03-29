@@ -71,6 +71,42 @@ user_base_bin() {
     "$PYTHON_BIN" -m site --user-base
 }
 
+find_nvcc() {
+    if command -v nvcc >/dev/null 2>&1; then
+        command -v nvcc
+        return 0
+    fi
+
+    local candidate=""
+    for candidate in /usr/local/cuda/bin/nvcc /usr/local/cuda-*/bin/nvcc /usr/bin/nvcc; do
+        if [ -x "${candidate}" ]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+setup_cuda_toolkit_env() {
+    local nvcc_path=""
+    nvcc_path="$(find_nvcc || true)"
+    if [ -z "${nvcc_path}" ]; then
+        return 1
+    fi
+
+    local cuda_bin=""
+    local cuda_home=""
+    cuda_bin="$(dirname "${nvcc_path}")"
+    cuda_home="$(cd "${cuda_bin}/.." && pwd)"
+
+    export CUDA_HOME="${cuda_home}"
+    export PATH="${cuda_bin}:${PATH}"
+    if [ -d "${cuda_home}/lib64" ]; then
+        export LD_LIBRARY_PATH="${cuda_home}/lib64:${LD_LIBRARY_PATH:-}"
+    fi
+    return 0
+}
+
 ensure_repo() {
     local repo_url="$1"
     local repo_ref="$2"
@@ -107,9 +143,12 @@ if [ "${TORCH_CUDA_VERSION}" = "cpu" ]; then
     exit 0
 fi
 
-if ! command -v nvcc >/dev/null 2>&1; then
-    echo "Skipping TorchRec/FBGEMM install because CUDA toolkit is not available"
-    exit 0
+if [ "${FORCE_TORCHREC_SOURCE_BUILD}" = "1" ]; then
+    if ! setup_cuda_toolkit_env; then
+        echo "FORCE_TORCHREC_SOURCE_BUILD=1 requires CUDA toolkit (nvcc), but nvcc is not available"
+        exit 1
+    fi
+    nvcc --version || true
 fi
 
 if [ "${FORCE_TORCHREC_SOURCE_BUILD}" != "1" ]; then

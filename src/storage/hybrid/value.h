@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../../memory/persist_malloc.h"
+#include "../../memory/allocators/allocator_factory.h"
+#include "../../memory/memory_factory.h"
 #include "pointer.h"
 #include "index.h"
 #include "storage/kv_engine/base_kv.h"
@@ -8,6 +9,7 @@
 #include <string_view>
 #include <vector>
 #include <limits>
+#include <stdexcept>
 #include <atomic>
 #include <thread>
 #include <mutex>
@@ -79,10 +81,30 @@ public:
                const std::string& ssd_file_path,
                size_t ssd_capacity,
                const BaseKVConfig& index_config)
-      : shm_manage(shm_file_path, shm_capacity, "DRAM"),
-        ssd_manage(ssd_file_path, ssd_capacity, "SSD"),
-        lru_(std::max<size_t>(4096, shm_capacity / 256)),
+      : lru_(std::max<size_t>(4096, shm_capacity / 256)),
         shm_capacity_bytes_(shm_capacity) {
+    json dram_cfg = index_config.json_config_;
+    json ssd_cfg  = index_config.json_config_;
+    if (index_config.json_config_.contains("dram_allocator_type"))
+      dram_cfg["allocator_type"] =
+          index_config.json_config_.at("dram_allocator_type");
+    if (index_config.json_config_.contains("ssd_allocator_type"))
+      ssd_cfg["allocator_type"] =
+          index_config.json_config_.at("ssd_allocator_type");
+    if (index_config.json_config_.contains("dram_value_memory_management"))
+      dram_cfg["value_memory_management"] =
+          index_config.json_config_.at("dram_value_memory_management");
+    if (index_config.json_config_.contains("ssd_value_memory_management"))
+      ssd_cfg["value_memory_management"] =
+          index_config.json_config_.at("ssd_value_memory_management");
+
+    shm_manage =
+        base::allocators::CreateAllocator(dram_cfg, shm_file_path, shm_capacity, "DRAM");
+    ssd_manage =
+        base::allocators::CreateAllocator(ssd_cfg, ssd_file_path, ssd_capacity, "SSD");
+    if (!shm_manage || !ssd_manage)
+      throw std::runtime_error("failed to initialize hybrid value allocators");
+
     using IndexF = base::Factory<Index, const BaseKVConfig&>;
     std::string index_type =
         index_config.json_config_.value("index_type", "DRAM");
@@ -131,7 +153,7 @@ public:
         } else if (oldp.type() == UnifiedPointer::Type::Disk) {
           // 等长原地写“盘上映射区”（避免一次 New）
           const off_t pool_off = static_cast<off_t>(oldp.asDiskPageId());
-          char* disk_ptr       = ssd_manage.GetMallocData(pool_off);
+          char* disk_ptr       = ssd_manage->GetMallocData(pool_off);
           uint16_t old_len     = 0;
           std::memcpy(&old_len, disk_ptr, sizeof(old_len));
           if (old_len == value.size()) {
@@ -222,11 +244,8 @@ private:
     return locks_[std::hash<Key_t>{}(key) & (kNumLocks - 1)];
   }
 
-  base::PersistLoopShmMalloc shm_manage;
-  base::PersistLoopShmMalloc ssd_manage;
-
-  // base::R2alloc shm_manage;
-  // base::R2alloc ssd_manage;
+  std::unique_ptr<base::MallocApi> shm_manage;
+  std::unique_ptr<base::MallocApi> ssd_manage;
   int fd_ssd = -1;
 
   SimpleLRUCache<Key_t> lru_;
@@ -269,7 +288,7 @@ private:
 
   inline std::string ReadFromDiskNoHeat(const UnifiedPointer& p) const {
     const off_t pool_off = static_cast<off_t>(p.asDiskPageId());
-    const char* disk_ptr = ssd_manage.GetMallocData(pool_off);
+    const char* disk_ptr = ssd_manage->GetMallocData(pool_off);
     uint16_t value_len   = 0;
     std::memcpy(&value_len, disk_ptr, sizeof(value_len));
     return std::string(disk_ptr + sizeof(value_len), value_len);
@@ -285,11 +304,11 @@ private:
       void* mem_ptr     = p.asMemoryPointer();
       uint16_t data_len = 0;
       std::memcpy(&data_len, mem_ptr, sizeof(data_len));
-      shm_manage.Free(mem_ptr);
+      shm_manage->Free(mem_ptr);
       shm_used_bytes_.fetch_sub(
           (size_t)data_len + 2, std::memory_order_relaxed);
     } else if (p.type() == UnifiedPointer::Type::Disk) {
-      ssd_manage.Free(ssd_manage.GetMallocData((int64)p.asDiskPageId()));
+      ssd_manage->Free(ssd_manage->GetMallocData((int64)p.asDiskPageId()));
     }
   }
 
@@ -306,7 +325,7 @@ private:
       return UnifiedPointer();
     const uint16_t data_len = static_cast<uint16_t>(value.size());
     const int total_size    = static_cast<int>(sizeof(data_len) + data_len);
-    char* ptr               = shm_manage.New(total_size);
+    char* ptr               = shm_manage->New(total_size);
     if (!ptr)
       return UnifiedPointer();
     uint8_t lenle[2] = {
@@ -325,29 +344,29 @@ private:
       return UnifiedPointer();
     const uint16_t data_len = static_cast<uint16_t>(value.size());
     const int total_size    = static_cast<int>(sizeof(data_len) + data_len);
-    char* disk_ptr          = ssd_manage.New(total_size);
+    char* disk_ptr          = ssd_manage->New(total_size);
     if (!disk_ptr) {
       LOG(ERROR) << "NEW SSD WRONG";
       return UnifiedPointer();
     }
-    off_t pool_off = ssd_manage.GetMallocOffset(disk_ptr);
+    off_t pool_off = ssd_manage->GetMallocOffset(disk_ptr);
     if (pool_off == -1) {
-      ssd_manage.Free(disk_ptr);
+      ssd_manage->Free(disk_ptr);
       return UnifiedPointer();
     }
     const off_t file_off =
-        static_cast<off_t>(ssd_manage.DataBaseOffset()) + pool_off;
+        static_cast<off_t>(ssd_manage->DataBaseOffset()) + pool_off;
     uint8_t lenle[2] = {static_cast<uint8_t>(data_len & 0xFF),
                         static_cast<uint8_t>((data_len >> 8) & 0xFF)};
 
     if (pwrite(fd_ssd, lenle, 2, file_off) != 2 ||
         (data_len && pwrite(fd_ssd, value.data(), data_len, file_off + 2) !=
                          static_cast<ssize_t>(data_len))) {
-      ssd_manage.Free(disk_ptr);
+      ssd_manage->Free(disk_ptr);
       return UnifiedPointer();
     }
     if (fdatasync(fd_ssd) < 0) {
-      ssd_manage.Free(disk_ptr);
+      ssd_manage->Free(disk_ptr);
       return UnifiedPointer();
     }
     return UnifiedPointer::FromDiskPageId(static_cast<uint64_t>(pool_off));

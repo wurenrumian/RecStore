@@ -1,2 +1,2 @@
-#include "r2_malloc.h"
-#include "persist_malloc.h"
+#include "allocators/persist_loop_slab_allocator.h"
+#include "allocators/r2_slab_allocator.h"

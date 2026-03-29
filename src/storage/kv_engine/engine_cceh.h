@@ -13,7 +13,6 @@
 #include "../ssd/CCEH.h"
 #include "base/factory.h"
 #include "base_kv.h"
-#include "memory/persist_malloc.h"
 #include "../io_backend/io_backend.h"
 
 static inline Value_t

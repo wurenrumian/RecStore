@@ -18,6 +18,7 @@ public:
   virtual int GetMallocSize(int64 offset) const                           = 0;
   virtual int64 GetMallocOffset(const char* data) const                   = 0;
   virtual int GetMallocSize(const char* data) const                       = 0;
+  virtual int64 DataBaseOffset() const { return 0; }
   virtual std::string GetInfo() const { return ""; }
   virtual ~MallocApi() {}
   virtual uint64_t total_malloc() const                = 0;

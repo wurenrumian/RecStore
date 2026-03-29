@@ -1,4 +1,4 @@
-#include "persist_malloc.h"
+#include "memory/allocators/persist_loop_slab_allocator.h"
 
 #include <algorithm>
 #include <iostream>

@@ -29,6 +29,9 @@ export MAKEFLAGS="${MAKE_OPTS}"
 TORCH_VERSION="2.7.1"
 CUDA_VERSION="cu118"
 LIBTORCH_VARIANT="${LIBTORCH_VARIANT:-${CUDA_VERSION}}"  # default to CUDA variant (e.g., cu118); set to cpu to force CPU libtorch
+CUDF_PIP_INDEX_URL="${CUDF_PIP_INDEX_URL:-https://pypi.org/simple}"
+CUDF_EXTRA_INDEX_URL="${CUDF_EXTRA_INDEX_URL:-https://pypi.nvidia.com}"
+CUDF_PACKAGE_SPEC="${CUDF_PACKAGE_SPEC:-cudf-cu12}"
 
 MARKER_DIR="/tmp/env_setup_markers"
 
@@ -40,6 +43,42 @@ fi
 
 ln -sf "${PROJECT_PATH}/dockerfiles/docker_config/.bashrc" "${target_dir}/.bashrc"
 source "${target_dir}/.bashrc"
+
+find_nvcc() {
+    if command -v nvcc >/dev/null 2>&1; then
+        command -v nvcc
+        return 0
+    fi
+
+    local candidate=""
+    for candidate in /usr/local/cuda/bin/nvcc /usr/local/cuda-*/bin/nvcc /usr/bin/nvcc; do
+        if [ -x "${candidate}" ]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+setup_cuda_toolkit_env() {
+    local nvcc_path=""
+    nvcc_path="$(find_nvcc || true)"
+    if [ -z "${nvcc_path}" ]; then
+        return 1
+    fi
+
+    local cuda_bin=""
+    local cuda_home=""
+    cuda_bin="$(dirname "${nvcc_path}")"
+    cuda_home="$(cd "${cuda_bin}/.." && pwd)"
+
+    export CUDA_HOME="${cuda_home}"
+    export PATH="${cuda_bin}:${PATH}"
+    if [ -d "${cuda_home}/lib64" ]; then
+        export LD_LIBRARY_PATH="${cuda_home}/lib64:${LD_LIBRARY_PATH}"
+    fi
+    return 0
+}
 
 # ===============================================
 
@@ -163,6 +202,58 @@ step_torch() {
     pip3 install torch==${TORCH_VERSION} --index-url https://download.pytorch.org/whl/${CUDA_VERSION}
 }
 
+step_cudf() {
+    if ! setup_cuda_toolkit_env; then
+        echo "cudf installation requires CUDA toolkit (nvcc), but nvcc is not available"
+        return 1
+    fi
+    nvcc --version || true
+
+    python3 -m pip install \
+        -i "${CUDF_PIP_INDEX_URL}" \
+        --extra-index-url "${CUDF_EXTRA_INDEX_URL}" \
+        --trusted-host pypi.nvidia.com \
+        "${CUDF_PACKAGE_SPEC}"
+
+    python3 - <<'PY'
+import importlib.util
+import pathlib
+import sys
+import glob
+import os
+import site
+
+import cudf
+
+spec = importlib.util.find_spec("libcudf")
+if spec is None or not spec.submodule_search_locations:
+    raise RuntimeError("libcudf package is not found after cudf installation")
+
+libcudf_root = pathlib.Path(next(iter(spec.submodule_search_locations))).resolve()
+required = [
+    libcudf_root / "include" / "cudf",
+    libcudf_root / "lib64" / "libcudf.so",
+    libcudf_root / "lib64" / "cmake" / "cudf" / "cudf-config.cmake",
+]
+missing = [str(p) for p in required if not p.exists()]
+if missing:
+    raise RuntimeError("libcudf files missing: " + ", ".join(missing))
+
+nvcomp_cmake = []
+for base in site.getsitepackages() + [site.getusersitepackages()]:
+    if not os.path.isdir(base):
+        continue
+    nvcomp_cmake.extend(glob.glob(os.path.join(base, "**", "nvcomp-config.cmake"), recursive=True))
+    nvcomp_cmake.extend(glob.glob(os.path.join(base, "**", "nvcompConfig.cmake"), recursive=True))
+if not nvcomp_cmake:
+    raise RuntimeError("nvcomp CMake config is missing (nvcomp-config.cmake / nvcompConfig.cmake)")
+
+print(f"cudf version: {cudf.__version__}")
+print(f"libcudf root: {libcudf_root}")
+print(f"nvcomp cmake: {nvcomp_cmake[0]}")
+PY
+}
+
 step_arrow() {
     mkdir -p ${PROJECT_PATH}/build
     cd ${PROJECT_PATH}/build
@@ -218,17 +309,92 @@ step_HugeCTR() {
         echo "Skipping HugeCTR build because SKIP_HUGECTR=1"
         return 0
     fi
-    if ! command -v nvcc >/dev/null 2>&1; then
+    if ! setup_cuda_toolkit_env; then
         echo "Skipping HugeCTR build because nvcc (CUDA toolkit) is not available"
         return 0
     fi
+
+    local cudf_root=""
+    if ! cudf_root="$(python3 - <<'PY'
+import importlib.util
+import pathlib
+import sys
+
+spec = importlib.util.find_spec("libcudf")
+if spec is None or not spec.submodule_search_locations:
+    sys.exit(1)
+print(pathlib.Path(next(iter(spec.submodule_search_locations))).resolve())
+PY
+    )"; then
+        echo "cudf/libcudf is not installed. Run step_cudf first."
+        return 1
+    fi
+    if [ -z "${cudf_root}" ]; then
+        echo "cudf/libcudf is not installed. Run step_cudf first."
+        return 1
+    fi
+    if [ ! -f "${cudf_root}/lib64/cmake/cudf/cudf-config.cmake" ]; then
+        echo "Invalid CUDF root: ${cudf_root} (missing lib64/cmake/cudf/cudf-config.cmake)"
+        return 1
+    fi
+
     # find /usr -name "libparquet.so"
     # find /usr -name "properties.h" | grep "parquet/properties.h"
     cd ${PROJECT_PATH}/third_party/HugeCTR
     rm -rf _build
     mkdir -p _build
     cd _build
+
+    local -a hugectr_cmake_args=()
+    local parquet_dir=""
+    local arrow_dir=""
+    local python_cmake_prefix=""
+
+    python_cmake_prefix="$(python3 - <<'PY'
+import glob
+import os
+import site
+
+dirs = []
+for base in site.getsitepackages() + [site.getusersitepackages()]:
+    if not os.path.isdir(base):
+        continue
+    for pattern in ("*/lib/cmake", "*/lib64/cmake", "nvidia/*/lib/cmake", "nvidia/*/lib64/cmake"):
+        dirs.extend(glob.glob(os.path.join(base, pattern)))
+
+normalized = []
+seen = set()
+for d in dirs:
+    real = os.path.realpath(d)
+    if os.path.isdir(real) and real not in seen:
+        seen.add(real)
+        normalized.append(real)
+
+print(";".join(normalized))
+PY
+)"
+    if [ -n "${python_cmake_prefix}" ]; then
+        hugectr_cmake_args+=("-DCMAKE_PREFIX_PATH=${python_cmake_prefix}")
+    fi
+
+    if [ -f /usr/lib/x86_64-linux-gnu/cmake/Parquet/ParquetConfig.cmake ]; then
+        parquet_dir="/usr/lib/x86_64-linux-gnu/cmake/Parquet"
+        arrow_dir="/usr/lib/x86_64-linux-gnu/cmake/Arrow"
+    elif [ -f /usr/lib/cmake/Parquet/ParquetConfig.cmake ]; then
+        parquet_dir="/usr/lib/cmake/Parquet"
+        arrow_dir="/usr/lib/cmake/arrow"
+    fi
+    if [ -n "${parquet_dir}" ]; then
+        hugectr_cmake_args+=("-DParquet_DIR=${parquet_dir}")
+    fi
+    if [ -n "${arrow_dir}" ] && [ -f "${arrow_dir}/ArrowConfig.cmake" ]; then
+        hugectr_cmake_args+=("-DArrow_DIR=${arrow_dir}")
+    fi
+
     cmake -DCMAKE_BUILD_TYPE=Release \
+        -DDISABLE_CUDF=OFF \
+        -DCUDF_ROOT_DIR=${cudf_root} \
+        "${hugectr_cmake_args[@]}" \
         ${CMAKE_REQUIRE} \
         ..
     make ${MAKE_OPTS} embedding

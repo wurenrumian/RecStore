@@ -1,34 +1,16 @@
 #pragma once
 
-#include <fcntl.h>
-#include <sys/mman.h>
-
-#include <deque>
-#include <fstream>
-#include <functional>
-#include <mutex>
-#include <queue>
-#include <set>
 #include <string>
-#include <thread>
-#include <unordered_map>
-#include <utility>
 #include <vector>
+
+#include "memory/malloc.h"
+#include "memory/shm_file.h"
 #include "base/factory.h"
-#include "base/async_time.h"
-#include "base/bitmap.h"
-#include "base/counter.h"
-#include "base/hashtable.h"
-#include "malloc.h"
-#include "shm_file.h"
-#include "allocator_master.hh"
-#include "allocator.hh"
+#include "memory/allocators/r2/allocator_master.hh"
 
 namespace base {
 class R2alloc : public MallocApi {
 public:
-  static const int max_fast_list_type = 32;
-  static const int max_fast_list_num  = 1 << 20;
   // filename: 文件名, 内存大小
   ~R2alloc() override { LOG(INFO) << "~R2alloc() called"; }
   R2alloc(const std::string& filename,
@@ -47,10 +29,12 @@ public:
           << filename << " " << memory_size;
     }
 
-    used_bits_ = reinterpret_cast<uint64*>(shm_file_.Data());
-    data_      = shm_file_.Data();
+    data_ = shm_file_.Data();
     LOG(INFO) << "init data_ addr:" << static_cast<void*>(data_);
-    R2AllocMaster.init(data_, memory_size / 2);
+    // Use the full mapped budget for the allocator. Using half here can make
+    // concurrent arena creation fail under moderate write concurrency.
+    R2AllocMaster.init(data_, memory_size);
+    healthy_used_ = memory_size;
     load_success_ = file_exists;
     Initialize();
     if (!file_exists) {
@@ -62,42 +46,21 @@ public:
 
   int64 DataBaseOffset() const { return 0; }
 
-  void DisableFastMalloc() { enable_fast_malloc_ = false; }
-
-  // char *New(int memory_size){
-  //     base::AutoLock lock(lock_);
-  //     if (memory_size <= 0) return nullptr;
-  //     r2::Allocator* alloc = R2AllocMaster.get_thread_allocator();
-  //     if (!alloc){
-  //         // LOG(ERROR) << "R2malloc::New get_thread_allocator() failed";
-  //         return nullptr;
-  //     }
-  //     void* p = alloc->alloc(static_cast<size_t>(memory_size));
-  //     // volatile uintptr_t tmp = (uintptr_t)p;
-  //     // (void)tmp;
-  //     return static_cast<char*>(p);
-  //   }
-
   char* New(int memory_size) {
-    // base::AutoLock lock(lock_);
     r2::Allocator* alloc = R2AllocMaster.get_thread_allocator();
     if (!alloc) {
-      // LOG(ERROR) << "R2alloc::New failed, thread_allocator=nullptr, size=" <<
-      // memory_size;
       return nullptr;
     }
     void* p = alloc->alloc(memory_size);
-    if (!p) {
-      // LOG(ERROR) << "R2alloc::New alloc failed, size=" << memory_size;
-    }
     return static_cast<char*>(p);
   }
 
   bool Free(void* memory_data) {
-    // base::AutoLock lock(lock_);
     if (!memory_data)
       return true;
     r2::Allocator* alloc = R2AllocMaster.get_thread_allocator();
+    if (!alloc)
+      return false;
     alloc->dealloc(memory_data);
     return true;
   }
@@ -155,7 +118,6 @@ public:
   }
 
   int GetMallocSize(const char* data) const {
-    LOG(INFO) << "GetMallocSize called";
     int malloc_size = jemalloc_usable_size((void*)data);
     return malloc_size;
   }
@@ -167,15 +129,12 @@ public:
 
 private:
   ShmFile shm_file_;
-  base::Lock lock_;
-  uint64* used_bits_;
   char* data_;
   int64 memory_size_;
   int64 total_used_;
   int64 total_malloc_;
   int64 healthy_used_;
   bool load_success_;
-  bool enable_fast_malloc_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(R2alloc);
   r2::AllocatorMaster R2AllocMaster;
@@ -183,6 +142,12 @@ private:
 FACTORY_REGISTER(MallocApi,
                  R2ShmMalloc, // 注册名（通常同类名）
                  R2alloc,     // 具体类型
+                 const std::string&,
+                 int64,
+                 const std::string&);
+FACTORY_REGISTER(MallocApi,
+                 R2_SLAB,
+                 R2alloc,
                  const std::string&,
                  int64,
                  const std::string&);

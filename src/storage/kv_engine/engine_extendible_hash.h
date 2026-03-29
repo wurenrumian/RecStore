@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <mutex>
 #include <string>
 #include <shared_mutex>
@@ -10,6 +12,7 @@
 #include "storage/nvm/pet_kv/shm_common.h"
 #include "base/factory.h"
 #include "base_kv.h"
+#include "memory/allocators/allocator_factory.h"
 #include "memory/memory_factory.h"
 
 class KVEngineExtendibleHash : public BaseKV {
@@ -22,18 +25,32 @@ public:
         << "--------------init KVEngineExtendibleHash--------------------";
     const std::string value_path =
         config.json_config_.at("path").get<std::string>() + "/value";
-    const auto cap_bytes = static_cast<int64>(std::llround(
-        1.2 * config.json_config_.at("capacity").get<size_t>() *
-        config.json_config_.at("value_size").get<size_t>()));
+    std::string value_medium = config.json_config_.value("value_type", "DRAM");
+    std::transform(
+        value_medium.begin(),
+        value_medium.end(),
+        value_medium.begin(),
+        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
-    using MF = base::
-        Factory<base::MallocApi, const std::string&, int64, const std::string&>;
-    shm_malloc_.reset(MF::NewInstance(
-        config.json_config_.value(
-            "value_memory_management", "PersistLoopShmMalloc"),
+    uint64_t value_budget_bytes = 0;
+    if (value_medium == "DRAM" && config.json_config_.contains("DRAM_SIZE")) {
+      value_budget_bytes = config.json_config_.at("DRAM_SIZE").get<uint64_t>();
+    } else if (
+        value_medium == "SSD" && config.json_config_.contains("SSD_SIZE")) {
+      value_budget_bytes = config.json_config_.at("SSD_SIZE").get<uint64_t>();
+    }
+    if (value_budget_bytes == 0) {
+      value_budget_bytes = static_cast<uint64_t>(std::llround(
+          1.2 * config.json_config_.at("capacity").get<size_t>() *
+          config.json_config_.at("value_size").get<size_t>()));
+    }
+    const auto cap_bytes = static_cast<int64>(value_budget_bytes);
+
+    shm_malloc_ = base::allocators::CreateAllocator(
+        config.json_config_,
         value_path,
         cap_bytes,
-        config.json_config_.value("value_type", "DRAM")));
+        config.json_config_.value("value_type", "DRAM"));
 
     if (!shm_malloc_)
       throw std::runtime_error("init shm malloc failed");
