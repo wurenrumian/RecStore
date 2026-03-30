@@ -8,10 +8,19 @@
 #include "memory/shm_file.h"
 #include "storage/kv_engine/engine_cceh.h"
 
+namespace {
+std::string GetDirectIOTestDir() {
+  const std::filesystem::path dir =
+      std::filesystem::current_path() /
+      ("test_kv_engine_cceh_" + std::to_string(getpid()));
+  return dir.string();
+}
+} // namespace
+
 class KVEngineCCEHTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    test_dir_ = "/tmp/test_kv_engine_cceh_" + std::to_string(getpid());
+    test_dir_ = GetDirectIOTestDir();
     std::filesystem::create_directories(test_dir_);
     base::PMMmapRegisterCenter::GetConfig().use_dram = true;
     base::PMMmapRegisterCenter::GetConfig().numa_id  = 0;
@@ -183,7 +192,7 @@ TEST_F(KVEngineCCEHTest, ConcurrentBatchGet) {
 
 // BatchPut写入 + BatchGet读回，用float数据做roundtrip验证
 TEST_F(KVEngineCCEHTest, BatchPutAndBatchGet) {
-  const int num_keys = 256;
+  const int num_keys       = 256;
   const int floats_per_key = 128 / sizeof(float); // value_size=128 → 32 floats
 
   // 构造每个key对应的float数据，key i 的第 j 个float = i * 100.0f + j

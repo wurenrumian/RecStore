@@ -1,8 +1,10 @@
-#pragma once
-
-#include "io_backend.h"
+#include "../io_backend.h"
+#include <cerrno>
+#include <cstdlib>
 #include <fcntl.h>
 #include <liburing.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "base/factory.h"
 #include "storage/kv_engine/base_kv.h"
 
@@ -10,6 +12,17 @@ class IoUringBackend : public IOBackend {
 private:
   std::string file_path;
   int fd;
+
+  static char* AllocateAligned(size_t bytes) {
+    void* ptr = nullptr;
+    int rc    = posix_memalign(&ptr, PAGE_SIZE, bytes);
+    if (rc != 0 || ptr == nullptr) {
+      throw std::runtime_error(
+          "Failed to allocate aligned buffer, rc=" + std::to_string(rc));
+    }
+    std::memset(ptr, 0, bytes);
+    return reinterpret_cast<char*>(ptr);
+  }
 
   struct ThreadQpair {
     struct io_uring qpair;
@@ -56,9 +69,7 @@ private:
     pending++;
     io_uring_prep_read(sqe, fd, buffer, PAGE_SIZE, page_id * PAGE_SIZE);
     sqe->user_data = index;
-    int ret        = io_uring_submit(ring);
-    CHECK_GE(ret, 0) << "Failed to submit read operation: " +
-                            std::string(strerror(-ret));
+    submit();
     sink();
   }
   void ReadPageSync(PageID_t page_id, char* buffer) override {
@@ -89,9 +100,7 @@ private:
     pending++;
     io_uring_prep_write(sqe, fd, buffer, PAGE_SIZE, page_id * PAGE_SIZE);
     sqe->user_data = index;
-    int ret        = io_uring_submit(ring);
-    CHECK_GE(ret, 0) << "Failed to submit write operation: " +
-                            std::string(strerror(-ret));
+    submit();
     sink();
   }
   void WritePageSync(PageID_t page_id, char* buffer) override {
@@ -122,16 +131,22 @@ public:
       fd = -1;
     }
     if (empty_page) {
-      delete[] empty_page;
+      std::free(empty_page);
       empty_page = nullptr;
     }
   }
 
   void init() override {
     bool exists = (access(file_path.c_str(), F_OK) != -1);
-    fd          = open(file_path.c_str(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-    if (fd < 0)
-      throw std::runtime_error("Failed to open file: " + file_path);
+    fd = open(
+        file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+      const int err = errno;
+      throw std::runtime_error(
+          "Failed to open file: " + file_path +
+          ", errno=" + std::to_string(err) +
+          ", detail=" + std::string(strerror(err)));
+    }
     if (exists) {
       struct stat file_stat;
       fstat(fd, &file_stat);
@@ -139,24 +154,24 @@ public:
     } else {
       next_page_id = 1;
     }
-    empty_page = new char[PAGE_SIZE]();
+    empty_page = AllocateAligned(PAGE_SIZE);
   }
 
-  char* AllocateBuffer() override { return new char[PAGE_SIZE](); }
+  char* AllocateBuffer() override { return AllocateAligned(PAGE_SIZE); }
   char* AllocateBuffer(uint64_t page_count) override {
-    return new char[PAGE_SIZE * page_count]();
+    return AllocateAligned(PAGE_SIZE * page_count);
   }
-  void FreeBuffer(char* buf) override { delete[] buf; }
+  void FreeBuffer(char* buf) override { std::free(buf); }
 
   void* GetPage(coroutine<void>::push_type& sink,
                 uint64_t index,
                 PageID_t page_id) override {
-    char* buffer = new char[PAGE_SIZE];
+    char* buffer = AllocateBuffer();
     ReadPageAsync(sink, index, page_id, buffer);
     return buffer;
   }
   void* GetPage(PageID_t page_id) override {
-    char* buffer = new char[PAGE_SIZE];
+    char* buffer = AllocateBuffer();
     ReadPageSync(page_id, buffer);
     return buffer;
   }
@@ -168,13 +183,13 @@ public:
              bool is_dirty) override {
     if (is_dirty)
       WritePage(sink, index, page_id, reinterpret_cast<char*>(page_data));
-    delete[] reinterpret_cast<char*>(page_data);
+    FreeBuffer(reinterpret_cast<char*>(page_data));
   }
 
   void Unpin(PageID_t page_id, void* page_data, bool is_dirty) override {
     if (is_dirty)
       WritePageSync(page_id, reinterpret_cast<char*>(page_data));
-    delete[] reinterpret_cast<char*>(page_data);
+    FreeBuffer(reinterpret_cast<char*>(page_data));
   }
 
   void PollCompletion() override {
@@ -192,6 +207,13 @@ public:
     if (coros[id] && *coros[id])
       (*coros[id])();
     return;
+  }
+
+  void submit() override {
+    struct io_uring* ring = get_thread_ring();
+    int ret               = io_uring_submit(ring);
+    CHECK_GE(ret, 0) << "Failed to submit io_uring operation: " +
+                            std::string(strerror(-ret));
   }
 
   void BatchWritePages(const std::vector<IOEntry>& entries) override {
@@ -214,8 +236,7 @@ public:
         inflight++;
         submitted++;
       }
-      int ret = io_uring_submit(ring);
-      CHECK_GE(ret, 0) << "Failed to submit batch writes";
+      submit();
       struct io_uring_cqe* cqe;
       while (inflight > 0 && io_uring_peek_cqe(ring, &cqe) == 0) {
         CHECK_GE(cqe->res, 0)
@@ -246,8 +267,7 @@ public:
         inflight++;
         submitted++;
       }
-      int ret = io_uring_submit(ring);
-      CHECK_GE(ret, 0) << "Failed to submit batch reads";
+      submit();
       struct io_uring_cqe* cqe;
       while (inflight > 0 && io_uring_peek_cqe(ring, &cqe) == 0) {
         CHECK_GE(cqe->res, 0)
@@ -258,5 +278,7 @@ public:
     }
   }
 };
+
+extern "C" void RecStoreForceLinkIoUringBackend() {}
 
 FACTORY_REGISTER(IOBackend, IOURING, IoUringBackend, const BaseKVConfig&);

@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstring>
@@ -7,12 +6,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-
 #include <gtest/gtest.h>
-
 #include "base/factory.h"
 #include "storage/io_backend/io_backend.h"
-#include "storage/io_backend/io_backend_register.h"
 
 namespace {
 BaseKVConfig

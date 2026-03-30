@@ -1,6 +1,4 @@
-#pragma once
-
-#include "io_backend.h"
+#include "../io_backend.h"
 #include <algorithm>
 #include <atomic>
 #include <fcntl.h>
@@ -154,7 +152,7 @@ private:
   }
 
 public:
-  SpdkBackend(const BaseKVConfig& config) : IOBackend(config){};
+  SpdkBackend(const BaseKVConfig& config) : IOBackend(config) {};
   ~SpdkBackend() {
     if (controller_active_.load(std::memory_order_acquire)) {
       int remaining =
@@ -354,6 +352,10 @@ public:
     }
   }
 
+  void submit() override {
+    // SPDK submits requests during spdk_nvme_ns_cmd_{read,write} calls.
+  }
+
   void PollCompletion() override {
     struct spdk_nvme_qpair* qpair = get_thread_qpair();
     spdk_nvme_qpair_process_completions(qpair, 0);
@@ -423,5 +425,7 @@ public:
     }
   }
 };
+
+extern "C" void RecStoreForceLinkSpdkBackend() {}
 
 FACTORY_REGISTER(IOBackend, SPDK, SpdkBackend, const BaseKVConfig&);

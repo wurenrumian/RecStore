@@ -4,7 +4,7 @@
 #include <glog/logging.h>
 #include "base/array.h"
 #include "base/log.h"
-#include "pair.h"
+#include "utils/pair.h"
 #include "storage/kv_engine/base_kv.h"
 
 using boost::coroutines2::coroutine;
@@ -12,7 +12,7 @@ using boost::coroutines2::coroutine;
 class Index {
 public:
   virtual ~Index() { std::cout << "exit Index" << std::endl; }
-  explicit Index(const BaseKVConfig& config){};
+  explicit Index(const BaseKVConfig& config) {};
 
   virtual void Get(Key_t key, Value_t& pointer, unsigned tid) = 0;
   virtual void

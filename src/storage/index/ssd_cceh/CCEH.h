@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../io_backend/io_backend.h"
+#include "../../io_backend/io_backend.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -8,7 +8,7 @@
 #include <shared_mutex>
 #include <vector>
 #include "base/factory.h"
-#include "../hybrid/index.h"
+#include "../index.h"
 
 class CCEH;
 struct Directory;
