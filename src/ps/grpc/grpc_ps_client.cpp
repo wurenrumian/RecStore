@@ -726,6 +726,10 @@ int GRPCParameterClient::UpdateParameter(
     const std::string& table_name,
     const base::ConstArray<uint64_t>& keys,
     const std::vector<std::vector<float>>* grads) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+  const uint64_t trace_id = recstore::g_trace_id;
+#endif
   if (grads == nullptr) {
     LOG(ERROR) << "UpdateParameter grads pointer is null";
     return -1;
@@ -746,6 +750,9 @@ int GRPCParameterClient::UpdateParameter(
     compressor.AddItem(pack, &blocks);
   }
   compressor.ToBlock(&blocks);
+#ifdef ENABLE_PERF_REPORT
+  auto serialize_done_time = std::chrono::high_resolution_clock::now();
+#endif
   if (blocks.empty()) {
     LOG(WARNING) << "UpdateParameter no gradients to send";
     return 0;
@@ -757,8 +764,53 @@ int GRPCParameterClient::UpdateParameter(
   request.mutable_gradients()->swap(blocks[0]);
 
   grpc::ClientContext context;
+#ifdef ENABLE_PERF_REPORT
+  if (trace_id != 0) {
+    context.AddMetadata("x-recstore-trace-id", std::to_string(trace_id));
+  }
+  auto rpc_start_time = std::chrono::high_resolution_clock::now();
+#endif
   grpc::Status status =
       stubs_[0]->UpdateParameter(&context, request, &response);
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto serialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          serialize_done_time - start_time)
+          .count();
+  auto rpc_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - rpc_start_time)
+          .count();
+  auto total_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  std::string stage_id = "grpc_client::EmbUpdate|" +
+                         std::to_string(trace_id == 0
+                                            ? static_cast<uint64_t>(
+                                                  std::chrono::duration_cast<
+                                                      std::chrono::microseconds>(
+                                                      start_time.time_since_epoch())
+                                                      .count())
+                                            : trace_id);
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_serialize_us",
+         static_cast<double>(serialize_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_rpc_us",
+         static_cast<double>(rpc_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_total_us",
+         static_cast<double>(total_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_request_size",
+         static_cast<double>(keys.Size()));
+#endif
   if (!status.ok()) {
     LOG(ERROR) << "UpdateParameter RPC failed: " << status.error_message();
     return -1;
@@ -772,6 +824,10 @@ int GRPCParameterClient::UpdateParameterFlat(
     const float* grads,
     int64_t num_rows,
     int64_t embedding_dim) {
+#ifdef ENABLE_PERF_REPORT
+  auto start_time = std::chrono::high_resolution_clock::now();
+  const uint64_t trace_id = recstore::g_trace_id;
+#endif
   if (keys.Size() == 0) {
     return 0;
   }
@@ -781,6 +837,9 @@ int GRPCParameterClient::UpdateParameterFlat(
           keys, grads, num_rows, embedding_dim, &blocks) != 0) {
     return -1;
   }
+#ifdef ENABLE_PERF_REPORT
+  auto serialize_done_time = std::chrono::high_resolution_clock::now();
+#endif
   if (blocks.empty()) {
     return 0;
   }
@@ -791,8 +850,57 @@ int GRPCParameterClient::UpdateParameterFlat(
   request.mutable_gradients()->swap(blocks[0]);
 
   grpc::ClientContext context;
+#ifdef ENABLE_PERF_REPORT
+  if (trace_id != 0) {
+    context.AddMetadata("x-recstore-trace-id", std::to_string(trace_id));
+  }
+  auto rpc_start_time = std::chrono::high_resolution_clock::now();
+#endif
   grpc::Status status =
       stubs_[0]->UpdateParameter(&context, request, &response);
+#ifdef ENABLE_PERF_REPORT
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto serialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          serialize_done_time - start_time)
+          .count();
+  auto rpc_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - rpc_start_time)
+          .count();
+  auto total_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - start_time)
+          .count();
+  std::string stage_id = "grpc_client::EmbUpdate|" +
+                         std::to_string(trace_id == 0
+                                            ? static_cast<uint64_t>(
+                                                  std::chrono::duration_cast<
+                                                      std::chrono::microseconds>(
+                                                      start_time.time_since_epoch())
+                                                      .count())
+                                            : trace_id);
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_serialize_us",
+         static_cast<double>(serialize_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_rpc_us",
+         static_cast<double>(rpc_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_total_us",
+         static_cast<double>(total_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_request_size",
+         static_cast<double>(num_rows));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_embedding_dim",
+         static_cast<double>(embedding_dim));
+#endif
   if (!status.ok()) {
     LOG(ERROR) << "UpdateParameterFlat RPC failed: " << status.error_message();
     return -1;

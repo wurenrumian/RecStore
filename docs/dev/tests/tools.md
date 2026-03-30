@@ -55,3 +55,51 @@
 | `timeout` | 超时时间 (`PS_TIMEOUT`) |
 | `num_shards` | 分片数量 (`PS_NUM_SHARDS`) |
 
+## analyze_embupdate_stages.py
+
+`src/test/scripts/analyze_embupdate_stages.py` 用于分析 update 链路的分阶段性能数据。  
+它会从本地 `REPORT_LOCAL_EVENT` 日志或 JSONL 事件文件中提取 `embupdate_stages` 表数据，并输出:
+
+- 各阶段指标统计（mean/p50/p95/p99/max）
+- 近似拆分（序列化、后端执行、网络/框架开销）
+- 慢请求 TopN（按 trace 维度）
+
+### 输入来源
+
+支持两种输入格式:
+
+1. glog 文本日志（包含 `REPORT_LOCAL_EVENT {...}` 行）
+2. 纯 JSONL（每行一个事件 JSON）
+
+### 常用命令
+
+```bash
+python3 src/test/scripts/analyze_embupdate_stages.py --input /path/to/recstore.log
+```
+
+```bash
+python3 src/test/scripts/analyze_embupdate_stages.py \
+  --input /path/to/server.log \
+  --input /path/to/client.log \
+  --top 20
+```
+
+```bash
+python3 src/test/scripts/analyze_embupdate_stages.py \
+  --input /path/to/report_events.jsonl \
+  --trace-prefix grpc_client::EmbUpdate
+```
+
+### 关键指标解读
+
+- `client_serialize_us`: 客户端将梯度打包成请求的耗时。
+- `client_rpc_us`: 客户端从发起 RPC 到返回的耗时（包含网络与服务端处理）。
+- `server_total_us`: 服务端 `UpdateParameter` 总耗时。
+- `server_backend_update_us`: 服务端后端更新逻辑（cache/storage/update）执行耗时。
+- `op_total_us`: op 层（`EmbUpdate`）总耗时。
+
+近似网络/框架开销:
+
+`client_rpc_us - server_total_us`
+
+这有助于快速判断瓶颈更偏网络侧还是服务端执行侧。
