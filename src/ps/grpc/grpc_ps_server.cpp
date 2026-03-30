@@ -321,7 +321,9 @@ private:
               request->gradients().data());
       size = reader->item_size();
 
+    #ifdef ENABLE_PERF_REPORT
       before_cache_update_time = std::chrono::high_resolution_clock::now();
+    #endif
       success = cache_ps_->UpdateParameter(table_name, reader, 0);
 
       FB_LOG_EVERY_MS(INFO, 2000)
