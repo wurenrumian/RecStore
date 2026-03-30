@@ -15,10 +15,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
-import re
 import statistics
 from typing import Dict, List, Tuple
 
@@ -45,6 +45,16 @@ def parse_args() -> argparse.Namespace:
         "--trace-prefix",
         default="",
         help="Only include traces whose unique_id starts with this prefix.",
+    )
+    parser.add_argument(
+        "--group-by-prefix",
+        action="store_true",
+        help="Group traces by unique_id prefix before '|' and print group stats.",
+    )
+    parser.add_argument(
+        "--export-csv",
+        default="",
+        help="Export per-trace merged metrics to CSV path.",
     )
     return parser.parse_args()
 
@@ -127,6 +137,22 @@ def build_trace_map(events: List[dict], trace_prefix: str) -> Dict[str, Dict[str
     return by_trace
 
 
+def trace_token(unique_id: str) -> str:
+    if "|" in unique_id:
+        return unique_id.split("|", 1)[1]
+    return unique_id
+
+
+def build_merged_request_map(by_trace: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, float]]:
+    merged: Dict[str, Dict[str, float]] = {}
+    for unique_id, metrics in by_trace.items():
+        token = trace_token(unique_id)
+        dst = merged.setdefault(token, {})
+        for k, v in metrics.items():
+            dst[k] = v
+    return merged
+
+
 def print_overall(by_trace: Dict[str, Dict[str, float]]) -> None:
     all_metrics: Dict[str, List[float]] = {}
     for metrics in by_trace.values():
@@ -192,6 +218,116 @@ def print_top_slow(by_trace: Dict[str, Dict[str, float]], top_n: int) -> None:
         )
 
 
+def trace_group_name(unique_id: str) -> str:
+    if "|" in unique_id:
+        return unique_id.split("|", 1)[0]
+    return unique_id
+
+
+def print_group_stats(by_trace: Dict[str, Dict[str, float]]) -> None:
+    grouped: Dict[str, Dict[str, List[float]]] = {}
+    for trace, metrics in by_trace.items():
+        g = trace_group_name(trace)
+        g_metrics = grouped.setdefault(g, {})
+        for k, v in metrics.items():
+            if k.endswith("_us"):
+                g_metrics.setdefault(k, []).append(v)
+
+    if not grouped:
+        return
+
+    print("")
+    print("Grouped Summary (by trace prefix before '|'):")
+    for group in sorted(grouped.keys()):
+        m = grouped[group]
+        total = m.get("op_total_us") or m.get("client_total_us") or m.get("server_total_us") or []
+        print(f"  - {group}: traces={len(total) if total else 0}")
+        for key in ("op_total_us", "client_total_us", "server_total_us", "client_rpc_us", "server_backend_update_us"):
+            vals = m.get(key, [])
+            if vals:
+                print(f"      {key}: {summarize_metric(vals)}")
+
+
+def print_request_view(merged: Dict[str, Dict[str, float]], top_n: int) -> None:
+    if not merged:
+        return
+    print("")
+    print(f"Merged Request View (by trace token): {len(merged)} requests")
+    print_breakdown_ratios(merged)
+    print(f"Top {min(top_n, len(merged))} Slow Requests:")
+    ranked: List[Tuple[str, float, Dict[str, float]]] = []
+    for token, metrics in merged.items():
+        score = metrics.get("op_total_us")
+        if score is None:
+            score = metrics.get("client_total_us")
+        if score is None:
+            score = metrics.get("server_total_us")
+        if score is None:
+            continue
+        ranked.append((token, score, metrics))
+    ranked.sort(key=lambda x: x[1], reverse=True)
+    for idx, (token, score, m) in enumerate(ranked[:top_n], 1):
+        net = float("nan")
+        if m.get("client_rpc_us") is not None and m.get("server_total_us") is not None:
+            net = max(0.0, m["client_rpc_us"] - m["server_total_us"])
+        print(
+            f"  {idx:2d}. trace={token} total={score:.2f}us "
+            f"(op={m.get('op_total_us', float('nan')):.2f}, "
+            f"ser={m.get('client_serialize_us', float('nan')):.2f}, "
+            f"rpc={m.get('client_rpc_us', float('nan')):.2f}, "
+            f"server={m.get('server_total_us', float('nan')):.2f}, "
+            f"backend={m.get('server_backend_update_us', float('nan')):.2f}, "
+            f"net≈{net:.2f})"
+        )
+
+
+def export_csv(by_trace: Dict[str, Dict[str, float]], output_path: str) -> None:
+    columns = [
+        "unique_id",
+        "group",
+        "op_total_us",
+        "op_validate_us",
+        "client_total_us",
+        "client_serialize_us",
+        "client_rpc_us",
+        "server_total_us",
+        "server_backend_update_us",
+        "client_request_size",
+        "server_request_size",
+        "network_framework_us_approx",
+    ]
+
+    parent = os.path.dirname(output_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for trace in sorted(by_trace.keys()):
+            metrics = by_trace[trace]
+            client_rpc = metrics.get("client_rpc_us")
+            server_total = metrics.get("server_total_us")
+            network_approx = ""
+            if client_rpc is not None and server_total is not None:
+                network_approx = max(0.0, client_rpc - server_total)
+            row = {
+                "unique_id": trace,
+                "group": trace_group_name(trace),
+                "op_total_us": metrics.get("op_total_us", ""),
+                "op_validate_us": metrics.get("op_validate_us", ""),
+                "client_total_us": metrics.get("client_total_us", ""),
+                "client_serialize_us": metrics.get("client_serialize_us", ""),
+                "client_rpc_us": metrics.get("client_rpc_us", ""),
+                "server_total_us": metrics.get("server_total_us", ""),
+                "server_backend_update_us": metrics.get("server_backend_update_us", ""),
+                "client_request_size": metrics.get("client_request_size", ""),
+                "server_request_size": metrics.get("server_request_size", ""),
+                "network_framework_us_approx": network_approx,
+            }
+            writer.writerow(row)
+
+
 def main() -> None:
     args = parse_args()
     events = read_events(args.input)
@@ -202,8 +338,15 @@ def main() -> None:
     print_overall(by_trace)
     print_breakdown_ratios(by_trace)
     print_top_slow(by_trace, args.top)
+    merged = build_merged_request_map(by_trace)
+    print_request_view(merged, args.top)
+    if args.group_by_prefix:
+        print_group_stats(by_trace)
+    if args.export_csv:
+        export_csv(by_trace, args.export_csv)
+        print("")
+        print(f"CSV exported: {args.export_csv}")
 
 
 if __name__ == "__main__":
     main()
-

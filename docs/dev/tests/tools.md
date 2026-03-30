@@ -90,6 +90,13 @@ python3 src/test/scripts/analyze_embupdate_stages.py \
   --trace-prefix grpc_client::EmbUpdate
 ```
 
+```bash
+python3 src/test/scripts/analyze_embupdate_stages.py \
+  --input /path/to/report_events.jsonl \
+  --group-by-prefix \
+  --export-csv /tmp/embupdate_report.csv
+```
+
 ### 关键指标解读
 
 - `client_serialize_us`: 客户端将梯度打包成请求的耗时。
