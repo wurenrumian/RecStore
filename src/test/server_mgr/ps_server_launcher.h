@@ -20,17 +20,17 @@ namespace recstore::test {
 struct LauncherOptions {
   std::filesystem::path server_path;
   std::filesystem::path config_path;
-  std::filesystem::path log_dir = "./logs";
-  int startup_timeout_sec = 60;
+  std::filesystem::path log_dir     = "./logs";
+  int startup_timeout_sec           = 60;
   int graceful_shutdown_timeout_sec = 5;
-  int startup_delay_ms = 2000;
-  int num_shards = 2;
-  bool verbose = false;
+  int startup_delay_ms              = 2000;
+  int num_shards                    = 2;
+  bool verbose                      = false;
 };
 
 struct LaunchDecision {
   bool should_start = true;
-  bool should_fail = false;
+  bool should_fail  = false;
   std::string reason;
   std::vector<int> configured_ports;
   std::vector<int> open_ports;
@@ -49,13 +49,13 @@ public:
   explicit PSServerLauncher(LauncherOptions options = {});
   ~PSServerLauncher();
 
-  PSServerLauncher(const PSServerLauncher&) = delete;
+  PSServerLauncher(const PSServerLauncher&)            = delete;
   PSServerLauncher& operator=(const PSServerLauncher&) = delete;
 
   static LauncherOptions LoadOptionsFromEnvironment();
   static LaunchDecision EvaluateLaunchDecision(const LauncherOptions& options);
-  static std::vector<int> ExtractPortsFromConfig(
-      const std::filesystem::path& config_path);
+  static std::vector<int>
+  ExtractPortsFromConfig(const std::filesystem::path& config_path);
   static std::optional<int> ParseReadyShard(const std::string& line);
 
   bool Start();
@@ -69,7 +69,8 @@ private:
   static std::filesystem::path FindPsServerBinary();
   static std::optional<std::filesystem::path> FindConfigFile();
   static std::vector<int> CheckOpenPorts(const std::vector<int>& ports);
-  static bool IsPortOpen(const std::string& host, int port, int timeout_sec = 1);
+  static bool
+  IsPortOpen(const std::string& host, int port, int timeout_sec = 1);
   static std::vector<int> DefaultPorts();
 
   bool SpawnProcess();
@@ -86,10 +87,10 @@ private:
   LaunchResult result_;
   std::string last_error_;
 
-  pid_t pid_ = -1;
+  pid_t pid_     = -1;
   int stdout_fd_ = -1;
   int stderr_fd_ = -1;
-  bool started_ = false;
+  bool started_  = false;
 
   std::mutex mu_;
   std::condition_variable cv_;
@@ -106,7 +107,7 @@ public:
   explicit ScopedPSServer(LauncherOptions options = {}, bool auto_start = true);
   ~ScopedPSServer();
 
-  ScopedPSServer(const ScopedPSServer&) = delete;
+  ScopedPSServer(const ScopedPSServer&)            = delete;
   ScopedPSServer& operator=(const ScopedPSServer&) = delete;
 
   bool Start();

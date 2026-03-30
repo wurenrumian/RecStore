@@ -50,7 +50,8 @@ TEST(PSServerLauncherUnitTest, ExtractPortsFromConfigSupportsCachePS) {
 }
 
 TEST(PSServerLauncherUnitTest, ExtractPortsFromConfigFallsBack) {
-  auto ports = PSServerLauncher::ExtractPortsFromConfig("/path/not/exist/config.json");
+  auto ports =
+      PSServerLauncher::ExtractPortsFromConfig("/path/not/exist/config.json");
   EXPECT_EQ(ports.size(), 4);
   EXPECT_EQ(ports[0], 15000);
 }
@@ -60,7 +61,7 @@ TEST(PSServerLauncherUnitTest, EvaluateDecisionForNoServerEnv) {
 
   LauncherOptions options;
   options.config_path = "/path/not/exist/config.json";
-  auto decision = PSServerLauncher::EvaluateLaunchDecision(options);
+  auto decision       = PSServerLauncher::EvaluateLaunchDecision(options);
 
   EXPECT_FALSE(decision.should_start);
   EXPECT_FALSE(decision.should_fail);
@@ -75,7 +76,8 @@ TEST(PSServerLauncherUnitTest, LoadOptionsRespectsEnvOverride) {
   setenv("PS_NUM_SHARDS", "3", 1);
 
   auto options = PSServerLauncher::LoadOptionsFromEnvironment();
-  EXPECT_EQ(options.server_path, std::filesystem::path("/tmp/ps_server_custom"));
+  EXPECT_EQ(options.server_path,
+            std::filesystem::path("/tmp/ps_server_custom"));
   EXPECT_EQ(options.startup_timeout_sec, 17);
   EXPECT_EQ(options.num_shards, 3);
 

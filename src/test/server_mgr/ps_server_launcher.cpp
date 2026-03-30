@@ -42,7 +42,7 @@ std::optional<int> ParseIntEnv(const char* name) {
   if (value == nullptr || *value == '\0') {
     return std::nullopt;
   }
-  char* end = nullptr;
+  char* end   = nullptr;
   long parsed = std::strtol(value, &end, 10);
   if (end == value || *end != '\0') {
     return std::nullopt;
@@ -56,9 +56,10 @@ bool IsTruthyEnv(const char* name) {
     return false;
   }
   std::string lowered(value);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(
+      lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
   return lowered == "1" || lowered == "true" || lowered == "yes";
 }
 
@@ -73,7 +74,7 @@ std::filesystem::path MakeAbsolute(const std::filesystem::path& path) {
 }
 
 std::string TimestampNow() {
-  auto now = std::chrono::system_clock::now();
+  auto now      = std::chrono::system_clock::now();
   std::time_t t = std::chrono::system_clock::to_time_t(now);
   std::tm tm_buf;
   localtime_r(&t, &tm_buf);
@@ -84,7 +85,8 @@ std::string TimestampNow() {
 
 } // namespace
 
-PSServerLauncher::PSServerLauncher(LauncherOptions options) : options_(std::move(options)) {
+PSServerLauncher::PSServerLauncher(LauncherOptions options)
+    : options_(std::move(options)) {
   if (options_.server_path.empty()) {
     options_.server_path = FindPsServerBinary();
   } else {
@@ -135,19 +137,24 @@ LauncherOptions PSServerLauncher::LoadOptionsFromEnvironment() {
     options.log_dir = MakeAbsolute("./logs");
   }
 
-  if (auto timeout = ParseIntEnv("PS_TIMEOUT"); timeout.has_value() && *timeout > 0) {
+  if (auto timeout = ParseIntEnv("PS_TIMEOUT");
+      timeout.has_value() && *timeout > 0) {
     options.startup_timeout_sec = *timeout;
   }
-  if (auto shard_num = ParseIntEnv("PS_NUM_SHARDS"); shard_num.has_value() && *shard_num > 0) {
+  if (auto shard_num = ParseIntEnv("PS_NUM_SHARDS");
+      shard_num.has_value() && *shard_num > 0) {
     options.num_shards = *shard_num;
   }
 
   return options;
 }
 
-std::vector<int> PSServerLauncher::DefaultPorts() { return {15000, 15001, 15002, 15003}; }
+std::vector<int> PSServerLauncher::DefaultPorts() {
+  return {15000, 15001, 15002, 15003};
+}
 
-std::vector<int> PSServerLauncher::ExtractPortsFromConfig(const std::filesystem::path& config_path) {
+std::vector<int> PSServerLauncher::ExtractPortsFromConfig(
+    const std::filesystem::path& config_path) {
   if (config_path.empty()) {
     return DefaultPorts();
   }
@@ -190,14 +197,15 @@ std::vector<int> PSServerLauncher::ExtractPortsFromConfig(const std::filesystem:
   }
 }
 
-bool PSServerLauncher::IsPortOpen(const std::string& host, int port, int timeout_sec) {
+bool PSServerLauncher::IsPortOpen(
+    const std::string& host, int port, int timeout_sec) {
   int sock = socket(AF_INET, SOCK_STREAM, 0);
   if (sock < 0) {
     return false;
   }
 
   struct timeval timeout;
-  timeout.tv_sec = timeout_sec;
+  timeout.tv_sec  = timeout_sec;
   timeout.tv_usec = 0;
   setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
   setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
@@ -205,7 +213,7 @@ bool PSServerLauncher::IsPortOpen(const std::string& host, int port, int timeout
   sockaddr_in addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(static_cast<uint16_t>(port));
+  addr.sin_port   = htons(static_cast<uint16_t>(port));
   if (inet_pton(AF_INET, host.c_str(), &addr.sin_addr) != 1) {
     close(sock);
     return false;
@@ -216,7 +224,8 @@ bool PSServerLauncher::IsPortOpen(const std::string& host, int port, int timeout
   return rc == 0;
 }
 
-std::vector<int> PSServerLauncher::CheckOpenPorts(const std::vector<int>& ports) {
+std::vector<int>
+PSServerLauncher::CheckOpenPorts(const std::vector<int>& ports) {
   std::vector<int> open_ports;
   for (int port : ports) {
     if (IsPortOpen("127.0.0.1", port)) {
@@ -226,18 +235,21 @@ std::vector<int> PSServerLauncher::CheckOpenPorts(const std::vector<int>& ports)
   return open_ports;
 }
 
-LaunchDecision PSServerLauncher::EvaluateLaunchDecision(const LauncherOptions& options) {
+LaunchDecision
+PSServerLauncher::EvaluateLaunchDecision(const LauncherOptions& options) {
   LaunchDecision decision;
   decision.configured_ports = ExtractPortsFromConfig(options.config_path);
-  decision.open_ports = CheckOpenPorts(decision.configured_ports);
+  decision.open_ports       = CheckOpenPorts(decision.configured_ports);
 
-  const bool all_ports_ready = !decision.configured_ports.empty() &&
+  const bool all_ports_ready =
+      !decision.configured_ports.empty() &&
       decision.open_ports.size() == decision.configured_ports.size();
-  const bool partial_ports_open = !decision.open_ports.empty() && !all_ports_ready;
+  const bool partial_ports_open =
+      !decision.open_ports.empty() && !all_ports_ready;
 
   if (IsTruthyEnv("NO_PS_SERVER")) {
     decision.should_start = false;
-    decision.reason = "NO_PS_SERVER";
+    decision.reason       = "NO_PS_SERVER";
     return decision;
   }
 
@@ -260,26 +272,26 @@ LaunchDecision PSServerLauncher::EvaluateLaunchDecision(const LauncherOptions& o
     oss << "]";
 
     decision.should_start = false;
-    decision.should_fail = true;
-    decision.reason = oss.str();
+    decision.should_fail  = true;
+    decision.reason       = oss.str();
     return decision;
   }
 
   const bool is_ci = IsTruthyEnv("CI") || IsTruthyEnv("GITHUB_ACTIONS");
   if (is_ci && all_ports_ready) {
     decision.should_start = false;
-    decision.reason = "ci_reuse_running";
+    decision.reason       = "ci_reuse_running";
     return decision;
   }
 
   if (all_ports_ready) {
     decision.should_start = false;
-    decision.reason = "already_running";
+    decision.reason       = "already_running";
     return decision;
   }
 
   decision.should_start = true;
-  decision.reason = is_ci ? "ci_server_not_ready" : "server_not_ready";
+  decision.reason       = is_ci ? "ci_server_not_ready" : "server_not_ready";
   return decision;
 }
 
@@ -357,7 +369,7 @@ std::optional<int> PSServerLauncher::ParseReadyShard(const std::string& line) {
   }
 
   const std::string shard_marker = "Server shard";
-  auto shard_pos = line.find(shard_marker);
+  auto shard_pos                 = line.find(shard_marker);
   if (shard_pos != std::string::npos) {
     std::string remain = line.substr(shard_pos + shard_marker.size());
     std::istringstream iss(remain);
@@ -374,7 +386,8 @@ std::optional<int> PSServerLauncher::ParseReadyShard(const std::string& line) {
   return std::nullopt;
 }
 
-void PSServerLauncher::OutputThreadLoop(int fd, const std::string& stream_name) {
+void PSServerLauncher::OutputThreadLoop(int fd,
+                                        const std::string& stream_name) {
   FILE* stream = fdopen(fd, "r");
   if (stream == nullptr) {
     AppendLogLine("[" + stream_name + "] failed to open pipe");
@@ -394,7 +407,7 @@ void PSServerLauncher::OutputThreadLoop(int fd, const std::string& stream_name) 
     }
 
     std::string content = Trim(line);
-    std::string tagged = "[" + stream_name + "] " + content;
+    std::string tagged  = "[" + stream_name + "] " + content;
     AppendLogLine(tagged);
 
     auto ready_shard = ParseReadyShard(content);
@@ -416,10 +429,12 @@ void PSServerLauncher::OutputThreadLoop(int fd, const std::string& stream_name) 
 void PSServerLauncher::StartOutputThreads() {
   stop_output_threads_ = false;
   if (stdout_fd_ >= 0) {
-    stdout_thread_ = std::thread([this]() { OutputThreadLoop(stdout_fd_, "STDOUT"); });
+    stdout_thread_ =
+        std::thread([this]() { OutputThreadLoop(stdout_fd_, "STDOUT"); });
   }
   if (stderr_fd_ >= 0) {
-    stderr_thread_ = std::thread([this]() { OutputThreadLoop(stderr_fd_, "STDERR"); });
+    stderr_thread_ =
+        std::thread([this]() { OutputThreadLoop(stderr_fd_, "STDERR"); });
   }
 }
 
@@ -487,7 +502,8 @@ bool PSServerLauncher::SpawnProcess() {
     close(stderr_pipe[0]);
     close(stderr_pipe[1]);
 
-    std::filesystem::path cwd = options_.server_path.parent_path().parent_path().parent_path();
+    std::filesystem::path cwd =
+        options_.server_path.parent_path().parent_path().parent_path();
     if (!cwd.empty()) {
       chdir(cwd.c_str());
     }
@@ -515,9 +531,9 @@ bool PSServerLauncher::SpawnProcess() {
   stdout_fd_ = stdout_pipe[0];
   stderr_fd_ = stderr_pipe[0];
 
-  started_ = true;
+  started_                    = true;
   result_.started_new_process = true;
-  result_.pid = pid_;
+  result_.pid                 = pid_;
   AppendLogLine("Starting PS Server: " + options_.server_path.string());
   AppendLogLine("PS Server process pid: " + std::to_string(pid_));
   if (!options_.config_path.empty()) {
@@ -538,11 +554,12 @@ bool PSServerLauncher::IsProcessAlive() const {
 
 bool PSServerLauncher::WaitUntilReady() {
   if (options_.startup_delay_ms > 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(options_.startup_delay_ms));
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(options_.startup_delay_ms));
   }
 
-  auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(options_.startup_timeout_sec);
+  auto deadline = std::chrono::steady_clock::now() +
+                  std::chrono::seconds(options_.startup_timeout_sec);
 
   std::unique_lock<std::mutex> lock(mu_);
   while (ready_shards_.size() < static_cast<size_t>(options_.num_shards)) {
@@ -553,8 +570,8 @@ bool PSServerLauncher::WaitUntilReady() {
 
     if (cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
       std::ostringstream oss;
-      oss << "Timeout waiting for ps_server ready shards: got=" << ready_shards_.size()
-          << ", expected=" << options_.num_shards;
+      oss << "Timeout waiting for ps_server ready shards: got="
+          << ready_shards_.size() << ", expected=" << options_.num_shards;
       last_error_ = oss.str();
       return false;
     }
@@ -577,7 +594,7 @@ bool PSServerLauncher::Start() {
   }
 
   if (!decision.should_start) {
-    result_.reason = decision.reason;
+    result_.reason              = decision.reason;
     result_.started_new_process = false;
     return true;
   }
@@ -602,12 +619,13 @@ void PSServerLauncher::Stop() {
 
   if (pid_ > 0 && result_.started_new_process) {
     kill(pid_, SIGTERM);
-    auto deadline = std::chrono::steady_clock::now() +
+    auto deadline =
+        std::chrono::steady_clock::now() +
         std::chrono::seconds(options_.graceful_shutdown_timeout_sec);
 
     while (std::chrono::steady_clock::now() < deadline) {
       int status = 0;
-      pid_t rc = waitpid(pid_, &status, WNOHANG);
+      pid_t rc   = waitpid(pid_, &status, WNOHANG);
       if (rc == pid_) {
         pid_ = -1;
         break;
@@ -631,7 +649,9 @@ void PSServerLauncher::Stop() {
   started_ = false;
 }
 
-bool PSServerLauncher::IsRunning() const { return started_ && IsProcessAlive(); }
+bool PSServerLauncher::IsRunning() const {
+  return started_ && IsProcessAlive();
+}
 
 ScopedPSServer::ScopedPSServer(LauncherOptions options, bool auto_start)
     : launcher_(std::move(options)) {
@@ -644,7 +664,8 @@ ScopedPSServer::~ScopedPSServer() { Stop(); }
 
 bool ScopedPSServer::Start() {
   if (!launcher_.Start()) {
-    throw std::runtime_error("Failed to start ps_server: " + launcher_.GetLastError());
+    throw std::runtime_error(
+        "Failed to start ps_server: " + launcher_.GetLastError());
   }
   return true;
 }
