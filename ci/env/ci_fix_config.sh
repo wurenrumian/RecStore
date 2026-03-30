@@ -17,9 +17,10 @@ if [[ -f "${CONFIG_JSON_PATH}" ]]; then
             | .cache_ps.base_kv_config.queue_size = 1024' "${CONFIG_JSON_PATH}" > "${TMP_JSON}" && mv "${TMP_JSON}" "${CONFIG_JSON_PATH}"
         echo "Updated config fields in recstore_config.json using jq."
     else
+        export RECSTORE_REPO_ROOT="${REPO_ROOT}"
         python3 - <<'PY'
 import json, sys, os
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+root = os.environ.get('RECSTORE_REPO_ROOT', os.getcwd())
 path = os.path.join(root, 'recstore_config.json')
 with open(path, 'r', encoding='utf-8') as f:
     data = json.load(f)

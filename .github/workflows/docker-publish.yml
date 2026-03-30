@@ -102,9 +102,13 @@ jobs:
           else
             INIT_ARGS="${DEFAULT_INIT_ARGS}"
           fi
+
           INIT_CONTAINER="recstore-init-${GITHUB_RUN_ID}"
-          docker run --name "${INIT_CONTAINER}" -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${LOCAL_IMAGE}" \
-            bash -lc "set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; ${INIT_ARGS} bash dockerfiles/init_env_inside_docker.sh"
+          docker create --name "${INIT_CONTAINER}" "${LOCAL_IMAGE}" bash -lc 'sleep infinity'
+          docker cp "${GITHUB_WORKSPACE}/." "${INIT_CONTAINER}:/workspace"
+          docker start "${INIT_CONTAINER}"
+          docker exec "${INIT_CONTAINER}" bash -lc "set -euo pipefail; cd /workspace; export DEBIAN_FRONTEND=noninteractive; ${INIT_ARGS} bash dockerfiles/init_env_inside_docker.sh"
+          docker exec "${INIT_CONTAINER}" bash -lc 'rm -rf /tmp/env_setup_markers'
           docker commit "${INIT_CONTAINER}" "${FINAL_IMAGE}"
           docker rm -f "${INIT_CONTAINER}" || true
 
