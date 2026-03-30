@@ -271,7 +271,7 @@ PSServerLauncher::EvaluateLaunchDecision(const LauncherOptions& options) {
   if (!options.override_ports.empty()) {
     decision.configured_ports = options.override_ports;
   }
-  decision.open_ports       = CheckOpenPorts(decision.configured_ports);
+  decision.open_ports = CheckOpenPorts(decision.configured_ports);
 
   const bool all_ports_ready =
       !decision.configured_ports.empty() &&
@@ -582,7 +582,8 @@ bool PSServerLauncher::SpawnProcess() {
 }
 
 std::filesystem::path PSServerLauncher::PrepareConfigForLaunch() {
-  if (!options_.override_ps_type.has_value() && options_.override_ports.empty()) {
+  if (!options_.override_ps_type.has_value() &&
+      options_.override_ports.empty()) {
     return options_.config_path;
   }
 
@@ -593,7 +594,8 @@ std::filesystem::path PSServerLauncher::PrepareConfigForLaunch() {
 
   std::ifstream in(options_.config_path);
   if (!in.good()) {
-    SetError("Failed to open config for override: " + options_.config_path.string());
+    SetError(
+        "Failed to open config for override: " + options_.config_path.string());
     return {};
   }
 
@@ -626,8 +628,8 @@ std::filesystem::path PSServerLauncher::PrepareConfigForLaunch() {
       return {};
     }
     for (size_t i = 0; i < options_.override_ports.size(); ++i) {
-      cache_servers[i]["host"] = "127.0.0.1";
-      cache_servers[i]["port"] = options_.override_ports[i];
+      cache_servers[i]["host"]  = "127.0.0.1";
+      cache_servers[i]["port"]  = options_.override_ports[i];
       cache_servers[i]["shard"] = static_cast<int>(i);
     }
 
@@ -638,16 +640,16 @@ std::filesystem::path PSServerLauncher::PrepareConfigForLaunch() {
       auto& client_servers = config["distributed_client"]["servers"];
       if (client_servers.size() == options_.override_ports.size()) {
         for (size_t i = 0; i < options_.override_ports.size(); ++i) {
-          client_servers[i]["host"] = "127.0.0.1";
-          client_servers[i]["port"] = options_.override_ports[i];
+          client_servers[i]["host"]  = "127.0.0.1";
+          client_servers[i]["port"]  = options_.override_ports[i];
           client_servers[i]["shard"] = static_cast<int>(i);
         }
       }
     }
 
     if (config.contains("client") && config["client"].is_object()) {
-      config["client"]["host"] = "127.0.0.1";
-      config["client"]["port"] = options_.override_ports.front();
+      config["client"]["host"]  = "127.0.0.1";
+      config["client"]["port"]  = options_.override_ports.front();
       config["client"]["shard"] = 0;
     }
   }
@@ -656,7 +658,8 @@ std::filesystem::path PSServerLauncher::PrepareConfigForLaunch() {
       options_.log_dir / ("ps_server_config_" + TimestampNow() + ".json");
   std::ofstream out(generated_config_path_, std::ios::out | std::ios::trunc);
   if (!out.is_open()) {
-    SetError("Failed to write generated config: " + generated_config_path_.string());
+    SetError(
+        "Failed to write generated config: " + generated_config_path_.string());
     generated_config_path_.clear();
     return {};
   }
