@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstring>
@@ -9,12 +8,9 @@
 #include <string>
 #include <sstream>
 #include <vector>
-
 #include <gtest/gtest.h>
-
 #include "base/factory.h"
 #include "storage/io_backend/io_backend.h"
-#include "storage/io_backend/io_backend_register.h"
 
 namespace {
 constexpr const char* kSpdkPcieAddress = "0000:c2:00.0";

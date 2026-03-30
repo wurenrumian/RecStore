@@ -3,13 +3,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
-#include "../hybrid/index.h"
+#include "../index.h"
 #include "base/factory.h"
 #include "storage/kv_engine/base_kv.h"
+#include "../utils/util.h"
 #define LSB
-#define CAS(_p, _u, _v)                                                        \
-  (__atomic_compare_exchange_n(                                                \
-      _p, _u, _v, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE))
 
 const size_t kMask  = 256 - 1;
 const size_t kShift = 8;
@@ -31,19 +29,15 @@ struct Block {
 
   void* operator new(size_t size) {
     void* ret = nullptr;
-    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr) {
+    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr)
       throw std::bad_alloc();
-    }
-    // ret = pmalloc(size);
     return ret;
   }
 
   void* operator new[](size_t size) {
     void* ret = nullptr;
-    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr) {
+    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr)
       throw std::bad_alloc();
-    }
-    // ret = pmalloc(size);
     return ret;
   }
 
@@ -122,9 +116,8 @@ public:
   void operator delete(void* p, std::size_t) noexcept { std::free(p); }
   void* operator new(size_t size) {
     void* ret = nullptr;
-    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr) {
+    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr)
       throw std::bad_alloc();
-    }
     return ret;
   }
 

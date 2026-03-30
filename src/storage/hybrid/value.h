@@ -3,7 +3,7 @@
 #include "../../memory/allocators/allocator_factory.h"
 #include "../../memory/memory_factory.h"
 #include "pointer.h"
-#include "index.h"
+#include "../index/index.h"
 #include "storage/kv_engine/base_kv.h"
 #include <string>
 #include <string_view>
@@ -16,9 +16,7 @@
 #include <shared_mutex>
 #include <list>
 #include <condition_variable>
-#include <chrono>
 #include <cstring>
-#include <algorithm>
 #include <unordered_map>
 #include <tbb/concurrent_hash_map.h>
 #include <array>

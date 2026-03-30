@@ -1,6 +1,7 @@
 #include "CCEH.h"
-#include "hash.h"
-#include "util.h"
+#include "../../io_backend/force_link.h"
+#include "../utils/hash.h"
+#include "../utils/util.h"
 #include <chrono>
 #include <cstddef>
 #include <iostream>
@@ -10,7 +11,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#include "../io_backend/io_backend_register.h"
 
 thread_local int pending = 0;
 thread_local std::vector<std::unique_ptr<coroutine<void>::pull_type>> coros;
@@ -261,6 +261,9 @@ PageID_t* Segment::Split(IOBackend* io_backend) {
 }
 
 CCEH::CCEH(const BaseKVConfig& config) : Index(config) {
+  static std::once_flag force_link_once;
+  std::call_once(force_link_once, []() { ForceLinkIOBackends(); });
+
   using IOF = base::Factory<IOBackend, const BaseKVConfig&>;
   if (!config.json_config_.contains("io_backend_type"))
     LOG(FATAL) << "CCEH config missing 'io_backend_type'";

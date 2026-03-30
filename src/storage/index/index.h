@@ -4,7 +4,7 @@
 #include <glog/logging.h>
 #include "base/array.h"
 #include "base/log.h"
-#include "pair.h"
+#include "utils/pair.h"
 #include "storage/kv_engine/base_kv.h"
 
 using boost::coroutines2::coroutine;

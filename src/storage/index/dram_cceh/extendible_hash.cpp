@@ -1,11 +1,9 @@
 #include "extendible_hash.h"
-#include "hash.h"
-#include "persist.h"
+#include "../utils/hash.h"
 #include <cassert>
 #include <cmath>
 #include <iostream>
 #include <thread>
-#include <unordered_map>
 
 size_t lockCount  = 0;
 size_t splitCount = 0;
@@ -161,7 +159,6 @@ Block** Block::Split(void) {
   int64_t lock = 0;
   if (!CAS(&sema, &lock, -1))
     return nullptr;
-    // cout << this << " " << this_thread::get_id() << endl;
 
 #ifdef INPLACE
   Block** split = new Block*[2];
@@ -204,7 +201,6 @@ Block** Block::Split(void) {
 
   clflush((char*)split[0], sizeof(Block));
   clflush((char*)split[1], sizeof(Block));
-  // cout << split[0]->numElem() << " " << split[1]->numElem() << endl;
 
   return split;
 #endif
@@ -319,11 +315,6 @@ RETRY:
 #ifdef LSB
     s[0]->pattern = (key_hash % (size_t)mypow(2, s[0]->local_depth - 1));
     s[1]->pattern = s[0]->pattern + (1 << (s[0]->local_depth - 1));
-    // cout << s[0]->pattern << endl;
-    // cout << s[1]->pattern << endl;
-    // cout << bitset<16>(key_hash) << endl;
-    // cout << bitset<16>(s[0]->pattern) << endl;
-    // cout << bitset<16>(s[1]->pattern) << endl;
 #else
     s[0]->pattern =
         (key_hash >> (8 * sizeof(key_hash) - s[0]->local_depth + 1)) << 1;
@@ -388,7 +379,6 @@ RETRY:
 #  endif
         }
 #endif
-        // cout << x << " normal split " << endl;
       } else { // directory doubling
         auto d    = dir._;
         auto _dir = new Block*[dir.capacity * 2];
@@ -403,19 +393,11 @@ RETRY:
             _dir[2 * i]     = s[0];
             _dir[2 * i + 1] = s[1];
           } else {
-            // if (d[i] == target) {
-            //   cout << i << " " << x << " " << target << " " << prev << endl;
-            // }
             _dir[2 * i]     = d[i];
             _dir[2 * i + 1] = d[i];
           }
         }
 #endif
-        // for (unsigned i = 0; i < dir.capacity * 2; ++i) {
-        //   if (_dir[i] == target) {
-        //     cout << "SOMETHING WRONG " << i << endl;
-        //   }
-        // }
         clflush((char*)&dir._[0], sizeof(Block*) * dir.capacity);
         dir._ = _dir;
         clflush((char*)&dir._, sizeof(void*));
@@ -423,7 +405,6 @@ RETRY:
         clflush((char*)&dir.capacity, sizeof(size_t));
         global_depth += 1;
         clflush((char*)&global_depth, sizeof(global_depth));
-        // cout << global_depth << endl;
         delete[] d;
         // TODO: requiered to do this atomically
         // cout << x << " directory doubling " << target << " " << dir._[x]<<
@@ -474,11 +455,8 @@ bool ExtendibleHash::Delete(Key_t& key) {
   Block* target = dir._[x];
   bool success  = target->Delete(key);
 
-  // 如果删除失败且块被锁定（可能正在分裂），重试
   if (!success && target->sema == -1) {
-    // 短暂让步避免活锁
     std::this_thread::yield();
-    // 重新计算位置（目录可能已变化）
     x       = (key_hash % dir.capacity);
     success = dir._[x]->Delete(key);
   }
