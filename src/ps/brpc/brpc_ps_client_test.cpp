@@ -8,6 +8,7 @@
 #include "base/timer.h"
 #include "ps/base/base_client.h"
 #include "brpc_ps_client.h"
+#include "test/server_mgr/ps_server_launcher.h"
 
 static bool
 check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
@@ -164,6 +165,9 @@ void TestPrefetch() {
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   xmh::Reporter::StartReportThread(2000);
+
+  recstore::test::ScopedPSServer server(
+      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment(), true);
 
   std::cout << "=== bRPC 参数服务器客户端测试 ===" << std::endl;
   std::cout << std::endl;

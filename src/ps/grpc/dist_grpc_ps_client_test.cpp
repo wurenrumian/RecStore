@@ -8,6 +8,12 @@
 #include "base/factory.h"
 #include "base/timer.h"
 #include "ps/base/base_client.h"
+#include "test/server_mgr/ps_server_launcher.h"
+
+namespace {
+constexpr int kGrpcPort0 = 15123;
+constexpr int kGrpcPort1 = 15124;
+} // namespace
 
 using namespace xmh;
 
@@ -48,8 +54,8 @@ void TestBasicConfig() {
   json recstore_config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kGrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -68,8 +74,8 @@ void TestFactoryClient() {
   json config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kGrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -139,8 +145,8 @@ void TestDirectClient() {
   json config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kGrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -186,8 +192,8 @@ void TestLargeBatch() {
   json config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kGrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"},
         {"max_keys_per_request", 200}}}};
@@ -227,6 +233,12 @@ void TestLargeBatch() {
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   Reporter::StartReportThread(2000);
+
+  auto launch_options =
+      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
+  launch_options.override_ps_type = "GRPC";
+  launch_options.override_ports   = {kGrpcPort0, kGrpcPort1};
+  recstore::test::ScopedPSServer server(launch_options, true);
 
   std::cout << "=== 分布式gRPC客户端测试 ===" << std::endl;
   std::cout << std::endl;

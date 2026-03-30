@@ -8,6 +8,7 @@
 #include "base/factory.h"
 #include "base/timer.h"
 #include "ps/base/base_client.h"
+#include "test/server_mgr/ps_server_launcher.h"
 
 using namespace xmh;
 using namespace recstore;
@@ -221,6 +222,9 @@ void TestLargeBatch() {
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   Reporter::StartReportThread(2000);
+
+  recstore::test::ScopedPSServer server(
+      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment(), true);
 
   std::cout << "=== 分布式 bRPC 客户端测试 ===" << std::endl;
   std::cout << std::endl;
