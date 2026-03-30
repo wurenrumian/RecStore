@@ -11,17 +11,10 @@
 #include "base/factory.h"
 #include "storage/kv_engine/base_kv.h"
 
-static const char* pcie_address = "0000:8d:00.0";
+static const char* pcie_address = "0000:c2:00.0";
 
 class SpdkBackend : public IOBackend {
 private:
-  static void batch_write_complete(void* arg, const struct spdk_nvme_cpl* cpl) {
-    int* inflight = reinterpret_cast<int*>(arg);
-    if (!spdk_nvme_cpl_is_success(cpl))
-      LOG(ERROR) << "BatchWritePages: I/O error!";
-    (*inflight)--;
-  }
-
   inline static std::atomic<bool> controller_active_{false};
   inline static std::mutex env_mutex_;
   inline static bool env_initialized_ = false;
@@ -153,6 +146,13 @@ private:
       (*coros[t])();
   }
 
+  static void batch_write_complete(void* arg, const struct spdk_nvme_cpl* cpl) {
+    int* inflight = reinterpret_cast<int*>(arg);
+    if (!spdk_nvme_cpl_is_success(cpl))
+      LOG(ERROR) << "BatchWritePages: I/O error!";
+    (*inflight)--;
+  }
+
 public:
   SpdkBackend(const BaseKVConfig& config) : IOBackend(config){};
   ~SpdkBackend() {
@@ -173,9 +173,7 @@ public:
       opts           = {};
       opts.opts_size = sizeof(spdk_env_opts);
       spdk_env_opts_init(&opts);
-      opts.hugepage_single_segments = 1;
-      opts.hugedir                  = "/dev/hugepages-2M";
-      trid                          = {};
+      trid = {};
       spdk_nvme_trid_populate_transport(&trid, SPDK_NVME_TRANSPORT_PCIE);
       snprintf(trid.subnqn, sizeof(trid.subnqn), "%s", SPDK_NVMF_DISCOVERY_NQN);
       LOG(INFO) << "pcie_address: " << pcie_address;

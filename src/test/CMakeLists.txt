@@ -83,6 +83,16 @@ target_link_libraries(test_engine_cceh PUBLIC
 )
 add_test(NAME test_engine_cceh COMMAND test_engine_cceh)
 
+add_executable(test_io_backend test_io_backend.cpp)
+target_link_libraries(test_io_backend PUBLIC
+    cceh
+    base
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_io_backend COMMAND test_io_backend)
+
 add_executable(test_factory test_factory.cpp)
 target_link_libraries(test_factory PUBLIC
     dram_hash
