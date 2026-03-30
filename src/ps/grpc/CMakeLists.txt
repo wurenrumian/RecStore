@@ -92,6 +92,15 @@ target_link_libraries(dist_grpc_ps_client_test PUBLIC
 add_test(NAME dist_grpc_ps_client_test COMMAND $<TARGET_FILE:dist_grpc_ps_client_test>)
 set_tests_properties(dist_grpc_ps_client_test PROPERTIES LABELS "ps_integration")
 
+# gRPC PS Network Benchmark
+add_executable(grpc_ps_bench
+    grpc_ps_bench.cpp
+)
+target_link_libraries(grpc_ps_bench PUBLIC
+    grpc_ps_client
+    gflags
+)
+
 # gRPC PS Client Python Binding
 add_library(grpc_ps_client_python MODULE
     grpc_ps_client_pytorch.cpp
