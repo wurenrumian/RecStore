@@ -727,7 +727,7 @@ int GRPCParameterClient::UpdateParameter(
     const base::ConstArray<uint64_t>& keys,
     const std::vector<std::vector<float>>* grads) {
 #ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time         = std::chrono::high_resolution_clock::now();
   const uint64_t trace_id = recstore::g_trace_id;
 #endif
   if (grads == nullptr) {
@@ -786,14 +786,15 @@ int GRPCParameterClient::UpdateParameter(
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
-  std::string stage_id = "grpc_client::EmbUpdate|" +
-                         std::to_string(trace_id == 0
-                                            ? static_cast<uint64_t>(
-                                                  std::chrono::duration_cast<
-                                                      std::chrono::microseconds>(
-                                                      start_time.time_since_epoch())
-                                                      .count())
-                                            : trace_id);
+  std::string stage_id =
+      "grpc_client::EmbUpdate|" +
+      std::to_string(
+          trace_id == 0
+              ? static_cast<uint64_t>(
+                    std::chrono::duration_cast< std::chrono::microseconds>(
+                        start_time.time_since_epoch())
+                        .count())
+              : trace_id);
   report("embupdate_stages",
          stage_id.c_str(),
          "client_serialize_us",
@@ -825,7 +826,7 @@ int GRPCParameterClient::UpdateParameterFlat(
     int64_t num_rows,
     int64_t embedding_dim) {
 #ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time         = std::chrono::high_resolution_clock::now();
   const uint64_t trace_id = recstore::g_trace_id;
 #endif
   if (keys.Size() == 0) {
@@ -872,14 +873,15 @@ int GRPCParameterClient::UpdateParameterFlat(
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
-  std::string stage_id = "grpc_client::EmbUpdate|" +
-                         std::to_string(trace_id == 0
-                                            ? static_cast<uint64_t>(
-                                                  std::chrono::duration_cast<
-                                                      std::chrono::microseconds>(
-                                                      start_time.time_since_epoch())
-                                                      .count())
-                                            : trace_id);
+  std::string stage_id =
+      "grpc_client::EmbUpdate|" +
+      std::to_string(
+          trace_id == 0
+              ? static_cast<uint64_t>(
+                    std::chrono::duration_cast< std::chrono::microseconds>(
+                        start_time.time_since_epoch())
+                        .count())
+              : trace_id);
   report("embupdate_stages",
          stage_id.c_str(),
          "client_serialize_us",

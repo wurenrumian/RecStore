@@ -370,11 +370,11 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   }
 
 #  ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
-  const uint64_t trace_id =
-      static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                start_time.time_since_epoch())
-                                .count());
+  auto start_time         = std::chrono::high_resolution_clock::now();
+  const uint64_t trace_id = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count());
   const uint64_t previous_trace_id = recstore::g_trace_id;
   recstore::g_trace_id             = trace_id;
 #  endif
