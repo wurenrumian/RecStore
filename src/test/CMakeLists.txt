@@ -1,6 +1,7 @@
 find_package(folly REQUIRED)
 
 add_subdirectory(small_tests)
+add_subdirectory(server_mgr)
 
 # add_executable(test_f14_slab
 #     test_f14_slab.cpp 
