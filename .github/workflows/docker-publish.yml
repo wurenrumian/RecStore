@@ -2,14 +2,18 @@ name: Docker Publish
 
 on:
   push:
-    tags:
-      - "v*"
+    paths:
+      - 'dockerfiles/Dockerfile.recstore'
+      - 'dockerfiles/init_env_inside_docker.sh'
+      - '.gitmodules'
+      - 'third_party/**'
+      - '.github/workflows/docker-publish.yml'
   workflow_dispatch:
     inputs:
       run_init:
         description: "Run dockerfiles/init_env_inside_docker.sh before pushing image"
         required: false
-        default: false
+        default: true
         type: boolean
       init_args:
         description: "Environment variables prefix for init script (manual trigger only)"
@@ -87,13 +91,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Initialize image inside container (manual only)
-        if: github.event_name == 'workflow_dispatch' && inputs.run_init
+      - name: Initialize image inside container
+        if: github.event_name != 'workflow_dispatch' || inputs.run_init
         env:
           INIT_ARGS_INPUT: ${{ inputs.init_args }}
         run: |
           set -euo pipefail
-          INIT_ARGS="${INIT_ARGS_INPUT:-${DEFAULT_INIT_ARGS}}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INIT_ARGS_INPUT:-}" ]; then
+            INIT_ARGS="${INIT_ARGS_INPUT}"
+          else
+            INIT_ARGS="${DEFAULT_INIT_ARGS}"
+          fi
           INIT_CONTAINER="recstore-init-${GITHUB_RUN_ID}"
           docker run --name "${INIT_CONTAINER}" -v "${GITHUB_WORKSPACE}:/workspace" -w /workspace "${LOCAL_IMAGE}" \
             bash -lc "set -euo pipefail; export DEBIAN_FRONTEND=noninteractive; ${INIT_ARGS} bash dockerfiles/init_env_inside_docker.sh"
@@ -101,7 +109,7 @@ jobs:
           docker rm -f "${INIT_CONTAINER}" || true
 
       - name: Use non-initialized image as final
-        if: github.event_name != 'workflow_dispatch' || !inputs.run_init
+        if: github.event_name == 'workflow_dispatch' && !inputs.run_init
         run: |
           set -euo pipefail
           docker tag "${LOCAL_IMAGE}" "${FINAL_IMAGE}"
