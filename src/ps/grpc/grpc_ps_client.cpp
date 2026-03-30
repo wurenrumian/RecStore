@@ -645,21 +645,24 @@ bool GRPCParameterClient::ClearPS() {
   return status.ok();
 }
 
-bool GRPCParameterClient::LoadFakeData(int64_t data) {
+// Read n bytes from the server. The server does not access storage;
+// it generates data randomly instead.
+bool GRPCParameterClient::LoadFakeData(int64_t n) {
   CommandRequest request;
   CommandResponse response;
   request.set_command(PSCommand::LOAD_FAKE_DATA);
-  request.add_arg1(&data, sizeof(int64_t));
+  request.add_arg1(&n, sizeof(int64_t));
   grpc::ClientContext context;
   grpc::Status status = stubs_[0]->Command(&context, request, &response);
   return status.ok();
 }
 
+// Write n bytes(random generated) into the server
 bool GRPCParameterClient::DumpFakeData(int64_t n) {
   CommandRequest request;
   CommandResponse response;
   request.set_command(PSCommand::DUMP_FAKE_DATA);
-  request.add_arg1(&n, sizeof(int64_t));
+  request.add_arg1(std::string(static_cast<size_t>(n), '\xab'));
   grpc::ClientContext context;
   grpc::Status status = stubs_[0]->Command(&context, request, &response);
   return status.ok();

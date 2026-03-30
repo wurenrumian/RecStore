@@ -236,30 +236,12 @@ private:
       std::string fake(static_cast<size_t>(payload_bytes), '\xab');
       reply->set_reply(std::move(fake));
     } else if (request->command() == PSCommand::DUMP_FAKE_DATA) {
-      if (request->arg1_size() != 1 ||
-          static_cast<size_t>(request->arg1(0).size()) != sizeof(int64_t)) {
-        LOG(ERROR) << "DUMP_FAKE_DATA: arg1 must be one " << sizeof(int64_t)
-                   << "-byte int64_t (payload bytes n)";
+      if (request->arg1_size() != 1) {
+        LOG(ERROR) << "DUMP_FAKE_DATA: expected 1 arg1 entry";
         return Status(grpc::StatusCode::INVALID_ARGUMENT,
-                      "DUMP_FAKE_DATA arg1 must be 8-byte int64_t");
+                      "DUMP_FAKE_DATA requires exactly 1 arg1 entry");
       }
-      int64_t n = 0;
-      std::memcpy(&n, request->arg1(0).data(), sizeof(int64_t));
-      if (n <= 0) {
-        LOG(ERROR) << "DUMP_FAKE_DATA: n must be positive";
-        return Status(grpc::StatusCode::INVALID_ARGUMENT, "n must be positive");
-      }
-      if (n % static_cast<int64_t>(sizeof(float)) != 0) {
-        LOG(ERROR) << "DUMP_FAKE_DATA: n must be a multiple of "
-                   << sizeof(float);
-        return Status(grpc::StatusCode::INVALID_ARGUMENT,
-                      "n must align to sizeof(float)");
-      }
-      constexpr int64_t kMaxDumpBytes = 64 * 1024 * 1024;
-      if (n > kMaxDumpBytes) {
-        LOG(ERROR) << "DUMP_FAKE_DATA: n exceeds cap " << kMaxDumpBytes;
-        return Status(grpc::StatusCode::INVALID_ARGUMENT, "n too large");
-      }
+      // Receive fake data payload (used for write bandwidth benchmarking)
       reply->set_reply("ok");
     } else {
       LOG(FATAL) << "invalid command";
