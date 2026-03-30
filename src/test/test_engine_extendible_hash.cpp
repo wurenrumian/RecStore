@@ -179,7 +179,8 @@ TEST_F(KVEngineExtendibleHashTest, BatchPutThenBatchGet) {
 
   ASSERT_EQ(batch_get_values.size(), num_keys);
   for (int i = 0; i < num_keys; ++i) {
-    ASSERT_EQ(batch_get_values[i].Size(), static_cast<int>(source_values[i].size()))
+    ASSERT_EQ(batch_get_values[i].Size(),
+              static_cast<int>(source_values[i].size()))
         << "Failed for key " << keys[i];
     for (int j = 0; j < batch_get_values[i].Size(); ++j) {
       EXPECT_FLOAT_EQ(batch_get_values[i][j], source_values[i][j])

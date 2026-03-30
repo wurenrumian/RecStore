@@ -138,14 +138,13 @@ public:
 
   void init() override {
     bool exists = (access(file_path.c_str(), F_OK) != -1);
-    fd = open(
-        file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, S_IRUSR | S_IWUSR);
+    fd =
+        open(file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, S_IRUSR | S_IWUSR);
     if (fd < 0) {
       const int err = errno;
       throw std::runtime_error(
-          "Failed to open file: " + file_path +
-          ", errno=" + std::to_string(err) +
-          ", detail=" + std::string(strerror(err)));
+          "Failed to open file: " + file_path + ", errno=" +
+          std::to_string(err) + ", detail=" + std::string(strerror(err)));
     }
     if (exists) {
       struct stat file_stat;

@@ -90,7 +90,7 @@ public:
   virtual char* AllocateBuffer(uint64_t page_count) = 0;
   virtual void FreeBuffer(char* buf)                = 0;
 
-  virtual void submit() = 0;
+  virtual void submit()         = 0;
   virtual void PollCompletion() = 0;
 
   struct IOEntry {
