@@ -370,9 +370,16 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   }
 
 #  ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time         = std::chrono::high_resolution_clock::now();
+  const uint64_t trace_id = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          start_time.time_since_epoch())
+          .count());
+  const uint64_t previous_trace_id = recstore::g_trace_id;
+  recstore::g_trace_id             = trace_id;
 #  endif
 
+  int64_t validate_done_us = 0;
   validate_keys(keys);
   validate_embeddings(grads, "Grads");
 
@@ -396,10 +403,19 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   int ret =
       ps_client_->UpdateParameterFlat(table_name, keys_array, grads_data, L, D);
   if (ret != 0) {
+#  ifdef ENABLE_PERF_REPORT
+    recstore::g_trace_id = previous_trace_id;
+#  endif
     throw std::runtime_error("Failed to update embeddings via PS client.");
   }
 
 #  ifdef ENABLE_PERF_REPORT
+  auto validate_done_time = std::chrono::high_resolution_clock::now();
+  validate_done_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          validate_done_time - start_time)
+          .count();
+
   auto end_time = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(
@@ -415,6 +431,27 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
          op_latency_key.c_str(),
          "recstore_us",
          static_cast<double>(duration));
+
+  std::string update_stage_id =
+      "op_client::EmbUpdate|" + std::to_string(trace_id);
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "op_total_us",
+         static_cast<double>(duration));
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "op_validate_us",
+         static_cast<double>(validate_done_us));
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "request_size",
+         static_cast<double>(L));
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "embedding_dim",
+         static_cast<double>(D));
+
+  recstore::g_trace_id = previous_trace_id;
 #  endif
 }
 

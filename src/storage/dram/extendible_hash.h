@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include "../hybrid/index.h"
 #include "base/factory.h"
 #include "storage/kv_engine/base_kv.h"
@@ -28,15 +30,19 @@ struct Block {
   ~Block(void) {}
 
   void* operator new(size_t size) {
-    void* ret;
-    posix_memalign(&ret, 64, size);
+    void* ret = nullptr;
+    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr) {
+      throw std::bad_alloc();
+    }
     // ret = pmalloc(size);
     return ret;
   }
 
   void* operator new[](size_t size) {
-    void* ret;
-    posix_memalign(&ret, 64, size);
+    void* ret = nullptr;
+    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr) {
+      throw std::bad_alloc();
+    }
     // ret = pmalloc(size);
     return ret;
   }
@@ -115,8 +121,10 @@ public:
   void operator delete(void* p) noexcept { std::free(p); }
   void operator delete(void* p, std::size_t) noexcept { std::free(p); }
   void* operator new(size_t size) {
-    void* ret;
-    posix_memalign(&ret, 64, size);
+    void* ret = nullptr;
+    if (posix_memalign(&ret, 64, size) != 0 || ret == nullptr) {
+      throw std::bad_alloc();
+    }
     return ret;
   }
 
