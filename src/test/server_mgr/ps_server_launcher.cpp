@@ -50,6 +50,29 @@ std::optional<int> ParseIntEnv(const char* name) {
   return static_cast<int>(parsed);
 }
 
+std::vector<int> ParsePortsEnv(const char* name) {
+  const char* value = std::getenv(name);
+  if (value == nullptr || *value == '\0') {
+    return {};
+  }
+  std::vector<int> ports;
+  std::stringstream ss(value);
+  std::string item;
+  while (std::getline(ss, item, ',')) {
+    std::string trimmed = Trim(item);
+    if (trimmed.empty()) {
+      continue;
+    }
+    char* end   = nullptr;
+    long parsed = std::strtol(trimmed.c_str(), &end, 10);
+    if (end == trimmed.c_str() || *end != '\0') {
+      return {};
+    }
+    ports.push_back(static_cast<int>(parsed));
+  }
+  return ports;
+}
+
 bool IsTruthyEnv(const char* name) {
   const char* value = std::getenv(name);
   if (value == nullptr) {
@@ -146,6 +169,12 @@ LauncherOptions PSServerLauncher::LoadOptionsFromEnvironment() {
     options.num_shards = *shard_num;
   }
 
+  const char* override_ps_type = std::getenv("PS_SERVER_PS_TYPE");
+  if (override_ps_type != nullptr && *override_ps_type != '\0') {
+    options.override_ps_type = std::string(override_ps_type);
+  }
+  options.override_ports = ParsePortsEnv("PS_SERVER_PORTS");
+
   return options;
 }
 
@@ -239,6 +268,9 @@ LaunchDecision
 PSServerLauncher::EvaluateLaunchDecision(const LauncherOptions& options) {
   LaunchDecision decision;
   decision.configured_ports = ExtractPortsFromConfig(options.config_path);
+  if (!options.override_ports.empty()) {
+    decision.configured_ports = options.override_ports;
+  }
   decision.open_ports       = CheckOpenPorts(decision.configured_ports);
 
   const bool all_ports_ready =
@@ -463,6 +495,11 @@ bool PSServerLauncher::SpawnProcess() {
     return false;
   }
 
+  std::filesystem::path launch_config_path = PrepareConfigForLaunch();
+  if (launch_config_path.empty()) {
+    return false;
+  }
+
   int stdout_pipe[2] = {-1, -1};
   int stderr_pipe[2] = {-1, -1};
   if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
@@ -510,9 +547,9 @@ bool PSServerLauncher::SpawnProcess() {
 
     std::vector<std::string> args;
     args.push_back(options_.server_path.string());
-    if (!options_.config_path.empty()) {
+    if (!launch_config_path.empty()) {
       args.push_back("--config_path");
-      args.push_back(options_.config_path.string());
+      args.push_back(launch_config_path.string());
     }
 
     std::vector<char*> argv;
@@ -536,12 +573,104 @@ bool PSServerLauncher::SpawnProcess() {
   result_.pid                 = pid_;
   AppendLogLine("Starting PS Server: " + options_.server_path.string());
   AppendLogLine("PS Server process pid: " + std::to_string(pid_));
-  if (!options_.config_path.empty()) {
-    AppendLogLine("Config path: " + options_.config_path.string());
+  if (!launch_config_path.empty()) {
+    AppendLogLine("Config path: " + launch_config_path.string());
   }
 
   StartOutputThreads();
   return true;
+}
+
+std::filesystem::path PSServerLauncher::PrepareConfigForLaunch() {
+  if (!options_.override_ps_type.has_value() && options_.override_ports.empty()) {
+    return options_.config_path;
+  }
+
+  if (options_.config_path.empty()) {
+    SetError("override_ps_type is set but config_path is empty");
+    return {};
+  }
+
+  std::ifstream in(options_.config_path);
+  if (!in.good()) {
+    SetError("Failed to open config for override: " + options_.config_path.string());
+    return {};
+  }
+
+  json config;
+  try {
+    in >> config;
+  } catch (const std::exception& e) {
+    SetError(std::string("Failed to parse config json: ") + e.what());
+    return {};
+  }
+
+  if (!config.contains("cache_ps") || !config["cache_ps"].is_object()) {
+    SetError("Config missing object field cache_ps");
+    return {};
+  }
+  if (options_.override_ps_type.has_value()) {
+    config["cache_ps"]["ps_type"] = *options_.override_ps_type;
+  }
+
+  if (!options_.override_ports.empty()) {
+    if (!config["cache_ps"].contains("servers") ||
+        !config["cache_ps"]["servers"].is_array()) {
+      SetError("Config cache_ps.servers is missing or invalid");
+      return {};
+    }
+
+    auto& cache_servers = config["cache_ps"]["servers"];
+    if (cache_servers.size() != options_.override_ports.size()) {
+      SetError("override_ports size does not match cache_ps.servers size");
+      return {};
+    }
+    for (size_t i = 0; i < options_.override_ports.size(); ++i) {
+      cache_servers[i]["host"] = "127.0.0.1";
+      cache_servers[i]["port"] = options_.override_ports[i];
+      cache_servers[i]["shard"] = static_cast<int>(i);
+    }
+
+    if (config.contains("distributed_client") &&
+        config["distributed_client"].is_object() &&
+        config["distributed_client"].contains("servers") &&
+        config["distributed_client"]["servers"].is_array()) {
+      auto& client_servers = config["distributed_client"]["servers"];
+      if (client_servers.size() == options_.override_ports.size()) {
+        for (size_t i = 0; i < options_.override_ports.size(); ++i) {
+          client_servers[i]["host"] = "127.0.0.1";
+          client_servers[i]["port"] = options_.override_ports[i];
+          client_servers[i]["shard"] = static_cast<int>(i);
+        }
+      }
+    }
+
+    if (config.contains("client") && config["client"].is_object()) {
+      config["client"]["host"] = "127.0.0.1";
+      config["client"]["port"] = options_.override_ports.front();
+      config["client"]["shard"] = 0;
+    }
+  }
+
+  generated_config_path_ =
+      options_.log_dir / ("ps_server_config_" + TimestampNow() + ".json");
+  std::ofstream out(generated_config_path_, std::ios::out | std::ios::trunc);
+  if (!out.is_open()) {
+    SetError("Failed to write generated config: " + generated_config_path_.string());
+    generated_config_path_.clear();
+    return {};
+  }
+  out << std::setw(2) << config << std::endl;
+  return generated_config_path_;
+}
+
+void PSServerLauncher::CleanupLaunchConfig() {
+  if (generated_config_path_.empty()) {
+    return;
+  }
+  std::error_code ec;
+  std::filesystem::remove(generated_config_path_, ec);
+  generated_config_path_.clear();
 }
 
 bool PSServerLauncher::IsProcessAlive() const {
@@ -646,6 +775,7 @@ void PSServerLauncher::Stop() {
     log_file_.flush();
     log_file_.close();
   }
+  CleanupLaunchConfig();
   started_ = false;
 }
 

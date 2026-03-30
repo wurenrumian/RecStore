@@ -68,6 +68,8 @@
 | `PS_LOG_DIR` | 指定日志输出目录 | `./logs` |
 | `PS_TIMEOUT` | 启动超时时间（秒） | 60 |
 | `PS_NUM_SHARDS` | 期望的分片数量 | 2 |
+| `PS_SERVER_PS_TYPE` | 启动前临时覆盖 `cache_ps.ps_type`（如 `GRPC`/`BRPC`） | 不覆盖 |
+| `PS_SERVER_PORTS` | 启动前临时覆盖服务端口，逗号分隔（如 `15123,15124`） | 不覆盖 |
 | `NO_PS_SERVER` | 强制跳过启动服务器 | False |
 
 ### 主要能力
@@ -106,6 +108,11 @@ void RunTestCase() {
   // test logic here
 }
 ```
+
+### 协议配置建议
+
+- BRPC 客户端测试默认可使用仓库根目录的 `recstore_config.json`。
+- gRPC 客户端测试建议在启动器里设置 `LauncherOptions.override_ps_type = "GRPC"`，必要时配合 `LauncherOptions.override_ports`（或 `PS_SERVER_PORTS`）使用独立端口，避免复用已占用端口导致协议不匹配。
 
 ### 目录说明
 

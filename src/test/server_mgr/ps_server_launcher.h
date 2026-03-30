@@ -20,6 +20,8 @@ namespace recstore::test {
 struct LauncherOptions {
   std::filesystem::path server_path;
   std::filesystem::path config_path;
+  std::optional<std::string> override_ps_type;
+  std::vector<int> override_ports;
   std::filesystem::path log_dir     = "./logs";
   int startup_timeout_sec           = 60;
   int graceful_shutdown_timeout_sec = 5;
@@ -74,6 +76,8 @@ private:
   static std::vector<int> DefaultPorts();
 
   bool SpawnProcess();
+  std::filesystem::path PrepareConfigForLaunch();
+  void CleanupLaunchConfig();
   bool WaitUntilReady();
   bool IsProcessAlive() const;
   void StartOutputThreads();
@@ -100,6 +104,7 @@ private:
   std::atomic<bool> stop_output_threads_{false};
   std::thread stdout_thread_;
   std::thread stderr_thread_;
+  std::filesystem::path generated_config_path_;
 };
 
 class ScopedPSServer {
