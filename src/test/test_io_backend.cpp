@@ -19,8 +19,7 @@
 namespace {
 constexpr const char* kSpdkPcieAddress = "0000:c2:00.0";
 
-bool
-HasFreeHugepages() {
+bool HasFreeHugepages() {
   std::ifstream meminfo("/proc/meminfo");
   if (!meminfo.is_open())
     return false;
@@ -38,15 +37,13 @@ HasFreeHugepages() {
   return false;
 }
 
-bool
-HasConfiguredPcieDevice() {
+bool HasConfiguredPcieDevice() {
   const std::filesystem::path pci_path =
       std::filesystem::path("/sys/bus/pci/devices") / kSpdkPcieAddress;
   return std::filesystem::exists(pci_path);
 }
 
-bool
-CanUseSpdkBackend(std::string* reason) {
+bool CanUseSpdkBackend(std::string* reason) {
   if (!HasConfiguredPcieDevice()) {
     if (reason != nullptr)
       *reason = "configured SPDK PCIe device is missing";
@@ -60,16 +57,16 @@ CanUseSpdkBackend(std::string* reason) {
   return true;
 }
 
-std::string
-ResolveBackendFromEnv() {
+std::string ResolveBackendFromEnv() {
   const char* raw_backend = std::getenv("RECSTORE_IO_BACKEND");
   if (raw_backend == nullptr || std::string(raw_backend).empty())
     return "IOURING";
 
   std::string backend(raw_backend);
-  std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char c) {
-    return static_cast<char>(std::toupper(c));
-  });
+  std::transform(
+      backend.begin(), backend.end(), backend.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+      });
   if (backend != "IOURING" && backend != "SPDK")
     return "IOURING";
   return backend;
