@@ -51,6 +51,10 @@ step_base() {
 
 step_liburing() {
     cd ${PROJECT_PATH}/third_party/liburing
+    if [ ! -x ./configure ]; then
+        echo "Missing third_party/liburing/configure. Please run: git submodule update --init --recursive" >&2
+        return 1
+    fi
     ./configure --cc=gcc --cxx=g++
     make ${MAKE_OPTS}
     make liburing.pc
@@ -262,8 +266,21 @@ step_ssh() {
 }
 
 step_set_coredump() {
+    if [ "${SKIP_COREDUMP:-0}" = "1" ]; then
+        echo "Skipping coredump setup because SKIP_COREDUMP=1"
+        return 0
+    fi
+
+    if [ "${CI:-}" = "1" ] || [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ] || [ -n "${GITLAB_CI:-}" ] || [ -n "${JENKINS_URL:-}" ] || [ -n "${BUILD_BUILDID:-}" ]; then
+        echo "Skipping coredump setup in CI environment"
+        return 0
+    fi
+
     cd ${PROJECT_PATH}/dockerfiles
-    source set_coredump.sh
+    if ! bash set_coredump.sh; then
+        echo "Warning: coredump setup failed; continuing without coredump configuration"
+        return 0
+    fi
 }
 
 # step_dgl() {
