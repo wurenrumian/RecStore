@@ -375,8 +375,14 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
       std::chrono::duration_cast<std::chrono::microseconds>(
           start_time.time_since_epoch())
           .count());
-  const uint64_t previous_trace_id = recstore::g_trace_id;
-  recstore::g_trace_id             = trace_id;
+  struct TraceGuard {
+    explicit TraceGuard(uint64_t new_trace_id)
+        : previous_trace_id_(recstore::g_trace_id) {
+      recstore::g_trace_id = new_trace_id;
+    }
+    ~TraceGuard() { recstore::g_trace_id = previous_trace_id_; }
+    uint64_t previous_trace_id_;
+  } trace_guard(trace_id);
 #  endif
 
   int64_t validate_done_us = 0;
@@ -396,6 +402,14 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
         "Invalid grad dimension D: " + std::to_string(D));
   }
 
+#  ifdef ENABLE_PERF_REPORT
+  auto validate_done_time = std::chrono::high_resolution_clock::now();
+  validate_done_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          validate_done_time - start_time)
+          .count();
+#  endif
+
   const uint64_t* keys_data = keys.data_as<uint64_t>();
   base::ConstArray<uint64_t> keys_array(keys_data, L);
 
@@ -403,19 +417,10 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
   int ret =
       ps_client_->UpdateParameterFlat(table_name, keys_array, grads_data, L, D);
   if (ret != 0) {
-#  ifdef ENABLE_PERF_REPORT
-    recstore::g_trace_id = previous_trace_id;
-#  endif
     throw std::runtime_error("Failed to update embeddings via PS client.");
   }
 
 #  ifdef ENABLE_PERF_REPORT
-  auto validate_done_time = std::chrono::high_resolution_clock::now();
-  validate_done_us =
-      std::chrono::duration_cast<std::chrono::microseconds>(
-          validate_done_time - start_time)
-          .count();
-
   auto end_time = std::chrono::high_resolution_clock::now();
   auto duration =
       std::chrono::duration_cast<std::chrono::microseconds>(
@@ -450,8 +455,6 @@ void KVClientOp::EmbUpdate(const std::string& table_name,
          update_stage_id.c_str(),
          "embedding_dim",
          static_cast<double>(D));
-
-  recstore::g_trace_id = previous_trace_id;
 #  endif
 }
 

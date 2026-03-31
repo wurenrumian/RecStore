@@ -27,6 +27,7 @@
 
 #ifdef ENABLE_PERF_REPORT
 #  include <chrono>
+#  include <cstdlib>
 #  include "base/report/report_client.h"
 #endif
 
@@ -439,6 +440,18 @@ void BRPCParameterServiceImpl::UpdateParameter(
 
 #ifdef ENABLE_PERF_REPORT
   auto start_time = std::chrono::high_resolution_clock::now();
+  uint64_t trace_id = 0;
+  const std::string* header_trace =
+      cntl->http_request().GetHeader("x-recstore-trace-id");
+  if (header_trace != nullptr && !header_trace->empty()) {
+    trace_id =
+        static_cast<uint64_t>(std::strtoull(header_trace->c_str(), nullptr, 10));
+  }
+#endif
+  bool success = false;
+  int size     = 0;
+#ifdef ENABLE_PERF_REPORT
+  auto before_cache_update_time = std::chrono::high_resolution_clock::now();
 #endif
 
   try {
@@ -461,9 +474,10 @@ void BRPCParameterServiceImpl::UpdateParameter(
     if (!reader->Valid(payload_size)) {
       throw std::runtime_error("UpdateParameter invalid gradients payload");
     }
-    int size = reader->item_size();
+    size = reader->item_size();
 
-    bool success = cache_ps_->UpdateParameter(table_name, reader, 0);
+    before_cache_update_time = std::chrono::high_resolution_clock::now();
+    success                  = cache_ps_->UpdateParameter(table_name, reader, 0);
 
     FB_LOG_EVERY_MS(INFO, 2000)
         << "UpdateParameter: table=" << table_name << ", keys=" << size;
@@ -495,6 +509,33 @@ void BRPCParameterServiceImpl::UpdateParameter(
          op_latency_key.c_str(),
          "recserver_us",
          static_cast<double>(duration));
+
+  auto backend_update_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - before_cache_update_time)
+          .count();
+  const uint64_t effective_trace_id =
+      trace_id == 0
+          ? static_cast<uint64_t>(start_us_for_key)
+          : trace_id;
+  std::string update_stage_id =
+      "brpc_server::EmbUpdate|" + std::to_string(effective_trace_id);
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "server_total_us",
+         static_cast<double>(duration));
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "server_backend_update_us",
+         static_cast<double>(backend_update_duration));
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "server_request_size",
+         static_cast<double>(size));
+  report("embupdate_stages",
+         update_stage_id.c_str(),
+         "server_success",
+         success ? 1.0 : 0.0);
 #endif
 }
 

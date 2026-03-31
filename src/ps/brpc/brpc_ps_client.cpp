@@ -919,6 +919,7 @@ int BRPCParameterClient::UpdateParameter(
     const std::vector<std::vector<float>>* grads) {
 #ifdef ENABLE_PERF_REPORT
   auto start_time = std::chrono::high_resolution_clock::now();
+  const uint64_t trace_id = recstore::g_trace_id;
 #endif
   if (grads == nullptr) {
     LOG(ERROR) << "UpdateParameter grads pointer is null";
@@ -938,6 +939,9 @@ int BRPCParameterClient::UpdateParameter(
     pack.emb_data = grads->at(i).data();
     compressor.AddItem(pack, nullptr);
   }
+#ifdef ENABLE_PERF_REPORT
+  auto serialize_done_time = std::chrono::high_resolution_clock::now();
+#endif
   if (keys.Size() == 0) {
     LOG(WARNING) << "UpdateParameter no gradients to send";
     return 0;
@@ -948,6 +952,14 @@ int BRPCParameterClient::UpdateParameter(
   request.set_table_name(table_name);
 
   brpc::Controller cntl;
+#ifdef ENABLE_PERF_REPORT
+  if (trace_id != 0) {
+    cntl.http_request().SetHeader(
+        "x-recstore-trace-id",
+        std::to_string(trace_id));
+  }
+  auto rpc_start_time = std::chrono::high_resolution_clock::now();
+#endif
   compressor.AppendToIOBuf(&cntl.request_attachment());
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
   stub.UpdateParameter(&cntl, &request, &response, nullptr);
@@ -962,10 +974,44 @@ int BRPCParameterClient::UpdateParameter(
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
+  auto serialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          serialize_done_time - start_time)
+          .count();
+  auto rpc_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - rpc_start_time)
+          .count();
   report("ps_client_latency",
          "UpdateParameter",
          "latency_us",
          static_cast<double>(duration));
+
+  const uint64_t effective_trace_id =
+      trace_id == 0
+          ? static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    start_time.time_since_epoch())
+                    .count())
+          : trace_id;
+  std::string stage_id =
+      "brpc_client::EmbUpdate|" + std::to_string(effective_trace_id);
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_serialize_us",
+         static_cast<double>(serialize_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_rpc_us",
+         static_cast<double>(rpc_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_total_us",
+         static_cast<double>(duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_request_size",
+         static_cast<double>(keys.Size()));
 #endif
 
   return response.success() ? 0 : -1;
@@ -979,6 +1025,7 @@ int BRPCParameterClient::UpdateParameterFlat(
     int64_t embedding_dim) {
 #ifdef ENABLE_PERF_REPORT
   auto start_time = std::chrono::high_resolution_clock::now();
+  const uint64_t trace_id = recstore::g_trace_id;
 #endif
   if (keys.Size() == 0) {
     return 0;
@@ -989,12 +1036,23 @@ int BRPCParameterClient::UpdateParameterFlat(
           keys, grads, num_rows, embedding_dim, &compressor) != 0) {
     return -1;
   }
+#ifdef ENABLE_PERF_REPORT
+  auto serialize_done_time = std::chrono::high_resolution_clock::now();
+#endif
 
   UpdateParameterRequest request;
   UpdateParameterResponse response;
   request.set_table_name(table_name);
 
   brpc::Controller cntl;
+#ifdef ENABLE_PERF_REPORT
+  if (trace_id != 0) {
+    cntl.http_request().SetHeader(
+        "x-recstore-trace-id",
+        std::to_string(trace_id));
+  }
+  auto rpc_start_time = std::chrono::high_resolution_clock::now();
+#endif
   compressor.AppendToIOBuf(&cntl.request_attachment());
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
   stub.UpdateParameter(&cntl, &request, &response, nullptr);
@@ -1009,10 +1067,48 @@ int BRPCParameterClient::UpdateParameterFlat(
       std::chrono::duration_cast<std::chrono::microseconds>(
           end_time - start_time)
           .count();
+  auto serialize_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          serialize_done_time - start_time)
+          .count();
+  auto rpc_duration =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          end_time - rpc_start_time)
+          .count();
   report("ps_client_latency",
          "UpdateParameterFlat",
          "latency_us",
          static_cast<double>(duration));
+
+  const uint64_t effective_trace_id =
+      trace_id == 0
+          ? static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    start_time.time_since_epoch())
+                    .count())
+          : trace_id;
+  std::string stage_id =
+      "brpc_client::EmbUpdate|" + std::to_string(effective_trace_id);
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_serialize_us",
+         static_cast<double>(serialize_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_rpc_us",
+         static_cast<double>(rpc_duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_total_us",
+         static_cast<double>(duration));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_request_size",
+         static_cast<double>(num_rows));
+  report("embupdate_stages",
+         stage_id.c_str(),
+         "client_embedding_dim",
+         static_cast<double>(embedding_dim));
 #endif
 
   return response.success() ? 0 : -1;
