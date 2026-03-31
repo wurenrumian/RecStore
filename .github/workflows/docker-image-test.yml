@@ -116,57 +116,108 @@ jobs:
           echo "Or manually trigger Docker Publish from Actions tab." >&2
           exit 1
 
-      - name: Run tests inside container
+      - name: Start test container
         env:
           TEST_IMAGE: ${{ steps.pull.outputs.pulled_image }}
         run: |
           set -euo pipefail
           PULLED_IMAGE="${TEST_IMAGE}"
 
-          docker run --name "${TEST_CONTAINER}" --network host \
+          docker run -d --name "${TEST_CONTAINER}" --network host \
             "${PULLED_IMAGE}" \
-            bash -lc '
-              set -euo pipefail
-              export CI=true
-              export GITHUB_ACTIONS=true
-              export DEBIAN_FRONTEND=noninteractive
-              export GLOG_logtostderr=1
-              export GLOG_v=1
+            bash -lc 'tail -f /dev/null'
 
-              cleanup_ps_server() {
-                pids="$(pgrep -x ps_server || true)"
-                if [ -n "${pids}" ]; then
-                  echo "Stopping ps_server PIDs: ${pids}"
-                  kill ${pids} || true
-                fi
-              }
-              trap cleanup_ps_server EXIT
+      - name: Build project inside container
+        run: |
+          set -euo pipefail
+          docker exec "${TEST_CONTAINER}" bash -lc '
+            set -euo pipefail
+            export CI=true
+            export GITHUB_ACTIONS=true
+            export DEBIAN_FRONTEND=noninteractive
+            export GLOG_logtostderr=1
+            export GLOG_v=1
 
-              cd /workspace
+            cd /workspace
+            mkdir -p runner/logs
+            mkdir -p build
+            cd build
+            cmake -DENABLE_CUDA=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
+            make -j4
+          '
 
-              mkdir -p build
-              cd build
-              cmake -DENABLE_CUDA=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
-              make -j4
-              cd /workspace
+      - name: Run ctest (non-blocking)
+        run: |
+          set -euo pipefail
+          set +e
+          docker exec "${TEST_CONTAINER}" bash -lc '
+            set -o pipefail
+            cd /workspace/build
+            ctest --output-on-failure 2>&1 | tee /workspace/runner/logs/ctest.log
+            exit ${PIPESTATUS[0]}
+          '
+          CTEST_EXIT_CODE=$?
+          set -e
+          echo "ctest_exit_code=${CTEST_EXIT_CODE}" >> "${GITHUB_ENV}"
+          if [ "${CTEST_EXIT_CODE}" -ne 0 ]; then
+            echo "ctest failed with exit code ${CTEST_EXIT_CODE}, continue workflow by design."
+          fi
 
-              if [ -f build/lib/_recstore_ops.so ] && [ ! -f build/lib/lib_recstore_ops.so ]; then
-                cp -f build/lib/_recstore_ops.so build/lib/lib_recstore_ops.so
+      - name: Print ctest log summary
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "===== ctest log summary (last 200 lines) ====="
+          docker exec "${TEST_CONTAINER}" bash -lc '
+            if [ -f /workspace/runner/logs/ctest.log ]; then
+              tail -n 200 /workspace/runner/logs/ctest.log
+            else
+              echo "ctest log not found: /workspace/runner/logs/ctest.log"
+            fi
+          '
+          echo "===== end of ctest log summary ====="
+
+      - name: Run op tests inside container
+        run: |
+          set -euo pipefail
+          docker exec "${TEST_CONTAINER}" bash -lc '
+            set -euo pipefail
+
+            cleanup_ps_server() {
+              pids="$(pgrep -x ps_server || true)"
+              if [ -n "${pids}" ]; then
+                echo "Stopping ps_server PIDs: ${pids}"
+                kill ${pids} || true
               fi
+            }
+            trap cleanup_ps_server EXIT
 
-              if [ ! -f build/lib/lib_recstore_ops.so ]; then
-                echo "recstore ops shared library missing after build" >&2
-                ls -lah build/lib || true
-                find build -maxdepth 4 -name '*recstore*ops*.so*' -print || true
-                exit 1
-              fi
+            pids_after_ctest="$(pgrep -x ps_server || true)"
+            if [ -n "${pids_after_ctest}" ]; then
+              echo "Cleaning stale ps_server after ctest: ${pids_after_ctest}"
+              kill ${pids_after_ctest} || true
+              sleep 2
+            fi
 
-              bash dockerfiles/init_dlrm.sh --mirror=0
-              bash ci/env/ci_fix_config.sh || true
+            cd /workspace
 
-              python3 ci/pack/runner.py build bin/ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/docker-image-ps-server.log --keep-alive
-              bash ci/test/test_op.sh
-            '
+            if [ -f build/lib/_recstore_ops.so ] && [ ! -f build/lib/lib_recstore_ops.so ]; then
+              cp -f build/lib/_recstore_ops.so build/lib/lib_recstore_ops.so
+            fi
+
+            if [ ! -f build/lib/lib_recstore_ops.so ]; then
+              echo "recstore ops shared library missing after build" >&2
+              ls -lah build/lib || true
+              find build -maxdepth 4 -name '*recstore*ops*.so*' -print || true
+              exit 1
+            fi
+
+            bash dockerfiles/init_dlrm.sh --mirror=0
+            bash ci/env/ci_fix_config.sh || true
+
+            python3 ci/pack/runner.py build bin/ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/docker-image-ps-server.log --keep-alive
+            bash ci/test/test_op.sh
+          '
 
       - name: Collect test logs from container
         if: always()
