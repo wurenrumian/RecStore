@@ -1,21 +1,22 @@
 name: Docker Image Test
 
 on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
   workflow_run:
     workflows: ["Docker Publish"]
     types: [completed]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Optional image tag to test (for example: manual, sha-abc1234). If not specified, will auto-detect from current commit or try latest available."
+        description: "Optional environment image tag (for example: latest, manual). If not specified, uses latest."
         required: false
         default: ""
         type: string
-      use_latest:
-        description: "Force use of latest available image instead of current commit"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   actions: read
@@ -25,7 +26,7 @@ permissions:
 jobs:
   test-image:
     name: Pull image and run tests
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository }}/recstore-devel
@@ -34,30 +35,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          # workflow_run 触发时固定拉取默认分支最新代码，镜像仅提供构建环境。
+          ref: ${{ github.event_name == 'workflow_run' && format('refs/heads/{0}', github.event.repository.default_branch) || github.ref }}
+          # third_party 已在发布镜像阶段缓存并在测试容器中恢复，这里仅拉取主仓库代码。
+          submodules: false
           fetch-depth: 0
 
       - name: Resolve image reference
         id: image
         env:
-          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
-          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_IMAGE_TAG: ${{ github.event.inputs.image_tag || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
+          CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           REPO_LOWER="$(echo "${IMAGE_REPO}" | tr '[:upper:]' '[:lower:]')"
-          if [ -n "${INPUT_IMAGE_TAG:-}" ]; then
-            TAG="${INPUT_IMAGE_TAG}"
+
+          if [ "${EVENT_NAME}" = "workflow_run" ] && [ -n "${WORKFLOW_RUN_HEAD_SHA}" ]; then
+            PRIMARY_SHA_TAG="sha-$(echo "${WORKFLOW_RUN_HEAD_SHA}" | cut -c1-7)"
           else
-            HEAD_SHA="${WORKFLOW_HEAD_SHA:-${GITHUB_SHA}}"
-            SHORT_SHA_7="$(echo "${HEAD_SHA}" | cut -c1-7)"
-            SHORT_SHA_12="$(echo "${HEAD_SHA}" | cut -c1-12)"
-            TAG="sha-${SHORT_SHA_7}"
-            echo "fallback_tag=sha-${SHORT_SHA_12}" >> "${GITHUB_OUTPUT}"
+            PRIMARY_SHA_TAG="sha-$(echo "${CURRENT_SHA}" | cut -c1-7)"
           fi
 
           echo "repo=${REPO_LOWER}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
-          echo "image=${REPO_LOWER}:${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "input_tag=${INPUT_IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "event_name=${EVENT_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "primary_sha_tag=${PRIMARY_SHA_TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -71,9 +75,9 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${{ steps.image.outputs.repo }}"
-          IMAGE="${{ steps.image.outputs.image }}"
-          FALLBACK_TAG="${{ steps.image.outputs.fallback_tag }}"
-          PRIMARY_TAG="${{ steps.image.outputs.tag }}"
+          INPUT_TAG="${{ steps.image.outputs.input_tag }}"
+          PRIMARY_SHA_TAG="${{ steps.image.outputs.primary_sha_tag }}"
+          EVENT_NAME="${{ steps.image.outputs.event_name }}"
 
           try_pull() {
             local tag_to_try=$1
@@ -87,18 +91,22 @@ jobs:
             return 1
           }
 
-          # Try primary tag (based on current commit)
-          if try_pull "${PRIMARY_TAG}"; then
+          # 用户显式指定 tag 时优先尝试。
+          if [ -n "${INPUT_TAG}" ] && try_pull "${INPUT_TAG}"; then
             exit 0
           fi
 
-          # Try 12-char sha fallback
-          if [ -n "${FALLBACK_TAG:-}" ] && try_pull "${FALLBACK_TAG}"; then
+          # 自动流程优先与触发提交对应的 sha 标签。
+          if try_pull "${PRIMARY_SHA_TAG}"; then
             exit 0
           fi
 
-          # Try manual tag (useful for workflow_dispatch)
-          if try_pull "manual"; then
+          if try_pull "latest"; then
+            exit 0
+          fi
+
+          # manual 仅用于 workflow_dispatch 手动触发兜底。
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && try_pull "manual"; then
             exit 0
           fi
 
@@ -124,8 +132,26 @@ jobs:
           PULLED_IMAGE="${TEST_IMAGE}"
 
           docker run -d --name "${TEST_CONTAINER}" --network host \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
             "${PULLED_IMAGE}" \
             bash -lc 'tail -f /dev/null'
+
+      - name: Restore initialized third_party cache
+        run: |
+          set -euo pipefail
+          docker exec "${TEST_CONTAINER}" bash -lc '
+            set -euo pipefail
+            CACHE_DIR="/opt/recstore-cache/third_party"
+            if [ ! -d "${CACHE_DIR}" ]; then
+              echo "No initialized third_party cache found in image. Continue without restore."
+              exit 0
+            fi
+
+            echo "Restoring initialized third_party from ${CACHE_DIR} ..."
+            rm -rf /workspace/third_party
+            cp -a "${CACHE_DIR}" /workspace/third_party
+            echo "Restore completed."
+          '
 
       - name: Build project inside container
         run: |
@@ -139,7 +165,12 @@ jobs:
             export GLOG_v=1
 
             cd /workspace
+            echo "Current commit under test:"
+            git rev-parse HEAD || true
+            echo "Verifying bRPC test source version in container..."
+            grep -n "kBrpcTestPort0\|kDistBrpcPort0" src/ps/brpc/*_test.cpp || true
             mkdir -p runner/logs
+            rm -rf build
             mkdir -p build
             cd build
             cmake -DENABLE_CUDA=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
