@@ -118,6 +118,15 @@ target_link_libraries(test_index PUBLIC
 )
 add_test(NAME test_index COMMAND test_index)
 
+add_executable(test_storage_cache_lru test_storage_cache_lru.cpp)
+target_link_libraries(test_storage_cache_lru PUBLIC
+    gtest
+    gtest_main
+    pthread
+    storage_cache_lru
+)
+add_test(NAME test_storage_cache_lru COMMAND test_storage_cache_lru)
+
 # report 单元测试
 if(CMAKE_BUILD_TYPE MATCHES "Debug" AND USE_PERF_REPORT)
     add_executable(test_report test_report.cpp)
