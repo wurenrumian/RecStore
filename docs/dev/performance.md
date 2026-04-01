@@ -14,7 +14,7 @@ cmake .. \
     -DUSE_PERF_REPORT=ON
 ```
 
-=== "本地结构化分析（推荐先用）"
+=== "本地分析"
 
     该模式无需依赖 ClickHouse/Grafana，可直接在模型训练时采集 `embupdate_stages` 真实链路数据，分析 update 在 OP 层、gRPC 客户端、gRPC 服务端各阶段耗时。
 
@@ -39,6 +39,33 @@ cmake .. \
     - 近似网络开销：`client_rpc_us - server_total_us`
     - 慢请求 TopN（按同一 trace 聚合）
     - 可直接二次分析的 CSV（如 `/tmp/embupdate_real.csv`）
+
+    ??? tip "DLRM 同源 mock demo"
+
+        目录：`model_zoo/rs_demo`
+
+        用途：
+        - 复用 DLRM 相同数据入口：`model_zoo/torchrec_dlrm/processed_day_0_data`
+        - 复用 DLRM 相同稀疏组织：26 特征 -> KJT
+        - 复用 DLRM 相同 fused id 规则：`(table_idx << fuse_k) + id`
+        - 产出 `op_client / brpc_client / brpc_server` 三段 `embupdate_stages`
+
+        最小运行：
+
+        ```bash
+        python3 model_zoo/rs_demo/run_mock_stress.py \
+          --steps 60 \
+          --batch-size 4096 \
+          --num-embeddings 200000 \
+          --embedding-dim 128 \
+          --jsonl /tmp/rs_demo_events.jsonl \
+          --csv /tmp/rs_demo_embupdate.csv
+        ```
+
+        必看输出：
+        - JSONL：`/tmp/rs_demo_events.jsonl`
+        - CSV：`/tmp/rs_demo_embupdate.csv`
+        - 服务端日志：`/tmp/rs_demo_ps_server.log`
 
 === "Grafana 在线看板（ClickHouse）"
 
