@@ -10,6 +10,11 @@
 #include "brpc_ps_client.h"
 #include "test/server_mgr/ps_server_launcher.h"
 
+namespace {
+constexpr int kBrpcTestPort0 = 16123;
+constexpr int kBrpcTestPort1 = 16124;
+}
+
 static bool
 check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
   std::cout << "a: ";
@@ -50,7 +55,8 @@ static bool check_eq_2d(std::vector<std::vector<float>>& a,
 void TestFactoryClient() {
   std::cout << "=== Testing Factory Pattern (bRPC) ===" << std::endl;
 
-  json config = {{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 1}};
+  json config = {
+      {"host", "127.0.0.1"}, {"port", kBrpcTestPort0}, {"shard", 1}};
 
   std::unique_ptr<recstore::BasePSClient> client(
       base::Factory<recstore::BasePSClient, json>::NewInstance("brpc", config));
@@ -98,7 +104,7 @@ void TestFactoryClient() {
 void TestDirectClient() {
   std::cout << "\n=== Testing Direct bRPC Client Creation ===" << std::endl;
 
-  BRPCParameterClient client("127.0.0.1", 15000, 1);
+  BRPCParameterClient client("127.0.0.1", kBrpcTestPort0, 1);
 
   client.ClearPS();
   // assert empty
@@ -129,7 +135,7 @@ void TestDirectClient() {
 void TestPrefetch() {
   std::cout << "\n=== Testing bRPC Prefetch ===" << std::endl;
 
-  BRPCParameterClient client("127.0.0.1", 15000, 1);
+  BRPCParameterClient client("127.0.0.1", kBrpcTestPort0, 1);
 
   client.ClearPS();
 
@@ -166,8 +172,10 @@ int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   xmh::Reporter::StartReportThread(2000);
 
-  recstore::test::ScopedPSServer server(
-      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment(), true);
+  auto launch_options = recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
+  launch_options.override_ps_type = "BRPC";
+  launch_options.override_ports = {kBrpcTestPort0, kBrpcTestPort1};
+  recstore::test::ScopedPSServer server(launch_options, true);
 
   std::cout << "=== bRPC 参数服务器客户端测试 ===" << std::endl;
   std::cout << std::endl;
