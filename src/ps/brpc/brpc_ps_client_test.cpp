@@ -13,7 +13,7 @@
 namespace {
 constexpr int kBrpcTestPort0 = 16123;
 constexpr int kBrpcTestPort1 = 16124;
-}
+} // namespace
 
 static bool
 check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
@@ -55,8 +55,7 @@ static bool check_eq_2d(std::vector<std::vector<float>>& a,
 void TestFactoryClient() {
   std::cout << "=== Testing Factory Pattern (bRPC) ===" << std::endl;
 
-  json config = {
-      {"host", "127.0.0.1"}, {"port", kBrpcTestPort0}, {"shard", 1}};
+  json config = {{"host", "127.0.0.1"}, {"port", kBrpcTestPort0}, {"shard", 1}};
 
   std::unique_ptr<recstore::BasePSClient> client(
       base::Factory<recstore::BasePSClient, json>::NewInstance("brpc", config));
@@ -172,9 +171,10 @@ int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   xmh::Reporter::StartReportThread(2000);
 
-  auto launch_options = recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
+  auto launch_options =
+      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
   launch_options.override_ps_type = "BRPC";
-  launch_options.override_ports = {kBrpcTestPort0, kBrpcTestPort1};
+  launch_options.override_ports   = {kBrpcTestPort0, kBrpcTestPort1};
   recstore::test::ScopedPSServer server(launch_options, true);
 
   std::cout << "=== bRPC 参数服务器客户端测试 ===" << std::endl;

@@ -16,7 +16,7 @@ using namespace recstore;
 namespace {
 constexpr int kDistBrpcPort0 = 16133;
 constexpr int kDistBrpcPort1 = 16134;
-}
+} // namespace
 
 static bool
 check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
@@ -228,9 +228,10 @@ int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   Reporter::StartReportThread(2000);
 
-  auto launch_options = recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
+  auto launch_options =
+      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
   launch_options.override_ps_type = "BRPC";
-  launch_options.override_ports = {kDistBrpcPort0, kDistBrpcPort1};
+  launch_options.override_ports   = {kDistBrpcPort0, kDistBrpcPort1};
   recstore::test::ScopedPSServer server(launch_options, true);
 
   std::cout << "=== 分布式 bRPC 客户端测试 ===" << std::endl;
