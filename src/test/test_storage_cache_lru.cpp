@@ -92,7 +92,6 @@ TEST(StorageLRUCacheTest, FactoryCreatesPolicyFromNameCaseInsensitive) {
 }
 
 TEST(StorageLRUCacheTest, FactoryRejectsUnsupportedPolicy) {
-  EXPECT_THROW(
-      storage::cache::CreateCachePolicy<uint64_t>("fifo", 16),
-      std::invalid_argument);
+  EXPECT_THROW(storage::cache::CreateCachePolicy<uint64_t>("fifo", 16),
+               std::invalid_argument);
 }

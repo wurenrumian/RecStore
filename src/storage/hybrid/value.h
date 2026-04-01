@@ -347,7 +347,8 @@ private:
 
       // 1) 先逐出到低水位以下，避免在高水位阶段还去做提升
       if (shm_used_bytes_.load(std::memory_order_relaxed) > LowWatermark()) {
-        std::vector<Key_t> victim_keys = cache_policy_->Evict(kEvictionBatchSize);
+        std::vector<Key_t> victim_keys =
+            cache_policy_->Evict(kEvictionBatchSize);
         for (const auto& victim_key : victim_keys) {
           if (shm_used_bytes_.load(std::memory_order_relaxed) <= LowWatermark())
             break;
