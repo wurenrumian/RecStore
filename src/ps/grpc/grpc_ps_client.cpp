@@ -47,7 +47,7 @@ int BuildUpdateBlocksFromFlat(
     const float* grads,
     int64_t num_rows,
     int64_t embedding_dim,
-    std::vector<std::string>* blocks) {
+    ParameterCompressor* compressor) {
   if (grads == nullptr) {
     LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
     return -1;
@@ -63,15 +63,13 @@ int BuildUpdateBlocksFromFlat(
     return -1;
   }
 
-  ParameterCompressor compressor;
   for (int64_t i = 0; i < num_rows; ++i) {
     ParameterPack pack;
     pack.key      = keys[static_cast<size_t>(i)];
     pack.dim      = embedding_dim;
     pack.emb_data = grads + i * embedding_dim;
-    compressor.AddItem(pack, blocks);
+    compressor->AddItem(pack, nullptr);
   }
-  compressor.ToBlock(blocks);
   return 0;
 }
 
@@ -741,19 +739,17 @@ int GRPCParameterClient::UpdateParameter(
   }
 
   ParameterCompressor compressor;
-  std::vector<std::string> blocks;
   for (size_t i = 0; i < keys.Size(); ++i) {
     ParameterPack pack;
     pack.key      = keys[i];
     pack.dim      = grads->at(i).size();
     pack.emb_data = grads->at(i).data();
-    compressor.AddItem(pack, &blocks);
+    compressor.AddItem(pack, nullptr);
   }
-  compressor.ToBlock(&blocks);
 #ifdef ENABLE_PERF_REPORT
   auto serialize_done_time = std::chrono::high_resolution_clock::now();
 #endif
-  if (blocks.empty()) {
+  if (keys.Size() == 0) {
     LOG(WARNING) << "UpdateParameter no gradients to send";
     return 0;
   }
@@ -761,7 +757,11 @@ int GRPCParameterClient::UpdateParameter(
   UpdateParameterRequest request;
   UpdateParameterResponse response;
   request.set_table_name(table_name);
-  request.mutable_gradients()->swap(blocks[0]);
+  compressor.ToBlock(request.mutable_gradients());
+  if (request.gradients().empty()) {
+    LOG(WARNING) << "UpdateParameter no serialized gradients payload";
+    return 0;
+  }
 
   grpc::ClientContext context;
 #ifdef ENABLE_PERF_REPORT
@@ -833,22 +833,21 @@ int GRPCParameterClient::UpdateParameterFlat(
     return 0;
   }
 
-  std::vector<std::string> blocks;
+  ParameterCompressor compressor;
   if (BuildUpdateBlocksFromFlat(
-          keys, grads, num_rows, embedding_dim, &blocks) != 0) {
+          keys, grads, num_rows, embedding_dim, &compressor) != 0) {
     return -1;
   }
 #ifdef ENABLE_PERF_REPORT
   auto serialize_done_time = std::chrono::high_resolution_clock::now();
 #endif
-  if (blocks.empty()) {
-    return 0;
-  }
-
   UpdateParameterRequest request;
   UpdateParameterResponse response;
   request.set_table_name(table_name);
-  request.mutable_gradients()->swap(blocks[0]);
+  compressor.ToBlock(request.mutable_gradients());
+  if (request.gradients().empty()) {
+    return 0;
+  }
 
   grpc::ClientContext context;
 #ifdef ENABLE_PERF_REPORT
