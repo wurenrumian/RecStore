@@ -439,13 +439,13 @@ void BRPCParameterServiceImpl::UpdateParameter(
   brpc::Controller* cntl = static_cast<brpc::Controller*>(controller);
 
 #ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time   = std::chrono::high_resolution_clock::now();
   uint64_t trace_id = 0;
   const std::string* header_trace =
       cntl->http_request().GetHeader("x-recstore-trace-id");
   if (header_trace != nullptr && !header_trace->empty()) {
-    trace_id =
-        static_cast<uint64_t>(std::strtoull(header_trace->c_str(), nullptr, 10));
+    trace_id = static_cast<uint64_t>(
+        std::strtoull(header_trace->c_str(), nullptr, 10));
   }
 #endif
   bool success = false;
@@ -479,7 +479,7 @@ void BRPCParameterServiceImpl::UpdateParameter(
 #ifdef ENABLE_PERF_REPORT
     before_cache_update_time = std::chrono::high_resolution_clock::now();
 #endif
-    success                  = cache_ps_->UpdateParameter(table_name, reader, 0);
+    success = cache_ps_->UpdateParameter(table_name, reader, 0);
 
     FB_LOG_EVERY_MS(INFO, 2000)
         << "UpdateParameter: table=" << table_name << ", keys=" << size;
@@ -517,9 +517,7 @@ void BRPCParameterServiceImpl::UpdateParameter(
           end_time - before_cache_update_time)
           .count();
   const uint64_t effective_trace_id =
-      trace_id == 0
-          ? static_cast<uint64_t>(start_us_for_key)
-          : trace_id;
+      trace_id == 0 ? static_cast<uint64_t>(start_us_for_key) : trace_id;
   std::string update_stage_id =
       "brpc_server::EmbUpdate|" + std::to_string(effective_trace_id);
   report("embupdate_stages",

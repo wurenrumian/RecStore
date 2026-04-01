@@ -918,7 +918,7 @@ int BRPCParameterClient::UpdateParameter(
     const base::ConstArray<uint64_t>& keys,
     const std::vector<std::vector<float>>* grads) {
 #ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time         = std::chrono::high_resolution_clock::now();
   const uint64_t trace_id = recstore::g_trace_id;
 #endif
   if (grads == nullptr) {
@@ -955,8 +955,7 @@ int BRPCParameterClient::UpdateParameter(
 #ifdef ENABLE_PERF_REPORT
   if (trace_id != 0) {
     cntl.http_request().SetHeader(
-        "x-recstore-trace-id",
-        std::to_string(trace_id));
+        "x-recstore-trace-id", std::to_string(trace_id));
   }
   auto rpc_start_time = std::chrono::high_resolution_clock::now();
 #endif
@@ -1024,7 +1023,7 @@ int BRPCParameterClient::UpdateParameterFlat(
     int64_t num_rows,
     int64_t embedding_dim) {
 #ifdef ENABLE_PERF_REPORT
-  auto start_time = std::chrono::high_resolution_clock::now();
+  auto start_time         = std::chrono::high_resolution_clock::now();
   const uint64_t trace_id = recstore::g_trace_id;
 #endif
   if (keys.Size() == 0) {
@@ -1048,8 +1047,7 @@ int BRPCParameterClient::UpdateParameterFlat(
 #ifdef ENABLE_PERF_REPORT
   if (trace_id != 0) {
     cntl.http_request().SetHeader(
-        "x-recstore-trace-id",
-        std::to_string(trace_id));
+        "x-recstore-trace-id", std::to_string(trace_id));
   }
   auto rpc_start_time = std::chrono::high_resolution_clock::now();
 #endif
