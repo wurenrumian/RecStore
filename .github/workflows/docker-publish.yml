@@ -143,6 +143,7 @@ jobs:
           tags: |
             type=ref,event=tag
             type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref_name == github.event.repository.default_branch }}
             type=raw,value=manual,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Push final image tags
