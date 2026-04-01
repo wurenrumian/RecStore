@@ -119,6 +119,49 @@ def summarize_metric(values: List[float]) -> str:
     )
 
 
+def non_negative(v: float) -> float:
+    return v if v >= 0 else 0.0
+
+
+def derive_chain_metrics(metrics: Dict[str, float]) -> Dict[str, float]:
+    """
+    Derive node-level latency decomposition for one merged request trace.
+    """
+    op_total = metrics.get("op_total_us")
+    op_validate = metrics.get("op_validate_us")
+    client_total = metrics.get("client_total_us")
+    client_serialize = metrics.get("client_serialize_us")
+    client_rpc = metrics.get("client_rpc_us")
+    server_total = metrics.get("server_total_us")
+    server_backend = metrics.get("server_backend_update_us")
+
+    out: Dict[str, float] = {}
+    if op_total is not None:
+        out["compute_op_total_us"] = op_total
+    if op_validate is not None:
+        out["compute_op_validate_us"] = op_validate
+    if op_total is not None and op_validate is not None:
+        out["compute_op_non_validate_us"] = non_negative(op_total - op_validate)
+
+    if client_serialize is not None:
+        out["client_serialize_us"] = client_serialize
+    if client_total is not None and client_serialize is not None and client_rpc is not None:
+        out["client_framework_overhead_us"] = non_negative(
+            client_total - client_serialize - client_rpc
+        )
+
+    if client_rpc is not None and server_total is not None:
+        out["network_transport_us"] = non_negative(client_rpc - server_total)
+    if server_total is not None and server_backend is not None:
+        out["server_framework_overhead_us"] = non_negative(server_total - server_backend)
+    if server_backend is not None:
+        out["storage_backend_update_us"] = server_backend
+
+    if op_total is not None and client_total is not None:
+        out["op_wrapper_overhead_us"] = non_negative(op_total - client_total)
+    return out
+
+
 def build_trace_map(events: List[dict], trace_prefix: str) -> Dict[str, Dict[str, float]]:
     by_trace: Dict[str, Dict[str, float]] = {}
     for e in events:
@@ -281,6 +324,34 @@ def print_request_view(merged: Dict[str, Dict[str, float]], top_n: int) -> None:
         )
 
 
+def print_chain_breakdown(merged: Dict[str, Dict[str, float]]) -> None:
+    if not merged:
+        return
+    buckets: Dict[str, List[float]] = {}
+    for metrics in merged.values():
+        derived = derive_chain_metrics(metrics)
+        for k, v in derived.items():
+            buckets.setdefault(k, []).append(v)
+
+    print("")
+    print("链路节点耗时拆分（按请求聚合）:")
+    ordered = [
+        "compute_op_total_us",
+        "compute_op_validate_us",
+        "compute_op_non_validate_us",
+        "op_wrapper_overhead_us",
+        "client_serialize_us",
+        "client_framework_overhead_us",
+        "network_transport_us",
+        "server_framework_overhead_us",
+        "storage_backend_update_us",
+    ]
+    for key in ordered:
+        vals = buckets.get(key, [])
+        if vals:
+            print(f"  - {key}: {summarize_metric(vals)}")
+
+
 def export_csv(by_trace: Dict[str, Dict[str, float]], output_path: str) -> None:
     columns = [
         "unique_id",
@@ -295,6 +366,14 @@ def export_csv(by_trace: Dict[str, Dict[str, float]], output_path: str) -> None:
         "client_request_size",
         "server_request_size",
         "network_framework_us_approx",
+        "compute_op_total_us",
+        "compute_op_validate_us",
+        "compute_op_non_validate_us",
+        "op_wrapper_overhead_us",
+        "client_framework_overhead_us",
+        "network_transport_us",
+        "server_framework_overhead_us",
+        "storage_backend_update_us",
     ]
 
     parent = os.path.dirname(output_path)
@@ -324,7 +403,28 @@ def export_csv(by_trace: Dict[str, Dict[str, float]], output_path: str) -> None:
                 "client_request_size": metrics.get("client_request_size", ""),
                 "server_request_size": metrics.get("server_request_size", ""),
                 "network_framework_us_approx": network_approx,
+                "compute_op_total_us": "",
+                "compute_op_validate_us": "",
+                "compute_op_non_validate_us": "",
+                "op_wrapper_overhead_us": "",
+                "client_framework_overhead_us": "",
+                "network_transport_us": "",
+                "server_framework_overhead_us": "",
+                "storage_backend_update_us": "",
             }
+            derived = derive_chain_metrics(metrics)
+            for dk in (
+                "compute_op_total_us",
+                "compute_op_validate_us",
+                "compute_op_non_validate_us",
+                "op_wrapper_overhead_us",
+                "client_framework_overhead_us",
+                "network_transport_us",
+                "server_framework_overhead_us",
+                "storage_backend_update_us",
+            ):
+                if dk in derived:
+                    row[dk] = derived[dk]
             writer.writerow(row)
 
 
@@ -340,6 +440,7 @@ def main() -> None:
     print_top_slow(by_trace, args.top)
     merged = build_merged_request_map(by_trace)
     print_request_view(merged, args.top)
+    print_chain_breakdown(merged)
     if args.group_by_prefix:
         print_group_stats(by_trace)
     if args.export_csv:
