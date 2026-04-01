@@ -11,6 +11,7 @@ if [[ -f "${CONFIG_JSON_PATH}" ]]; then
             | .cache_ps.max_batch_keys_size = 128
             | .cache_ps.num_threads = 4
             | .distributed_client.max_keys_per_request = 32
+            | .cache_ps.base_kv_config.path = "/tmp/recstore_data"
             | .cache_ps.base_kv_config.index_type = "DRAM"
             | .cache_ps.base_kv_config.value_type = "SSD"
             | .cache_ps.base_kv_config.type = "DRAM"
@@ -29,6 +30,7 @@ try:
     data['cache_ps']['max_batch_keys_size'] = 128
     data['cache_ps']['num_threads'] = 4
     data['distributed_client']['max_keys_per_request'] = 32
+    data['cache_ps']['base_kv_config']['path'] = '/tmp/recstore_data'
     data['cache_ps']['base_kv_config']['index_type'] = "DRAM"
     data['cache_ps']['base_kv_config']['value_type'] = "SSD"
     data['cache_ps']['base_kv_config']['type'] = "DRAM"
@@ -44,3 +46,5 @@ PY
 else
     echo "recstore_config.json not found at ${CONFIG_JSON_PATH}; skipping capacity update."
 fi
+
+mkdir -p /tmp/recstore_data || true

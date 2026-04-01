@@ -108,6 +108,16 @@ jobs:
           docker cp "${GITHUB_WORKSPACE}/." "${INIT_CONTAINER}:/workspace"
           docker start "${INIT_CONTAINER}"
           docker exec "${INIT_CONTAINER}" bash -lc "set -euo pipefail; cd /workspace; export DEBIAN_FRONTEND=noninteractive; ${INIT_ARGS} bash dockerfiles/init_env_inside_docker.sh"
+          docker exec "${INIT_CONTAINER}" bash -lc '
+            set -euo pipefail
+            mkdir -p /opt/recstore-cache
+            rm -rf /opt/recstore-cache/third_party
+            cp -a /workspace/third_party /opt/recstore-cache/third_party
+            if [ -f /workspace/.gitmodules ]; then
+              cp -a /workspace/.gitmodules /opt/recstore-cache/.gitmodules
+            fi
+            echo "Cached initialized third_party at /opt/recstore-cache/third_party"
+          '
           docker exec "${INIT_CONTAINER}" bash -lc 'rm -rf /tmp/env_setup_markers'
           docker commit "${INIT_CONTAINER}" "${FINAL_IMAGE}"
           docker rm -f "${INIT_CONTAINER}" || true
@@ -133,6 +143,7 @@ jobs:
           tags: |
             type=ref,event=tag
             type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref_name == github.event.repository.default_branch }}
             type=raw,value=manual,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Push final image tags

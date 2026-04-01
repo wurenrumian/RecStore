@@ -13,6 +13,11 @@
 using namespace xmh;
 using namespace recstore;
 
+namespace {
+constexpr int kDistBrpcPort0 = 16133;
+constexpr int kDistBrpcPort1 = 16134;
+} // namespace
+
 static bool
 check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
   if (a.size() < b.size())
@@ -43,8 +48,8 @@ void TestBasicConfig() {
   json recstore_config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kDistBrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kDistBrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -63,8 +68,8 @@ void TestFactoryClient() {
   json config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kDistBrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kDistBrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -136,8 +141,8 @@ void TestDirectClient() {
   json config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kDistBrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kDistBrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -183,8 +188,8 @@ void TestLargeBatch() {
   json config = {
       {"distributed_client",
        {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", 15001}, {"shard", 1}}}},
+         {{{"host", "127.0.0.1"}, {"port", kDistBrpcPort0}, {"shard", 0}},
+          {{"host", "127.0.0.1"}, {"port", kDistBrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"}}}};
 
@@ -223,8 +228,11 @@ int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   Reporter::StartReportThread(2000);
 
-  recstore::test::ScopedPSServer server(
-      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment(), true);
+  auto launch_options =
+      recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
+  launch_options.override_ps_type = "BRPC";
+  launch_options.override_ports   = {kDistBrpcPort0, kDistBrpcPort1};
+  recstore::test::ScopedPSServer server(launch_options, true);
 
   std::cout << "=== 分布式 bRPC 客户端测试 ===" << std::endl;
   std::cout << std::endl;
