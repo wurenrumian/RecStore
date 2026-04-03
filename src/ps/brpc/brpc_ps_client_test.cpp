@@ -84,10 +84,10 @@ void TestFactoryClient() {
     CHECK(check_eq_2d(values, emptyvalues));
 
     std::cout << "load fake data" << std::endl;
-    brpc_client->LoadFakeData(100);
+    CHECK(brpc_client->LoadFakeData(100));
     std::cout << "load fake data done" << std::endl;
     std::cout << "dump fake data" << std::endl;
-    brpc_client->DumpFakeData(100);
+    CHECK(brpc_client->DumpFakeData(100));
     std::cout << "dump fake data done" << std::endl;
 
     std::cout << "All bRPC operations passed!" << std::endl;

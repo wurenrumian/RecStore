@@ -654,7 +654,17 @@ bool GRPCParameterClient::LoadFakeData(int64_t n) {
   request.add_arg1(&n, sizeof(int64_t));
   grpc::ClientContext context;
   grpc::Status status = stubs_[0]->Command(&context, request, &response);
-  return status.ok();
+  if (!status.ok()) {
+    LOG(ERROR) << "gRPC LoadFakeData failed: " << status.error_code() << " "
+               << status.error_message();
+    return false;
+  }
+  if (response.reply().size() != static_cast<size_t>(n)) {
+    LOG(ERROR) << "gRPC LoadFakeData reply size mismatch: expected " << n
+               << ", got " << response.reply().size();
+    return false;
+  }
+  return true;
 }
 
 // Write n bytes(random generated) into the server
@@ -662,10 +672,19 @@ bool GRPCParameterClient::DumpFakeData(int64_t n) {
   CommandRequest request;
   CommandResponse response;
   request.set_command(PSCommand::DUMP_FAKE_DATA);
-  request.add_arg1(std::string(static_cast<size_t>(n), '\xab'));
+  request.add_arg1(&n, sizeof(int64_t));
   grpc::ClientContext context;
   grpc::Status status = stubs_[0]->Command(&context, request, &response);
-  return status.ok();
+  if (!status.ok()) {
+    LOG(ERROR) << "gRPC DumpFakeData failed: " << status.error_code() << " "
+               << status.error_message();
+    return false;
+  }
+  if (response.reply() != "ok") {
+    LOG(ERROR) << "gRPC DumpFakeData unexpected reply: " << response.reply();
+    return false;
+  }
+  return true;
 }
 
 bool GRPCParameterClient::LoadCkpt(
@@ -689,10 +708,14 @@ bool GRPCParameterClient::LoadCkpt(
 bool GRPCParameterClient::PutParameter(
     const std::vector<uint64_t>& keys,
     const std::vector<std::vector<float>>& values) {
+  if (keys.size() != values.size()) {
+    LOG(ERROR) << "PutParameter keys/values size mismatch: " << keys.size()
+               << " vs " << values.size();
+    return false;
+  }
   for (int start = 0, index = 0; start < keys.size();
        start += MAX_PARAMETER_BATCH, ++index) {
     int key_size = std::min((int)(keys.size() - start), MAX_PARAMETER_BATCH);
-    auto ret     = std::make_shared<std::promise<bool>>();
     PutParameterRequest request;
     PutParameterResponse response;
     ParameterCompressor compressor;
@@ -712,11 +735,11 @@ bool GRPCParameterClient::PutParameter(
     grpc::ClientContext context;
     grpc::Status status = stubs_[0]->PutParameter(&context, request, &response);
     if (status.ok()) {
-      ret->set_value(true);
+      continue;
     } else {
       std::cout << status.error_code() << ": " << status.error_message()
                 << std::endl;
-      ret->set_value(false);
+      return false;
     }
   }
   return true;

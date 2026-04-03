@@ -781,6 +781,11 @@ bool BRPCParameterClient::LoadFakeData(int64_t data) {
     LOG(ERROR) << "bRPC LoadFakeData failed: " << cntl.ErrorText();
     return false;
   }
+  if (response.reply().size() != static_cast<size_t>(data)) {
+    LOG(ERROR) << "bRPC LoadFakeData reply size mismatch: expected " << data
+               << ", got " << response.reply().size();
+    return false;
+  }
   return true;
 }
 
@@ -796,6 +801,10 @@ bool BRPCParameterClient::DumpFakeData(int64_t n) {
 
   if (cntl.Failed()) {
     LOG(ERROR) << "bRPC DumpFakeData failed: " << cntl.ErrorText();
+    return false;
+  }
+  if (response.reply() != "ok") {
+    LOG(ERROR) << "bRPC DumpFakeData unexpected reply: " << response.reply();
     return false;
   }
   return true;

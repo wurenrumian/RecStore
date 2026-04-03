@@ -5,6 +5,7 @@
 #include <gflags/gflags.h>
 
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -295,6 +296,7 @@ void BRPCParameterServiceImpl::Command(
     CommandResponse* response,
     google::protobuf::Closure* done) {
   brpc::ClosureGuard done_guard(done);
+  brpc::Controller* cntl = static_cast<brpc::Controller*>(controller);
 
   if (request->command() == recstoreps_brpc::PSCommand::CLEAR_PS) {
     LOG(WARNING) << "[PS Command] Clear All";
@@ -322,17 +324,23 @@ void BRPCParameterServiceImpl::Command(
         static_cast<size_t>(request->arg1(0).size()) != sizeof(int64_t)) {
       LOG(ERROR) << "LOAD_FAKE_DATA: arg1 must be one " << sizeof(int64_t)
                  << "-byte int64_t (requested reply payload size)";
+      cntl->SetFailed(EINVAL, "LOAD_FAKE_DATA invalid arg1 size");
+      return;
     }
     int64_t payload_bytes = 0;
     std::memcpy(&payload_bytes, request->arg1(0).data(), sizeof(int64_t));
     if (payload_bytes < 0) {
       LOG(ERROR) << "LOAD_FAKE_DATA: payload_bytes must be non-negative, got "
                  << payload_bytes;
+      cntl->SetFailed(EINVAL, "LOAD_FAKE_DATA payload_bytes must be non-negative");
+      return;
     }
     constexpr int64_t kMaxReplyPayload = 16 * 1024 * 1024;
     if (payload_bytes > kMaxReplyPayload) {
       LOG(ERROR) << "LOAD_FAKE_DATA: payload_bytes " << payload_bytes
                  << " exceeds cap " << kMaxReplyPayload;
+      cntl->SetFailed(EINVAL, "LOAD_FAKE_DATA payload too large");
+      return;
     }
     std::string fake(static_cast<size_t>(payload_bytes), '\xab');
     response->set_reply(std::move(fake));
@@ -341,18 +349,26 @@ void BRPCParameterServiceImpl::Command(
         static_cast<size_t>(request->arg1(0).size()) != sizeof(int64_t)) {
       LOG(ERROR) << "DUMP_FAKE_DATA: arg1 must be one " << sizeof(int64_t)
                  << "-byte int64_t (payload bytes n)";
+      cntl->SetFailed(EINVAL, "DUMP_FAKE_DATA invalid arg1 size");
+      return;
     }
     int64_t n = 0;
     std::memcpy(&n, request->arg1(0).data(), sizeof(int64_t));
     if (n <= 0) {
       LOG(ERROR) << "DUMP_FAKE_DATA: n must be positive";
+      cntl->SetFailed(EINVAL, "DUMP_FAKE_DATA n must be positive");
+      return;
     }
     if (n % static_cast<int64_t>(sizeof(float)) != 0) {
       LOG(ERROR) << "DUMP_FAKE_DATA: n must be a multiple of " << sizeof(float);
+      cntl->SetFailed(EINVAL, "DUMP_FAKE_DATA n must be multiple of sizeof(float)");
+      return;
     }
     constexpr int64_t kMaxDumpBytes = 64 * 1024 * 1024;
     if (n > kMaxDumpBytes) {
       LOG(ERROR) << "DUMP_FAKE_DATA: n exceeds cap " << kMaxDumpBytes;
+      cntl->SetFailed(EINVAL, "DUMP_FAKE_DATA n exceeds cap");
+      return;
     }
     response->set_reply("ok");
   } else {

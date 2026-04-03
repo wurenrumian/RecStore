@@ -59,6 +59,10 @@ DistributedBRPCParameterClient::DistributedBRPCParameterClient(json config)
   num_shards_           = client_config["num_shards"].get<int>();
   max_keys_per_request_ = client_config.value("max_keys_per_request", 500);
   hash_method_          = client_config.value("hash_method", "city_hash");
+  if (max_keys_per_request_ <= 0) {
+    LOG(FATAL) << "Invalid max_keys_per_request: " << max_keys_per_request_
+               << ", must be > 0";
+  }
 
   // 解析服务器配置
   auto servers = client_config["servers"];
@@ -143,14 +147,6 @@ void DistributedBRPCParameterClient::PartitionKeys(
 
     partitioned_key_buffer_[shard_id].push_back(key);
     key_index_mapping_[shard_id].push_back(i);
-
-    if (partitioned_key_buffer_[shard_id].size() >
-        static_cast<size_t>(max_keys_per_request_)) {
-      partitioned_key_buffer_[shard_id].resize(max_keys_per_request_);
-      key_index_mapping_[shard_id].resize(max_keys_per_request_);
-      LOG(WARNING) << "Truncated keys for shard " << shard_id << " to "
-                   << max_keys_per_request_;
-    }
   }
 
   partitioned_keys = partitioned_key_buffer_;
@@ -191,12 +187,29 @@ bool DistributedBRPCParameterClient::GetParameter(
     auto* client     = clients_[client_index].get();
 
     // 异步请求
-    futures.push_back(
-        std::async(std::launch::async, [=, &partitioned_results]() {
-          base::ConstArray<uint64_t> shard_keys(partitioned_keys[shard_id]);
-          return client->GetParameter(
-              shard_keys, &partitioned_results[shard_id]);
-        }));
+    futures.push_back(std::async(std::launch::async,
+                                 [=, &partitioned_keys, &partitioned_results]() {
+      const auto& shard_keys_vec = partitioned_keys[shard_id];
+      auto& shard_result_vec = partitioned_results[shard_id];
+      shard_result_vec.clear();
+      shard_result_vec.reserve(shard_keys_vec.size());
+
+      for (size_t start = 0; start < shard_keys_vec.size();
+           start += static_cast<size_t>(max_keys_per_request_)) {
+        size_t end = std::min(
+            start + static_cast<size_t>(max_keys_per_request_),
+            shard_keys_vec.size());
+        base::ConstArray<uint64_t> shard_chunk(
+            shard_keys_vec.data() + start, static_cast<int>(end - start));
+        std::vector<std::vector<float>> chunk_result;
+        if (!client->GetParameter(shard_chunk, &chunk_result)) {
+          return 0;
+        }
+        shard_result_vec.insert(
+            shard_result_vec.end(), chunk_result.begin(), chunk_result.end());
+      }
+      return 1;
+    }));
   }
 
   // 等待所有请求完成
@@ -294,8 +307,28 @@ int DistributedBRPCParameterClient::GetParameter(
     return -1;
   }
 
-  // 将 vector 结果复制到连续内存
-  MergeResultsToArray(keys, {{result_vectors}}, values);
+  if (keys.Size() == 0) {
+    return 0;
+  }
+  int emb_dim = 0;
+  for (const auto& row : result_vectors) {
+    if (!row.empty()) {
+      emb_dim = static_cast<int>(row.size());
+      break;
+    }
+  }
+  if (emb_dim == 0) {
+    LOG(WARNING) << "No valid embeddings found";
+    return 0;
+  }
+
+  for (size_t i = 0; i < result_vectors.size(); ++i) {
+    const auto& row = result_vectors[i];
+    if (row.empty()) {
+      continue;
+    }
+    std::copy(row.begin(), row.end(), values + i * emb_dim);
+  }
   return 0;
 }
 
@@ -341,11 +374,25 @@ int DistributedBRPCParameterClient::PutParameter(
     int client_index = it->second;
     auto* client     = clients_[client_index].get();
 
-    futures.push_back(std::async(
-        std::launch::async, [=, &partitioned_keys, &partitioned_values]() {
-          base::ConstArray<uint64_t> shard_keys(partitioned_keys[shard_id]);
-          return client->PutParameter(shard_keys, partitioned_values[shard_id]);
-        }));
+    futures.push_back(std::async(std::launch::async,
+                                 [=, &partitioned_keys, &partitioned_values]() {
+      const auto& shard_keys_vec = partitioned_keys[shard_id];
+      const auto& shard_vals_vec = partitioned_values[shard_id];
+      for (size_t start = 0; start < shard_keys_vec.size();
+           start += static_cast<size_t>(max_keys_per_request_)) {
+        size_t end = std::min(
+            start + static_cast<size_t>(max_keys_per_request_),
+            shard_keys_vec.size());
+        base::ConstArray<uint64_t> shard_chunk(
+            shard_keys_vec.data() + start, static_cast<int>(end - start));
+        std::vector<std::vector<float>> value_chunk(
+            shard_vals_vec.begin() + start, shard_vals_vec.begin() + end);
+        if (client->PutParameter(shard_chunk, value_chunk) != 1) {
+          return 0;
+        }
+      }
+      return 1;
+    }));
   }
 
   // 等待所有请求完成
@@ -489,12 +536,25 @@ int DistributedBRPCParameterClient::UpdateParameter(
     int client_index = it->second;
     auto* client     = clients_[client_index].get();
 
-    futures.push_back(std::async(
-        std::launch::async, [=, &partitioned_keys, &partitioned_grads]() {
-          base::ConstArray<uint64_t> shard_keys(partitioned_keys[shard_id]);
-          return client->UpdateParameter(
-              table_name, shard_keys, &partitioned_grads[shard_id]);
-        }));
+    futures.push_back(std::async(std::launch::async,
+                                 [=, &partitioned_keys, &partitioned_grads]() {
+      const auto& shard_keys_vec = partitioned_keys[shard_id];
+      const auto& shard_grads_vec = partitioned_grads[shard_id];
+      for (size_t start = 0; start < shard_keys_vec.size();
+           start += static_cast<size_t>(max_keys_per_request_)) {
+        size_t end = std::min(
+            start + static_cast<size_t>(max_keys_per_request_),
+            shard_keys_vec.size());
+        base::ConstArray<uint64_t> shard_chunk(
+            shard_keys_vec.data() + start, static_cast<int>(end - start));
+        std::vector<std::vector<float>> grad_chunk(
+            shard_grads_vec.begin() + start, shard_grads_vec.begin() + end);
+        if (client->UpdateParameter(table_name, shard_chunk, &grad_chunk) != 0) {
+          return -1;
+        }
+      }
+      return 0;
+    }));
   }
 
   for (auto& future : futures) {
