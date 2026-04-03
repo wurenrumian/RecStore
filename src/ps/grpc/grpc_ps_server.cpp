@@ -266,8 +266,8 @@ private:
       constexpr int64_t kMaxDumpBytes = 64 * 1024 * 1024;
       if (n > kMaxDumpBytes) {
         LOG(ERROR) << "DUMP_FAKE_DATA: n exceeds cap " << kMaxDumpBytes;
-        return Status(grpc::StatusCode::INVALID_ARGUMENT,
-                      "DUMP_FAKE_DATA n exceeds cap");
+        return Status(
+            grpc::StatusCode::INVALID_ARGUMENT, "DUMP_FAKE_DATA n exceeds cap");
       }
       // Receive fake data payload (used for write bandwidth benchmarking)
       reply->set_reply("ok");

@@ -332,7 +332,8 @@ void BRPCParameterServiceImpl::Command(
     if (payload_bytes < 0) {
       LOG(ERROR) << "LOAD_FAKE_DATA: payload_bytes must be non-negative, got "
                  << payload_bytes;
-      cntl->SetFailed(EINVAL, "LOAD_FAKE_DATA payload_bytes must be non-negative");
+      cntl->SetFailed(
+          EINVAL, "LOAD_FAKE_DATA payload_bytes must be non-negative");
       return;
     }
     constexpr int64_t kMaxReplyPayload = 16 * 1024 * 1024;
@@ -361,7 +362,8 @@ void BRPCParameterServiceImpl::Command(
     }
     if (n % static_cast<int64_t>(sizeof(float)) != 0) {
       LOG(ERROR) << "DUMP_FAKE_DATA: n must be a multiple of " << sizeof(float);
-      cntl->SetFailed(EINVAL, "DUMP_FAKE_DATA n must be multiple of sizeof(float)");
+      cntl->SetFailed(
+          EINVAL, "DUMP_FAKE_DATA n must be multiple of sizeof(float)");
       return;
     }
     constexpr int64_t kMaxDumpBytes = 64 * 1024 * 1024;

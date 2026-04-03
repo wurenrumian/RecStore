@@ -187,29 +187,30 @@ bool DistributedBRPCParameterClient::GetParameter(
     auto* client     = clients_[client_index].get();
 
     // 异步请求
-    futures.push_back(std::async(std::launch::async,
-                                 [=, &partitioned_keys, &partitioned_results]() {
-      const auto& shard_keys_vec = partitioned_keys[shard_id];
-      auto& shard_result_vec = partitioned_results[shard_id];
-      shard_result_vec.clear();
-      shard_result_vec.reserve(shard_keys_vec.size());
+    futures.push_back(std::async(
+        std::launch::async, [=, &partitioned_keys, &partitioned_results]() {
+          const auto& shard_keys_vec = partitioned_keys[shard_id];
+          auto& shard_result_vec     = partitioned_results[shard_id];
+          shard_result_vec.clear();
+          shard_result_vec.reserve(shard_keys_vec.size());
 
-      for (size_t start = 0; start < shard_keys_vec.size();
-           start += static_cast<size_t>(max_keys_per_request_)) {
-        size_t end = std::min(
-            start + static_cast<size_t>(max_keys_per_request_),
-            shard_keys_vec.size());
-        base::ConstArray<uint64_t> shard_chunk(
-            shard_keys_vec.data() + start, static_cast<int>(end - start));
-        std::vector<std::vector<float>> chunk_result;
-        if (!client->GetParameter(shard_chunk, &chunk_result)) {
-          return 0;
-        }
-        shard_result_vec.insert(
-            shard_result_vec.end(), chunk_result.begin(), chunk_result.end());
-      }
-      return 1;
-    }));
+          for (size_t start = 0; start < shard_keys_vec.size();
+               start += static_cast<size_t>(max_keys_per_request_)) {
+            size_t end =
+                std::min(start + static_cast<size_t>(max_keys_per_request_),
+                         shard_keys_vec.size());
+            base::ConstArray<uint64_t> shard_chunk(
+                shard_keys_vec.data() + start, static_cast<int>(end - start));
+            std::vector<std::vector<float>> chunk_result;
+            if (!client->GetParameter(shard_chunk, &chunk_result)) {
+              return 0;
+            }
+            shard_result_vec.insert(shard_result_vec.end(),
+                                    chunk_result.begin(),
+                                    chunk_result.end());
+          }
+          return 1;
+        }));
   }
 
   // 等待所有请求完成
@@ -374,25 +375,25 @@ int DistributedBRPCParameterClient::PutParameter(
     int client_index = it->second;
     auto* client     = clients_[client_index].get();
 
-    futures.push_back(std::async(std::launch::async,
-                                 [=, &partitioned_keys, &partitioned_values]() {
-      const auto& shard_keys_vec = partitioned_keys[shard_id];
-      const auto& shard_vals_vec = partitioned_values[shard_id];
-      for (size_t start = 0; start < shard_keys_vec.size();
-           start += static_cast<size_t>(max_keys_per_request_)) {
-        size_t end = std::min(
-            start + static_cast<size_t>(max_keys_per_request_),
-            shard_keys_vec.size());
-        base::ConstArray<uint64_t> shard_chunk(
-            shard_keys_vec.data() + start, static_cast<int>(end - start));
-        std::vector<std::vector<float>> value_chunk(
-            shard_vals_vec.begin() + start, shard_vals_vec.begin() + end);
-        if (client->PutParameter(shard_chunk, value_chunk) != 1) {
-          return 0;
-        }
-      }
-      return 1;
-    }));
+    futures.push_back(std::async(
+        std::launch::async, [=, &partitioned_keys, &partitioned_values]() {
+          const auto& shard_keys_vec = partitioned_keys[shard_id];
+          const auto& shard_vals_vec = partitioned_values[shard_id];
+          for (size_t start = 0; start < shard_keys_vec.size();
+               start += static_cast<size_t>(max_keys_per_request_)) {
+            size_t end =
+                std::min(start + static_cast<size_t>(max_keys_per_request_),
+                         shard_keys_vec.size());
+            base::ConstArray<uint64_t> shard_chunk(
+                shard_keys_vec.data() + start, static_cast<int>(end - start));
+            std::vector<std::vector<float>> value_chunk(
+                shard_vals_vec.begin() + start, shard_vals_vec.begin() + end);
+            if (client->PutParameter(shard_chunk, value_chunk) != 1) {
+              return 0;
+            }
+          }
+          return 1;
+        }));
   }
 
   // 等待所有请求完成
@@ -536,25 +537,26 @@ int DistributedBRPCParameterClient::UpdateParameter(
     int client_index = it->second;
     auto* client     = clients_[client_index].get();
 
-    futures.push_back(std::async(std::launch::async,
-                                 [=, &partitioned_keys, &partitioned_grads]() {
-      const auto& shard_keys_vec = partitioned_keys[shard_id];
-      const auto& shard_grads_vec = partitioned_grads[shard_id];
-      for (size_t start = 0; start < shard_keys_vec.size();
-           start += static_cast<size_t>(max_keys_per_request_)) {
-        size_t end = std::min(
-            start + static_cast<size_t>(max_keys_per_request_),
-            shard_keys_vec.size());
-        base::ConstArray<uint64_t> shard_chunk(
-            shard_keys_vec.data() + start, static_cast<int>(end - start));
-        std::vector<std::vector<float>> grad_chunk(
-            shard_grads_vec.begin() + start, shard_grads_vec.begin() + end);
-        if (client->UpdateParameter(table_name, shard_chunk, &grad_chunk) != 0) {
-          return -1;
-        }
-      }
-      return 0;
-    }));
+    futures.push_back(std::async(
+        std::launch::async, [=, &partitioned_keys, &partitioned_grads]() {
+          const auto& shard_keys_vec  = partitioned_keys[shard_id];
+          const auto& shard_grads_vec = partitioned_grads[shard_id];
+          for (size_t start = 0; start < shard_keys_vec.size();
+               start += static_cast<size_t>(max_keys_per_request_)) {
+            size_t end =
+                std::min(start + static_cast<size_t>(max_keys_per_request_),
+                         shard_keys_vec.size());
+            base::ConstArray<uint64_t> shard_chunk(
+                shard_keys_vec.data() + start, static_cast<int>(end - start));
+            std::vector<std::vector<float>> grad_chunk(
+                shard_grads_vec.begin() + start, shard_grads_vec.begin() + end);
+            if (client->UpdateParameter(table_name, shard_chunk, &grad_chunk) !=
+                0) {
+              return -1;
+            }
+          }
+          return 0;
+        }));
   }
 
   for (auto& future : futures) {
