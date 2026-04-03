@@ -126,10 +126,10 @@ void TestFactoryClient() {
     CHECK(check_eq_2d(values, emptyvalues));
 
     std::cout << "load fake data" << std::endl;
-    client->LoadFakeData(100);
+    CHECK(client->LoadFakeData(100));
     std::cout << "load fake data done" << std::endl;
     std::cout << "dump fake data" << std::endl;
-    client->DumpFakeData(100);
+    CHECK(client->DumpFakeData(100));
     std::cout << "dump fake data done" << std::endl;
 
     std::cout << "All distributed PS operations passed!" << std::endl;
@@ -196,16 +196,16 @@ void TestLargeBatch() {
           {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
         {"num_shards", 2},
         {"hash_method", "city_hash"},
-        {"max_keys_per_request", 200}}}};
+        {"max_keys_per_request", 50}}}};
 
   try {
     DistributedGRPCParameterClient client(config);
 
-    // 准备大批量keys (超过max_keys_per_request)
+    // 构造同一 shard 的大批量 keys，稳定超过 max_keys_per_request
     std::vector<uint64_t> large_keys;
     std::vector<std::vector<float>> large_values;
-    for (int i = 0; i < 100; ++i) {
-      large_keys.push_back(2000 + i);
+    for (int i = 0; i < 120; ++i) {
+      large_keys.push_back(2000 + static_cast<uint64_t>(i) * 2);
       large_values.push_back({float(i), float(i * 2)});
     }
 

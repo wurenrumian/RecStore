@@ -80,10 +80,10 @@ void TestFactoryClient() {
     CHECK(check_eq_2d(values, emptyvalues));
 
     std::cout << "load fake data" << std::endl;
-    grpc_client->LoadFakeData(100);
+    CHECK(grpc_client->LoadFakeData(100));
     std::cout << "load fake data done" << std::endl;
     std::cout << "dump fake data" << std::endl;
-    grpc_client->DumpFakeData(100);
+    CHECK(grpc_client->DumpFakeData(100));
     std::cout << "dump fake data done" << std::endl;
   }
 }
