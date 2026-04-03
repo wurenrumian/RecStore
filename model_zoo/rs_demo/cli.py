@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 
-from .config import RunConfig, ensure_parent_dirs, parse_config
+from .config import RunConfig, ensure_parent_dirs, parse_config, validate_torchrec_config
 from .runtime.report import analyze_embupdate, setup_local_report_env
+from .runtime.torchrec_trace_report import summarize_trace_dir, write_trace_csv
 from .runtime.server import (
     choose_available_ports,
     make_runtime_dir,
@@ -24,13 +26,29 @@ def repo_root_from_this_file() -> Path:
 def build_runner(cfg: RunConfig, runtime_dir: Path):
     if cfg.backend == "recstore":
         return RecStoreRunner(runtime_dir)
+    if cfg.backend == "torchrec":
+        try:
+            from .runners.torchrec_runner import TorchRecRunner, ensure_torchrec_available
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("TorchRec runner is not available") from exc
+        ensure_torchrec_available()
+        return TorchRecRunner(runtime_dir)
     raise ValueError(f"Unsupported backend: {cfg.backend}")
 
 
 def main(argv: list[str] | None = None) -> int:
     cfg = parse_config(argv)
+    validate_torchrec_config(cfg)
+    if cfg.backend == "torchrec" and cfg.torchrec_profiler:
+        run_dir = Path(cfg.torchrec_trace_dir) / datetime.now().strftime(
+            "run_%Y%m%d_%H%M%S_%f"
+        )
+        cfg.torchrec_trace_dir = str(run_dir)
     ensure_parent_dirs(cfg)
     setup_local_report_env(cfg.jsonl)
+
+    if cfg.backend != "recstore":
+        cfg.start_server = False
 
     repo_root = repo_root_from_this_file()
     with open(repo_root / "recstore_config.json", "r", encoding="utf-8") as f:
@@ -41,7 +59,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg.server_port0 = p0_default
     if cfg.server_port1 is None:
         cfg.server_port1 = p1_default
-    if cfg.start_server:
+    server_needed = cfg.backend == "recstore" and cfg.start_server
+    if server_needed:
         cfg.server_port0, cfg.server_port1 = choose_available_ports(
             cfg.server_host, cfg.server_port0, cfg.server_port1
         )
@@ -57,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
 
     proc = None
     try:
-        if cfg.start_server:
+        if server_needed:
             print(f"[rs_demo] starting server ({cfg.ps_type}) with {runtime_cfg_path}")
             proc = start_server(repo_root, runtime_cfg_path, Path(cfg.server_log))
             if not wait_server_ready(
@@ -75,6 +94,13 @@ def main(argv: list[str] | None = None) -> int:
 
         runner = build_runner(cfg, runtime_dir)
         _run_result = runner.run(repo_root, cfg)
+        if cfg.backend == "torchrec":
+            print(f"[rs_demo] torchrec main csv: {cfg.torchrec_main_csv}")
+            if cfg.torchrec_profiler:
+                rows = summarize_trace_dir(Path(cfg.torchrec_trace_dir))
+                write_trace_csv(Path(cfg.torchrec_trace_csv), rows)
+                print(f"[rs_demo] torchrec trace csv: {cfg.torchrec_trace_csv}")
+            return 0
 
         print("[rs_demo] analyzing embupdate stages...")
         analyze_output = analyze_embupdate(repo_root, cfg.jsonl, cfg.csv, top_n=20)
@@ -82,7 +108,8 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"[rs_demo] jsonl: {cfg.jsonl}")
         print(f"[rs_demo] csv:   {cfg.csv}")
-        print(f"[rs_demo] server log: {cfg.server_log}")
+        if server_needed:
+            print(f"[rs_demo] server log: {cfg.server_log}")
         return 0
     finally:
         stop_server(proc)
