@@ -32,13 +32,25 @@ class RunConfig:
     fuse_k: int = 30
     backend: str = "recstore"
     ps_type: str = "BRPC"
+    torchrec_profiler: bool = False
+    torchrec_profiler_warmup: int = 0
+    torchrec_profiler_active: int = 2
+    torchrec_profiler_repeat: int = 1
+    torchrec_trace_dir: str = "/tmp/rs_demo_torchrec_traces"
+    torchrec_main_csv: str = "/tmp/rs_demo_torchrec_main.csv"
+    torchrec_trace_csv: str = "/tmp/rs_demo_torchrec_trace.csv"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Modular benchmark demo based on DLRM-style data path."
     )
-    parser.add_argument("--backend", type=str, default="recstore", choices=["recstore"])
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="recstore",
+        choices=["recstore", "torchrec"],
+    )
     parser.add_argument("--ps-type", type=str, default="BRPC", choices=["BRPC", "GRPC"])
     parser.add_argument("--num-embeddings", type=int, default=200000)
     parser.add_argument("--embedding-dim", type=int, default=128)
@@ -75,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--fuse-k", type=int, default=30)
+    parser.add_argument("--torchrec-profiler", action="store_true", default=False)
+    parser.add_argument("--torchrec-profiler-warmup", type=int, default=0)
+    parser.add_argument("--torchrec-profiler-active", type=int, default=2)
+    parser.add_argument("--torchrec-profiler-repeat", type=int, default=1)
+    parser.add_argument("--torchrec-trace-dir", type=str, default="/tmp/rs_demo_torchrec_traces")
+    parser.add_argument("--torchrec-main-csv", type=str, default="/tmp/rs_demo_torchrec_main.csv")
+    parser.add_argument("--torchrec-trace-csv", type=str, default="/tmp/rs_demo_torchrec_trace.csv")
     return parser
 
 
@@ -91,7 +110,30 @@ def parse_config(argv: list[str] | None = None) -> RunConfig:
     return cfg
 
 
+def validate_torchrec_config(cfg: RunConfig) -> None:
+    if cfg.backend != "torchrec":
+        return
+
+    profiler_subargs_nondefault = any(
+        [
+            cfg.torchrec_profiler_warmup != 0,
+            cfg.torchrec_profiler_active != 2,
+            cfg.torchrec_profiler_repeat != 1,
+            cfg.torchrec_trace_dir != "/tmp/rs_demo_torchrec_traces",
+            cfg.torchrec_trace_csv != "/tmp/rs_demo_torchrec_trace.csv",
+        ]
+    )
+
+    if profiler_subargs_nondefault and not cfg.torchrec_profiler:
+        raise RuntimeError(
+            "TorchRec profiler sub-arguments require --torchrec-profiler."
+        )
+
+
 def ensure_parent_dirs(cfg: RunConfig) -> None:
     Path(cfg.jsonl).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.csv).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.server_log).parent.mkdir(parents=True, exist_ok=True)
+    Path(cfg.torchrec_trace_dir).mkdir(parents=True, exist_ok=True)
+    Path(cfg.torchrec_main_csv).parent.mkdir(parents=True, exist_ok=True)
+    Path(cfg.torchrec_trace_csv).parent.mkdir(parents=True, exist_ok=True)
