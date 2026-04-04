@@ -34,6 +34,8 @@ class TestTorchRecTraceReport(unittest.TestCase):
             row = summarize_trace_file(trace_path)
 
         self.assertEqual(row["trace_path"], str(trace_path))
+        self.assertEqual(row["rank"], 0)
+        self.assertEqual(row["step"], -1)
         self.assertAlmostEqual(row["cuda_stream_sync_ms"], 1.0)
         self.assertAlmostEqual(row["unknown_sync_ms"], 0.7)
         self.assertAlmostEqual(row["nccl_kernel_ms"], 2.0)
@@ -68,7 +70,7 @@ class TestTorchRecTraceReport(unittest.TestCase):
     def test_write_trace_csv_writes_rows(self) -> None:
         trace = {"traceEvents": [{"name": "cudaStreamSynchronize", "dur": 1000}]}
         with tempfile.TemporaryDirectory() as tmpdir:
-            trace_path = Path(tmpdir) / "sample.pt.trace.json"
+            trace_path = Path(tmpdir) / "worker-rank3-step12.pt.trace.json"
             trace_path.write_text(json.dumps(trace), encoding="utf-8")
             row = summarize_trace_file(trace_path)
             csv_path = Path(tmpdir) / "trace.csv"
@@ -80,6 +82,8 @@ class TestTorchRecTraceReport(unittest.TestCase):
         self.assertEqual(line["trace_path"], str(trace_path))
         self.assertEqual(line["cuda_stream_sync_ms"], "1.0")
         self.assertEqual(line["unknown_sync_ms"], "0.0")
+        self.assertEqual(line["rank"], "3")
+        self.assertEqual(line["step"], "12")
 
 
 if __name__ == "__main__":

@@ -43,6 +43,8 @@ class TestTorchRecReport(unittest.TestCase):
         self.assertEqual(line["collective_measured"], "0")
         self.assertEqual(line["kv_local_only_ms"], "3.0")
         self.assertEqual(line["kv_extended_ms"], "4.2")
+        self.assertEqual(line["network_proxy_torchrec_ms"], "0.0")
+        self.assertEqual(line["network_proxy_torchrec_extended_ms"], "1.2")
 
 
 if __name__ == "__main__":

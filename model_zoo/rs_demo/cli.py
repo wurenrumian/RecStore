@@ -7,6 +7,8 @@ from pathlib import Path
 
 from .config import RunConfig, ensure_parent_dirs, parse_config, validate_torchrec_config
 from .runtime.report import analyze_embupdate, setup_local_report_env
+from .runtime.torchrec_aggregate import aggregate_torchrec_main_csv, write_aggregate_csv
+from .runtime.torchrec_compare import build_compare_rows, write_compare_csv
 from .runtime.torchrec_trace_report import summarize_trace_dir, write_trace_csv
 from .runtime.server import (
     choose_available_ports,
@@ -16,7 +18,6 @@ from .runtime.server import (
     stop_server,
     wait_server_ready,
 )
-from .runners.recstore_runner import RecStoreRunner
 
 
 def repo_root_from_this_file() -> Path:
@@ -25,6 +26,8 @@ def repo_root_from_this_file() -> Path:
 
 def build_runner(cfg: RunConfig, runtime_dir: Path):
     if cfg.backend == "recstore":
+        from .runners.recstore_runner import RecStoreRunner
+
         return RecStoreRunner(runtime_dir)
     if cfg.backend == "torchrec":
         try:
@@ -96,10 +99,20 @@ def main(argv: list[str] | None = None) -> int:
         _run_result = runner.run(repo_root, cfg)
         if cfg.backend == "torchrec":
             print(f"[rs_demo] torchrec main csv: {cfg.torchrec_main_csv}")
+            agg = aggregate_torchrec_main_csv(Path(cfg.torchrec_main_csv))
+            write_aggregate_csv(Path(cfg.torchrec_main_agg_csv), agg)
+            print(f"[rs_demo] torchrec main aggregate csv: {cfg.torchrec_main_agg_csv}")
             if cfg.torchrec_profiler:
                 rows = summarize_trace_dir(Path(cfg.torchrec_trace_dir))
                 write_trace_csv(Path(cfg.torchrec_trace_csv), rows)
                 print(f"[rs_demo] torchrec trace csv: {cfg.torchrec_trace_csv}")
+            if cfg.torchrec_compare_recstore_csv:
+                compare_rows = build_compare_rows(
+                    Path(cfg.torchrec_compare_recstore_csv),
+                    Path(cfg.torchrec_main_csv),
+                )
+                write_compare_csv(Path(cfg.torchrec_compare_csv), compare_rows)
+                print(f"[rs_demo] torchrec compare csv: {cfg.torchrec_compare_csv}")
             return 0
 
         print("[rs_demo] analyzing embupdate stages...")

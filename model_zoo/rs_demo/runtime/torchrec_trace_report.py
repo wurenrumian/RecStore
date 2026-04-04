@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 TRACE_CSV_FIELDS = [
     "trace_path",
+    "rank",
+    "step",
     "collective_total_ms",
     "nccl_kernel_ms",
     "cuda_stream_sync_ms",
@@ -20,6 +23,8 @@ TRACE_CSV_FIELDS = [
 @dataclass
 class TraceSummary:
     trace_path: str
+    rank: int
+    step: int
     collective_total_ms: float
     nccl_kernel_ms: float
     cuda_stream_sync_ms: float
@@ -31,6 +36,8 @@ class TraceSummary:
     def as_row(self) -> dict[str, float | str]:
         return {
             "trace_path": self.trace_path,
+            "rank": self.rank,
+            "step": self.step,
             "collective_total_ms": self.collective_total_ms,
             "nccl_kernel_ms": self.nccl_kernel_ms,
             "cuda_stream_sync_ms": self.cuda_stream_sync_ms,
@@ -70,9 +77,26 @@ def _matches_any(lower_name: str, needles: list[str]) -> bool:
     return any(needle in lower_name for needle in needles)
 
 
+def _extract_rank_step(path: Path) -> tuple[int, int]:
+    stem = path.name.lower()
+    rank = 0
+    step = -1
+
+    rank_match = re.search(r"(?:^|[_\-.])rank[_\-.]?(\d+)(?:[_\-.]|$)", stem)
+    if rank_match is not None:
+        rank = int(rank_match.group(1))
+
+    step_match = re.search(r"(?:^|[_\-.])step[_\-.]?(\d+)(?:[_\-.]|$)", stem)
+    if step_match is not None:
+        step = int(step_match.group(1))
+
+    return rank, step
+
+
 def summarize_trace_file(path: Path) -> dict[str, float | str]:
     data = json.loads(path.read_text(encoding="utf-8"))
     events = _extract_events(data)
+    rank, step = _extract_rank_step(path)
     nccl_kernel_ms = 0.0
     cuda_stream_sync_ms = 0.0
     unknown_sync_ms = 0.0
@@ -119,6 +143,8 @@ def summarize_trace_file(path: Path) -> dict[str, float | str]:
     collective_total_ms = nccl_kernel_ms + unclassified_collective_ms
     summary = TraceSummary(
         trace_path=str(path),
+        rank=rank,
+        step=step,
         collective_total_ms=collective_total_ms,
         nccl_kernel_ms=nccl_kernel_ms,
         cuda_stream_sync_ms=cuda_stream_sync_ms,

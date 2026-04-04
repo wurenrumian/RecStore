@@ -29,6 +29,44 @@ python3 model_zoo/rs_demo/run_mock_stress.py \
   --csv /tmp/rs_demo_embupdate.csv
 ```
 
+TorchRec backend（不启动 ps_server）：
+
+```bash
+python3 model_zoo/rs_demo/run_mock_stress.py \
+  --backend torchrec \
+  --steps 60 \
+  --batch-size 4096 \
+  --no-start-server \
+  --torchrec-main-csv /tmp/rs_demo_torchrec_main.csv \
+  --torchrec-main-agg-csv /tmp/rs_demo_torchrec_main_agg.csv
+```
+
+如需 profiler trace（每次运行会在 trace dir 下生成多个 trace 文件，并聚合到 trace csv）：
+
+```bash
+python3 model_zoo/rs_demo/run_mock_stress.py \
+  --backend torchrec \
+  --steps 60 \
+  --batch-size 4096 \
+  --no-start-server \
+  --torchrec-profiler \
+  --torchrec-trace-dir /tmp/rs_demo_torchrec_traces \
+  --torchrec-main-csv /tmp/rs_demo_torchrec_main.csv \
+  --torchrec-main-agg-csv /tmp/rs_demo_torchrec_main_agg.csv \
+  --torchrec-trace-csv /tmp/rs_demo_torchrec_trace.csv
+
+# 可选：同配置下已有 RecStore CSV 时，导出对照差值表
+python3 model_zoo/rs_demo/run_mock_stress.py \
+  --backend torchrec \
+  --steps 60 \
+  --batch-size 4096 \
+  --no-start-server \
+  --torchrec-main-csv /tmp/rs_demo_torchrec_main.csv \
+  --torchrec-main-agg-csv /tmp/rs_demo_torchrec_main_agg.csv \
+  --torchrec-compare-recstore-csv /tmp/rs_demo_embupdate.csv \
+  --torchrec-compare-csv /tmp/rs_demo_recstore_torchrec_compare.csv
+```
+
 ## 3. 常用参数
 
 - `--num-embeddings`：表大小
@@ -43,9 +81,43 @@ python3 model_zoo/rs_demo/run_mock_stress.py \
 - `--start-server/--no-start-server`：是否自动起停 `ps_server`
 - `--server-port0/--server-port1`：server 端口（默认读取 `recstore_config.json`）
 - `--allocator`：value 内存管理器（默认 `R2ShmMalloc`，更适合压测）
+- `--torchrec-main-csv`：TorchRec 主报表 CSV 路径
+- `--torchrec-main-agg-csv`：TorchRec 主报表聚合 CSV 路径（mean/p50/p95/max）
+- `--torchrec-profiler`：启用 Torch profiler 并导出 trace 聚合 CSV
+- `--torchrec-trace-dir`：Torch profiler trace 输出目录
+- `--torchrec-trace-csv`：Torch profiler trace 聚合 CSV 路径
+- `--torchrec-compare-recstore-csv`：可选，指定 RecStore CSV 以导出对照差值表
+- `--torchrec-compare-csv`：RecStore vs TorchRec 对照差值 CSV 路径
 
 ## 4. 结果文件
 
 - JSONL：`/tmp/rs_demo_events.jsonl`
 - CSV：`/tmp/rs_demo_embupdate.csv`
 - Server 日志：`/tmp/rs_demo_ps_server.log`
+- TorchRec 主报表 CSV：`/tmp/rs_demo_torchrec_main.csv`
+- TorchRec 主报表聚合 CSV：`/tmp/rs_demo_torchrec_main_agg.csv`
+- TorchRec profiler trace CSV：`/tmp/rs_demo_torchrec_trace.csv`
+- RecStore vs TorchRec 对照 CSV：`/tmp/rs_demo_recstore_torchrec_compare.csv`
+
+TorchRec 主报表（`--torchrec-main-csv`）关键列：
+
+- `collective_total_ms`：collective launch + wait 的总耗时
+- `kv_local_only_ms`：本地 embedding lookup + pool 的耗时（不含 pack/unpack）
+- `kv_extended_ms`：输入打包 + 本地 lookup/pool + 输出解包的总耗时
+- `network_proxy_torchrec_extended_ms`：`collective_total + input_pack + output_unpack` 的扩展通信代理项
+
+TorchRec 主报表聚合 CSV（`--torchrec-main-agg-csv`）会对每个 `*_ms` 列导出：
+
+- `*_mean`
+- `*_p50`
+- `*_p95`
+- `*_max`
+
+对照差值 CSV（`--torchrec-compare-csv`）默认导出以下口径：
+
+- `network_main`：`RecStore(network_transport)` vs `TorchRec(collective_total)`
+- `network_extended`：`RecStore(network_transport)` vs `TorchRec(collective + pack + unpack)`
+- `kv_strict`：`RecStore(storage_backend_update)` vs `TorchRec(kv_local_only)`
+- `server_vs_extended`：`RecStore(server_total)` vs `TorchRec(kv_extended)`
+
+`collective_mode=not_measured_single_process` 表示当前仅单进程运行，未采集到多进程 collective 统计。
