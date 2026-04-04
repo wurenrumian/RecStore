@@ -5,15 +5,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
-import torch
-from torch import nn
-
 from ..config import RunConfig, validate_torchrec_config
-from ..data.dlrm_source import (
-    build_kjt_batch_from_dense_sparse_labels,
-    build_train_dataloader,
-    inject_project_paths,
-)
 from ..runtime.report import finalize_torchrec_row, write_stage_csv
 from ..runtime.torchrec_profile import build_torchrec_profiler
 from .base import BenchmarkRunner
@@ -51,6 +43,15 @@ class TorchRecRunner(BenchmarkRunner):
             raise ValueError("TorchRec runner requires --steps to be greater than 0.")
 
         ensure_torchrec_available()
+        import torch
+        from torch import nn
+
+        from ..data.dlrm_source import (
+            build_kjt_batch_from_dense_sparse_labels,
+            build_train_dataloader,
+            inject_project_paths,
+        )
+
         inject_project_paths(repo_root)
 
         from torchrec.datasets.criteo import DEFAULT_CAT_NAMES

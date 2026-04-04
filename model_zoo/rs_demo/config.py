@@ -38,7 +38,10 @@ class RunConfig:
     torchrec_profiler_repeat: int = 1
     torchrec_trace_dir: str = "/tmp/rs_demo_torchrec_traces"
     torchrec_main_csv: str = "/tmp/rs_demo_torchrec_main.csv"
+    torchrec_main_agg_csv: str = "/tmp/rs_demo_torchrec_main_agg.csv"
     torchrec_trace_csv: str = "/tmp/rs_demo_torchrec_trace.csv"
+    torchrec_compare_recstore_csv: str = ""
+    torchrec_compare_csv: str = "/tmp/rs_demo_recstore_torchrec_compare.csv"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,7 +96,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--torchrec-profiler-repeat", type=int, default=1)
     parser.add_argument("--torchrec-trace-dir", type=str, default="/tmp/rs_demo_torchrec_traces")
     parser.add_argument("--torchrec-main-csv", type=str, default="/tmp/rs_demo_torchrec_main.csv")
+    parser.add_argument(
+        "--torchrec-main-agg-csv",
+        type=str,
+        default="/tmp/rs_demo_torchrec_main_agg.csv",
+    )
     parser.add_argument("--torchrec-trace-csv", type=str, default="/tmp/rs_demo_torchrec_trace.csv")
+    parser.add_argument(
+        "--torchrec-compare-recstore-csv",
+        type=str,
+        default="",
+        help="If provided, generate RecStore vs TorchRec comparison csv from this RecStore csv.",
+    )
+    parser.add_argument(
+        "--torchrec-compare-csv",
+        type=str,
+        default="/tmp/rs_demo_recstore_torchrec_compare.csv",
+    )
     return parser
 
 
@@ -136,4 +155,6 @@ def ensure_parent_dirs(cfg: RunConfig) -> None:
     Path(cfg.server_log).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.torchrec_trace_dir).mkdir(parents=True, exist_ok=True)
     Path(cfg.torchrec_main_csv).parent.mkdir(parents=True, exist_ok=True)
+    Path(cfg.torchrec_main_agg_csv).parent.mkdir(parents=True, exist_ok=True)
     Path(cfg.torchrec_trace_csv).parent.mkdir(parents=True, exist_ok=True)
+    Path(cfg.torchrec_compare_csv).parent.mkdir(parents=True, exist_ok=True)

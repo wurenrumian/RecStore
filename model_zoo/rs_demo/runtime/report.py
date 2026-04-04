@@ -65,11 +65,15 @@ def write_stage_csv(path: Path, rows: list[dict]) -> None:
 
 def finalize_torchrec_row(row: dict) -> dict:
     row["collective_total_ms"] = row["collective_launch_ms"] + row["collective_wait_ms"]
+    row["network_proxy_torchrec_ms"] = row["collective_total_ms"]
     row["kv_local_only_ms"] = row["embed_lookup_local_ms"] + row["embed_pool_local_ms"]
     row["kv_extended_ms"] = (
         row["input_pack_ms"]
         + row["embed_lookup_local_ms"]
         + row["embed_pool_local_ms"]
         + row["output_unpack_ms"]
+    )
+    row["network_proxy_torchrec_extended_ms"] = (
+        row["collective_total_ms"] + row["input_pack_ms"] + row["output_unpack_ms"]
     )
     return row
