@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 
@@ -23,26 +24,35 @@ class RunConfig:
     server_port1: int | None = None
     server_wait_seconds: float = 20.0
     allocator: str = "R2ShmMalloc"
-    jsonl: str = "/tmp/rs_demo_events.jsonl"
-    csv: str = "/tmp/rs_demo_embupdate.csv"
+    output_root: str = "/nas/home/shq/docker/rs_demo"
+    run_id: str = ""
+    jsonl: str = ""
+    csv: str = ""
     library_path: str = ""
-    server_log: str = "/tmp/rs_demo_ps_server.log"
+    server_log: str = ""
     data_dir: str = "model_zoo/torchrec_dlrm/processed_day_0_data"
     train_ratio: float = 0.8
     fuse_k: int = 30
     backend: str = "recstore"
+    nproc: int = 1
+    nnodes: int = 1
+    node_rank: int = 0
+    nproc_per_node: int = 1
+    master_addr: str = "127.0.0.1"
+    master_port: int = 29500
+    rdzv_backend: str = "c10d"
+    rdzv_id: str = ""
     ps_type: str = "BRPC"
     torchrec_profiler: bool = False
     torchrec_profiler_warmup: int = 0
     torchrec_profiler_active: int = 2
     torchrec_profiler_repeat: int = 1
-    torchrec_trace_dir: str = "/tmp/rs_demo_torchrec_traces"
-    torchrec_main_csv: str = "/tmp/rs_demo_torchrec_main.csv"
-    torchrec_main_agg_csv: str = "/tmp/rs_demo_torchrec_main_agg.csv"
-    torchrec_trace_csv: str = "/tmp/rs_demo_torchrec_trace.csv"
+    torchrec_trace_dir: str = ""
+    torchrec_main_csv: str = ""
+    torchrec_main_agg_csv: str = ""
+    torchrec_trace_csv: str = ""
     torchrec_compare_recstore_csv: str = ""
-    torchrec_compare_csv: str = "/tmp/rs_demo_recstore_torchrec_compare.csv"
-
+    torchrec_compare_csv: str = ""
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -54,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="recstore",
         choices=["recstore", "torchrec"],
     )
+    parser.add_argument("--nproc", type=int, default=1)
+    parser.add_argument("--nnodes", type=int, default=1)
+    parser.add_argument("--node-rank", type=int, default=0)
+    parser.add_argument("--nproc-per-node", type=int, default=None)
+    parser.add_argument("--master-addr", type=str, default="127.0.0.1")
+    parser.add_argument("--master-port", type=int, default=29500)
+    parser.add_argument("--rdzv-backend", type=str, default="c10d")
+    parser.add_argument("--rdzv-id", type=str, default="")
+    parser.add_argument("--output-root", type=str, default="/nas/home/shq/docker/rs_demo")
+    parser.add_argument("--run-id", type=str, default="")
     parser.add_argument("--ps-type", type=str, default="BRPC", choices=["BRPC", "GRPC"])
     parser.add_argument("--num-embeddings", type=int, default=200000)
     parser.add_argument("--embedding-dim", type=int, default=128)
@@ -79,10 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-port1", type=int, default=None)
     parser.add_argument("--server-wait-seconds", type=float, default=20.0)
     parser.add_argument("--allocator", type=str, default="R2ShmMalloc")
-    parser.add_argument("--jsonl", type=str, default="/tmp/rs_demo_events.jsonl")
-    parser.add_argument("--csv", type=str, default="/tmp/rs_demo_embupdate.csv")
+    parser.add_argument("--jsonl", type=str, default="")
+    parser.add_argument("--csv", type=str, default="")
     parser.add_argument("--library-path", type=str, default="")
-    parser.add_argument("--server-log", type=str, default="/tmp/rs_demo_ps_server.log")
+    parser.add_argument("--server-log", type=str, default="")
     parser.add_argument(
         "--data-dir",
         type=str,
@@ -94,14 +114,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--torchrec-profiler-warmup", type=int, default=0)
     parser.add_argument("--torchrec-profiler-active", type=int, default=2)
     parser.add_argument("--torchrec-profiler-repeat", type=int, default=1)
-    parser.add_argument("--torchrec-trace-dir", type=str, default="/tmp/rs_demo_torchrec_traces")
-    parser.add_argument("--torchrec-main-csv", type=str, default="/tmp/rs_demo_torchrec_main.csv")
+    parser.add_argument("--torchrec-trace-dir", type=str, default="")
+    parser.add_argument("--torchrec-main-csv", type=str, default="")
     parser.add_argument(
         "--torchrec-main-agg-csv",
         type=str,
-        default="/tmp/rs_demo_torchrec_main_agg.csv",
+        default="",
     )
-    parser.add_argument("--torchrec-trace-csv", type=str, default="/tmp/rs_demo_torchrec_trace.csv")
+    parser.add_argument("--torchrec-trace-csv", type=str, default="")
     parser.add_argument(
         "--torchrec-compare-recstore-csv",
         type=str,
@@ -111,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--torchrec-compare-csv",
         type=str,
-        default="/tmp/rs_demo_recstore_torchrec_compare.csv",
+        default="",
     )
     return parser
 
@@ -121,6 +141,8 @@ def parse_config(argv: list[str] | None = None) -> RunConfig:
     cfg_kwargs = vars(ns).copy()
     cfg_kwargs.pop("no_read_before_update", None)
     cfg_kwargs.pop("no_start_server", None)
+    if cfg_kwargs["nproc_per_node"] is None:
+        cfg_kwargs["nproc_per_node"] = cfg_kwargs.get("nproc", 1)
     cfg = RunConfig(**cfg_kwargs)
     if ns.no_read_before_update:
         cfg.read_before_update = False
@@ -133,13 +155,18 @@ def validate_torchrec_config(cfg: RunConfig) -> None:
     if cfg.backend != "torchrec":
         return
 
+    if cfg.nnodes <= 0:
+        raise RuntimeError("--nnodes must be greater than 0.")
+    if cfg.nproc_per_node <= 0:
+        raise RuntimeError("--nproc-per-node must be greater than 0.")
+    if cfg.node_rank < 0 or cfg.node_rank >= cfg.nnodes:
+        raise RuntimeError("--node-rank must be within [0, nnodes).")
+
     profiler_subargs_nondefault = any(
         [
             cfg.torchrec_profiler_warmup != 0,
             cfg.torchrec_profiler_active != 2,
             cfg.torchrec_profiler_repeat != 1,
-            cfg.torchrec_trace_dir != "/tmp/rs_demo_torchrec_traces",
-            cfg.torchrec_trace_csv != "/tmp/rs_demo_torchrec_trace.csv",
         ]
     )
 
@@ -147,6 +174,35 @@ def validate_torchrec_config(cfg: RunConfig) -> None:
         raise RuntimeError(
             "TorchRec profiler sub-arguments require --torchrec-profiler."
         )
+
+
+def ensure_run_id(cfg: RunConfig) -> None:
+    if cfg.run_id:
+        return
+    cfg.run_id = datetime.now().strftime("run_%Y%m%d_%H%M%S_%f")
+
+
+def populate_default_paths(cfg: RunConfig) -> None:
+    ensure_run_id(cfg)
+    outputs_base = Path(cfg.output_root) / "outputs" / cfg.run_id
+    logs_base = Path(cfg.output_root) / "logs" / cfg.run_id
+
+    if not cfg.jsonl:
+        cfg.jsonl = str(outputs_base / "recstore_events.jsonl")
+    if not cfg.csv:
+        cfg.csv = str(outputs_base / "recstore_embupdate.csv")
+    if not cfg.server_log:
+        cfg.server_log = str(logs_base / "ps_server.log")
+    if not cfg.torchrec_trace_dir:
+        cfg.torchrec_trace_dir = str(outputs_base / "torchrec_traces")
+    if not cfg.torchrec_main_csv:
+        cfg.torchrec_main_csv = str(outputs_base / "torchrec_main.csv")
+    if not cfg.torchrec_main_agg_csv:
+        cfg.torchrec_main_agg_csv = str(outputs_base / "torchrec_main_agg.csv")
+    if not cfg.torchrec_trace_csv:
+        cfg.torchrec_trace_csv = str(outputs_base / "torchrec_trace.csv")
+    if not cfg.torchrec_compare_csv:
+        cfg.torchrec_compare_csv = str(outputs_base / "recstore_torchrec_compare.csv")
 
 
 def ensure_parent_dirs(cfg: RunConfig) -> None:

@@ -2,10 +2,17 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
-from .config import RunConfig, ensure_parent_dirs, parse_config, validate_torchrec_config
+from .config import (
+    RunConfig,
+    ensure_parent_dirs,
+    parse_config,
+    populate_default_paths,
+    validate_torchrec_config,
+)
 from .runtime.report import analyze_embupdate, setup_local_report_env
 from .runtime.torchrec_aggregate import aggregate_torchrec_main_csv, write_aggregate_csv
 from .runtime.torchrec_compare import build_compare_rows, write_compare_csv
@@ -41,8 +48,10 @@ def build_runner(cfg: RunConfig, runtime_dir: Path):
 
 def main(argv: list[str] | None = None) -> int:
     cfg = parse_config(argv)
+    populate_default_paths(cfg)
     validate_torchrec_config(cfg)
-    if cfg.backend == "torchrec" and cfg.torchrec_profiler:
+    is_torchrec_worker = os.environ.get("RS_DEMO_TORCHREC_WORKER") == "1"
+    if cfg.backend == "torchrec" and cfg.torchrec_profiler and not is_torchrec_worker:
         run_dir = Path(cfg.torchrec_trace_dir) / datetime.now().strftime(
             "run_%Y%m%d_%H%M%S_%f"
         )
@@ -74,6 +83,8 @@ def main(argv: list[str] | None = None) -> int:
         port0=cfg.server_port0,
         port1=cfg.server_port1,
         allocator=cfg.allocator,
+        output_root=cfg.output_root,
+        run_id=cfg.run_id,
         ps_type=cfg.ps_type,
     )
 
@@ -98,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         runner = build_runner(cfg, runtime_dir)
         _run_result = runner.run(repo_root, cfg)
         if cfg.backend == "torchrec":
+            if is_torchrec_worker:
+                return 0
             print(f"[rs_demo] torchrec main csv: {cfg.torchrec_main_csv}")
             agg = aggregate_torchrec_main_csv(Path(cfg.torchrec_main_csv))
             write_aggregate_csv(Path(cfg.torchrec_main_agg_csv), agg)

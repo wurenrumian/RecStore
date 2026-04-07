@@ -10,6 +10,20 @@ import uuid
 from pathlib import Path
 
 
+def resolve_kv_data_path(
+    output_root: str,
+    run_id: str,
+    path_suffix: str,
+    allocator: str,
+) -> str:
+    allocator_upper = allocator.upper()
+    if allocator_upper == "R2SHMMALLOC":
+        # R2ShmMalloc can hang during ps_server init on the NAS mount.
+        # Keep its backing path on the local filesystem and move logs/configs to NAS.
+        return str(Path("/tmp") / "rs_demo_kv" / run_id / f"kv_{path_suffix}")
+    return str(Path(output_root) / "runtime" / run_id / f"kv_{path_suffix}")
+
+
 def wait_port(host: str, port: int, timeout_s: float) -> bool:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
@@ -77,6 +91,8 @@ def build_runtime_config(
     allocator: str,
     path_suffix: str,
     ps_type: str,
+    output_root: str,
+    run_id: str,
 ) -> dict:
     cfg = copy.deepcopy(base_cfg)
     cfg.setdefault("cache_ps", {})
@@ -102,7 +118,12 @@ def build_runtime_config(
 
     base_kv = cfg["cache_ps"].setdefault("base_kv_config", {})
     base_kv["value_memory_management"] = allocator
-    base_kv["path"] = f"/tmp/rs_demo_data_{path_suffix}"
+    base_kv["path"] = resolve_kv_data_path(
+        output_root=output_root,
+        run_id=run_id,
+        path_suffix=path_suffix,
+        allocator=allocator,
+    )
     base_kv["index_type"] = "DRAM"
     return cfg
 
@@ -147,7 +168,10 @@ def stop_server(proc: subprocess.Popen | None) -> None:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait(timeout=3)
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
     log_f = getattr(proc, "_rs_demo_log_file", None)
     if log_f is not None:
         log_f.close()
@@ -159,6 +183,8 @@ def make_runtime_dir(
     port0: int,
     port1: int,
     allocator: str,
+    output_root: str,
+    run_id: str,
     ps_type: str = "BRPC",
 ) -> tuple[Path, Path]:
     unique_tag = f"{time.time_ns()}_{uuid.uuid4().hex[:8]}"
@@ -170,8 +196,10 @@ def make_runtime_dir(
         allocator=allocator,
         path_suffix=unique_tag,
         ps_type=ps_type,
+        output_root=output_root,
+        run_id=run_id,
     )
-    runtime_dir = Path(f"/tmp/rs_demo_runtime_{unique_tag}")
+    runtime_dir = Path(output_root) / "runtime" / run_id / unique_tag
     runtime_dir.mkdir(parents=True, exist_ok=True)
     runtime_cfg_path = runtime_dir / "recstore_config.json"
     with open(runtime_cfg_path, "w", encoding="utf-8") as f:
