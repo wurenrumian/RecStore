@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         cfg.torchrec_trace_dir = str(run_dir)
     ensure_parent_dirs(cfg)
-    setup_local_report_env(cfg.jsonl)
+    if cfg.backend == "recstore":
+        setup_local_report_env(cfg.jsonl)
 
     if cfg.backend != "recstore":
         cfg.start_server = False
@@ -77,16 +78,19 @@ def main(argv: list[str] | None = None) -> int:
             cfg.server_host, cfg.server_port0, cfg.server_port1
         )
 
-    runtime_dir, runtime_cfg_path = make_runtime_dir(
-        base_cfg=base_cfg,
-        host=cfg.server_host,
-        port0=cfg.server_port0,
-        port1=cfg.server_port1,
-        allocator=cfg.allocator,
-        output_root=cfg.output_root,
-        run_id=cfg.run_id,
-        ps_type=cfg.ps_type,
-    )
+    runtime_dir = Path(cfg.output_root) / "runtime" / cfg.run_id
+    runtime_cfg_path = runtime_dir / "recstore_config.json"
+    if cfg.backend == "recstore":
+        runtime_dir, runtime_cfg_path = make_runtime_dir(
+            base_cfg=base_cfg,
+            host=cfg.server_host,
+            port0=cfg.server_port0,
+            port1=cfg.server_port1,
+            allocator=cfg.allocator,
+            output_root=cfg.output_root,
+            run_id=cfg.run_id,
+            ps_type=cfg.ps_type,
+        )
 
     proc = None
     try:

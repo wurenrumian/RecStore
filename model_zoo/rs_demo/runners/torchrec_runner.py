@@ -3,12 +3,13 @@ from __future__ import annotations
 import csv
 import os
 import subprocess
+import sys
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
-from ..config import RunConfig, validate_torchrec_config
+from ..config import RunConfig, ensure_shared_dir, validate_torchrec_config
 from ..runtime.report import finalize_torchrec_row, write_stage_csv
 from ..runtime.torchrec_profile import build_torchrec_profiler
 from .base import BenchmarkRunner
@@ -46,6 +47,14 @@ def _load_rows(path: Path) -> list[dict[str, str]]:
 
 def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     write_stage_csv(path, rows)
+
+
+def _append_worker_debug(cfg: RunConfig, rank: int, message: str) -> None:
+    debug_path = Path(cfg.output_root) / "outputs" / cfg.run_id / "torchrec_worker_debug.log"
+    debug_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with debug_path.open("a", encoding="utf-8") as f:
+        f.write(f"{timestamp} rank={rank} {message}\n")
 
 
 def _merge_rank_outputs(paths: list[Path], out_path: Path) -> list[dict[str, Any]]:
@@ -122,14 +131,20 @@ def _run_single_or_dist_worker(
 
     is_dist = world_size > 1
     backend = "nccl" if torch.cuda.is_available() else "gloo"
-    if is_dist and not dist.is_initialized():
-        dist.init_process_group(backend=backend)
-
+    _append_worker_debug(
+        cfg,
+        rank,
+        f"worker_start world_size={world_size} local_rank={local_rank} backend={backend}",
+    )
     if torch.cuda.is_available():
         torch.cuda.set_device(local_rank)
         device = torch.device(f"cuda:{local_rank}")
     else:
         device = torch.device("cpu")
+    if is_dist and not dist.is_initialized():
+        _append_worker_debug(cfg, rank, f"before_init_process_group device={device}")
+        dist.init_process_group(backend=backend, device_id=device if device.type == "cuda" else None)
+        _append_worker_debug(cfg, rank, "after_init_process_group")
 
     torch.manual_seed(cfg.seed + rank)
 
@@ -155,6 +170,7 @@ def _run_single_or_dist_worker(
     embedding_module = EmbeddingBagCollection(tables=eb_configs, device=device)
     use_dist = world_size > 1
     if use_dist:
+        _append_worker_debug(cfg, rank, "before_sharding_plan")
         sharders = get_default_sharders()
         planner = EmbeddingShardingPlanner(
             topology=Topology(
@@ -164,12 +180,14 @@ def _run_single_or_dist_worker(
             )
         )
         plan = planner.plan(embedding_module, sharders)
+        _append_worker_debug(cfg, rank, "after_sharding_plan")
         embedding_module = DistributedModelParallel(
             module=embedding_module,
             device=device,
             sharders=sharders,
             plan=plan,
         )
+        _append_worker_debug(cfg, rank, "after_distributed_model_parallel")
         collective_mode = "measured_distributed"
         collective_measured = 1
     else:
@@ -200,6 +218,7 @@ def _run_single_or_dist_worker(
     rows: list[dict[str, Any]] = []
     with profiler_context:
         for step in range(cfg.steps):
+            _append_worker_debug(cfg, rank, f"step_start step={step}")
             row: dict[str, Any] = {
                 "backend": "torchrec",
                 "nproc": world_size,
@@ -217,30 +236,38 @@ def _run_single_or_dist_worker(
             step_start = time.perf_counter()
 
             with stage_timer(row, "batch_prepare_ms"):
+                _append_worker_debug(cfg, rank, f"before_batch_prepare step={step}")
                 try:
                     dense_batch, sparse_batch, labels_batch = next(data_iter)
                 except StopIteration:
                     data_iter = iter(dataloader)
                     dense_batch, sparse_batch, labels_batch = next(data_iter)
+                _append_worker_debug(cfg, rank, f"after_batch_prepare step={step}")
 
             with stage_timer(row, "input_pack_ms"):
+                _append_worker_debug(cfg, rank, f"before_input_pack step={step}")
                 dense_batch, sparse_features = build_kjt_batch_from_dense_sparse_labels(
                     dense_batch,
                     sparse_batch,
                     labels_batch,
                 )
+                _append_worker_debug(cfg, rank, f"after_input_pack step={step}")
 
             if use_dist and device.type == "cuda":
                 torch.cuda.synchronize(device)
             collective_start = time.perf_counter()
             with stage_timer(row, "embed_lookup_local_ms"):
+                _append_worker_debug(cfg, rank, f"before_embedding step={step}")
                 embeddings = embedding_module(sparse_features.to(device))
+                _append_worker_debug(cfg, rank, f"after_embedding step={step}")
             if use_dist and device.type == "cuda":
                 torch.cuda.synchronize(device)
             collective_elapsed_ms = (time.perf_counter() - collective_start) * 1e3
 
             with stage_timer(row, "embed_pool_local_ms"):
+                _append_worker_debug(cfg, rank, f"before_pool step={step}")
                 pooled = torch.cat([embeddings[key] for key in DEFAULT_CAT_NAMES], dim=1)
+                _append_worker_debug(cfg, rank, f"after_pool step={step}")
 
             if use_dist:
                 row["collective_launch_ms"] = 0.0
@@ -250,25 +277,33 @@ def _run_single_or_dist_worker(
                 row["collective_wait_ms"] = 0.0
 
             with stage_timer(row, "output_unpack_ms"):
+                _append_worker_debug(cfg, rank, f"before_output_unpack step={step}")
                 dense_input = torch.cat([dense_batch.to(device), pooled], dim=1)
+                _append_worker_debug(cfg, rank, f"after_output_unpack step={step}")
 
             with stage_timer(row, "dense_fwd_ms"):
+                _append_worker_debug(cfg, rank, f"before_dense_fwd step={step}")
                 logits = dense_module(dense_input)
                 labels = labels_batch.to(device).float()
                 if labels.ndim == 1:
                     labels = labels.view(-1, 1)
                 loss = criterion(logits, labels)
+                _append_worker_debug(cfg, rank, f"after_dense_fwd step={step}")
 
             with stage_timer(row, "backward_ms"):
+                _append_worker_debug(cfg, rank, f"before_backward step={step}")
                 loss.backward()
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
+                _append_worker_debug(cfg, rank, f"after_backward step={step}")
 
             with stage_timer(row, "optimizer_ms"):
+                _append_worker_debug(cfg, rank, f"before_optimizer step={step}")
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
+                _append_worker_debug(cfg, rank, f"after_optimizer step={step}")
 
             if profiler is not None:
                 profiler.step()
@@ -276,10 +311,15 @@ def _run_single_or_dist_worker(
             row["step_total_ms"] = (time.perf_counter() - step_start) * 1e3
             rows.append(finalize_torchrec_row(row))
 
+    _append_worker_debug(cfg, rank, f"before_write_rows count={len(rows)} out_csv={out_csv}")
     _write_rows(out_csv, rows)
+    _append_worker_debug(cfg, rank, "after_write_rows")
     if is_dist and dist.is_initialized():
-        dist.barrier()
+        _append_worker_debug(cfg, rank, "before_barrier")
+        dist.barrier(device_ids=[local_rank] if device.type == "cuda" else None)
+        _append_worker_debug(cfg, rank, "after_barrier")
         dist.destroy_process_group()
+        _append_worker_debug(cfg, rank, "after_destroy_process_group")
     return rows
 
 
@@ -291,25 +331,25 @@ class TorchRecRunner(BenchmarkRunner):
         return Path(cfg.output_root) / "outputs" / cfg.run_id / "torchrec_ranks"
 
     def _build_torchrun_cmd(self, repo_root: Path, cfg: RunConfig) -> list[str]:
+        rdzv_endpoint = f"{cfg.master_addr}:{cfg.master_port}"
         cmd = [
-            "torchrun",
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
             "--nnodes",
             str(cfg.nnodes),
             "--node_rank",
             str(cfg.node_rank),
             "--nproc_per_node",
             str(cfg.nproc_per_node),
-            "--master_addr",
-            str(cfg.master_addr),
-            "--master_port",
-            str(cfg.master_port),
             "--rdzv_backend",
             str(cfg.rdzv_backend),
+            "--rdzv_endpoint",
+            rdzv_endpoint,
             "--rdzv_id",
             str(cfg.rdzv_id),
             "--tee",
             "3",
-            "--",
             str(repo_root / "model_zoo/rs_demo/run_mock_stress.py"),
             "--backend",
             "torchrec",
@@ -317,8 +357,6 @@ class TorchRecRunner(BenchmarkRunner):
             str(cfg.nnodes),
             "--node-rank",
             str(cfg.node_rank),
-            "--nproc",
-            str(cfg.nproc),
             "--nproc-per-node",
             str(cfg.nproc_per_node),
             "--master-addr",
@@ -386,7 +424,7 @@ class TorchRecRunner(BenchmarkRunner):
 
     def _run_distributed(self, repo_root: Path, cfg: RunConfig) -> dict[str, Any]:
         rank_dir = self._rank_output_dir(cfg)
-        rank_dir.mkdir(parents=True, exist_ok=True)
+        ensure_shared_dir(rank_dir)
 
         cmd = self._build_torchrun_cmd(repo_root, cfg)
 
@@ -432,7 +470,7 @@ class TorchRecRunner(BenchmarkRunner):
                 os.environ.get("WORLD_SIZE", str(cfg.nnodes * cfg.nproc_per_node))
             )
             worker_dir = Path(os.environ["RS_DEMO_TORCHREC_WORKER_DIR"])
-            worker_dir.mkdir(parents=True, exist_ok=True)
+            ensure_shared_dir(worker_dir)
             out_csv = worker_dir / f"rank{rank}.csv"
             rows = _run_single_or_dist_worker(
                 repo_root=repo_root,

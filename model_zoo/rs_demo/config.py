@@ -6,6 +6,14 @@ from datetime import datetime
 from pathlib import Path
 
 
+def ensure_shared_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o777)
+    except OSError:
+        pass
+
+
 @dataclass
 class RunConfig:
     num_embeddings: int = 200000
@@ -206,11 +214,11 @@ def populate_default_paths(cfg: RunConfig) -> None:
 
 
 def ensure_parent_dirs(cfg: RunConfig) -> None:
-    Path(cfg.jsonl).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.csv).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.server_log).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.torchrec_trace_dir).mkdir(parents=True, exist_ok=True)
-    Path(cfg.torchrec_main_csv).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.torchrec_main_agg_csv).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.torchrec_trace_csv).parent.mkdir(parents=True, exist_ok=True)
-    Path(cfg.torchrec_compare_csv).parent.mkdir(parents=True, exist_ok=True)
+    ensure_shared_dir(Path(cfg.jsonl).parent)
+    ensure_shared_dir(Path(cfg.csv).parent)
+    ensure_shared_dir(Path(cfg.server_log).parent)
+    ensure_shared_dir(Path(cfg.torchrec_trace_dir))
+    ensure_shared_dir(Path(cfg.torchrec_main_csv).parent)
+    ensure_shared_dir(Path(cfg.torchrec_main_agg_csv).parent)
+    ensure_shared_dir(Path(cfg.torchrec_trace_csv).parent)
+    ensure_shared_dir(Path(cfg.torchrec_compare_csv).parent)
