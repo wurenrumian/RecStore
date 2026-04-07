@@ -34,6 +34,26 @@ def summarize_recstore_csv(recstore_csv: Path) -> dict[str, float]:
     if not rows:
         raise ValueError(f"no rows found in recstore csv: {recstore_csv}")
 
+    emb_stage_ms = _mean(rows, "emb_stage_ms")
+    dense_fwd_ms = _mean(rows, "dense_fwd_ms")
+    backward_ms = _mean(rows, "backward_ms")
+    optimizer_ms = _mean(rows, "optimizer_ms")
+    step_total_ms = _mean(rows, "step_total_ms")
+    if (
+        emb_stage_ms is not None
+        and dense_fwd_ms is not None
+        and backward_ms is not None
+        and optimizer_ms is not None
+        and step_total_ms is not None
+    ):
+        return {
+            "emb_stage_ms": emb_stage_ms,
+            "dense_fwd_ms": dense_fwd_ms,
+            "backward_ms": backward_ms,
+            "optimizer_ms": optimizer_ms,
+            "step_total_ms": step_total_ms,
+        }
+
     network_us = _first_non_none(
         _mean(rows, "network_transport_us"),
         _mean(rows, "network_framework_us_approx"),
@@ -69,6 +89,29 @@ def summarize_torchrec_main_csv(torchrec_main_csv: Path) -> dict[str, float]:
     if not rows:
         raise ValueError(f"no rows found in torchrec main csv: {torchrec_main_csv}")
 
+    emb_stage_ms = _first_non_none(
+        _mean(rows, "emb_stage_ms"),
+        _mean(rows, "kv_extended_ms"),
+    )
+    dense_fwd_ms = _mean(rows, "dense_fwd_ms")
+    backward_ms = _mean(rows, "backward_ms")
+    optimizer_ms = _mean(rows, "optimizer_ms")
+    step_total_ms = _mean(rows, "step_total_ms")
+    if (
+        emb_stage_ms is not None
+        and dense_fwd_ms is not None
+        and backward_ms is not None
+        and optimizer_ms is not None
+        and step_total_ms is not None
+    ):
+        return {
+            "emb_stage_ms": emb_stage_ms,
+            "dense_fwd_ms": dense_fwd_ms,
+            "backward_ms": backward_ms,
+            "optimizer_ms": optimizer_ms,
+            "step_total_ms": step_total_ms,
+        }
+
     network_main_ms = _mean(rows, "collective_total_ms")
     network_extended_ms = _first_non_none(
         _mean(rows, "network_proxy_torchrec_extended_ms"),
@@ -98,28 +141,46 @@ def build_compare_rows(recstore_csv: Path, torchrec_main_csv: Path) -> list[dict
     recstore = summarize_recstore_csv(recstore_csv)
     torchrec = summarize_torchrec_main_csv(torchrec_main_csv)
 
-    pairs = [
-        (
-            "network_main",
-            recstore["network_proxy_ms"],
-            torchrec["network_proxy_ms"],
-        ),
-        (
-            "network_extended",
-            recstore["network_proxy_ms"],
-            torchrec["network_proxy_extended_ms"],
-        ),
-        (
-            "kv_strict",
-            recstore["kv_backend_ms"],
-            torchrec["kv_local_only_ms"],
-        ),
-        (
-            "server_vs_extended",
-            recstore["server_total_ms"],
-            torchrec["kv_extended_ms"],
-        ),
+    aligned_stage_keys = [
+        "emb_stage_ms",
+        "dense_fwd_ms",
+        "backward_ms",
+        "optimizer_ms",
+        "step_total_ms",
     ]
+    if all(key in recstore for key in aligned_stage_keys) and all(
+        key in torchrec for key in aligned_stage_keys
+    ):
+        pairs = [
+            ("emb_stage", recstore["emb_stage_ms"], torchrec["emb_stage_ms"]),
+            ("dense_fwd", recstore["dense_fwd_ms"], torchrec["dense_fwd_ms"]),
+            ("backward", recstore["backward_ms"], torchrec["backward_ms"]),
+            ("optimizer", recstore["optimizer_ms"], torchrec["optimizer_ms"]),
+            ("step_total", recstore["step_total_ms"], torchrec["step_total_ms"]),
+        ]
+    else:
+        pairs = [
+            (
+                "network_main",
+                recstore["network_proxy_ms"],
+                torchrec["network_proxy_ms"],
+            ),
+            (
+                "network_extended",
+                recstore["network_proxy_ms"],
+                torchrec["network_proxy_extended_ms"],
+            ),
+            (
+                "kv_strict",
+                recstore["kv_backend_ms"],
+                torchrec["kv_local_only_ms"],
+            ),
+            (
+                "server_vs_extended",
+                recstore["server_total_ms"],
+                torchrec["kv_extended_ms"],
+            ),
+        ]
 
     rows: list[dict[str, str | float]] = []
     for metric, recstore_ms, torchrec_ms in pairs:

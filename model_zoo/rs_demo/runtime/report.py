@@ -77,3 +77,13 @@ def finalize_torchrec_row(row: dict) -> dict:
         row["collective_total_ms"] + row["input_pack_ms"] + row["output_unpack_ms"]
     )
     return row
+
+
+def finalize_recstore_row(row: dict) -> dict:
+    row["emb_stage_ms"] = (
+        row["input_pack_ms"]
+        + row["embed_lookup_local_ms"]
+        + row["embed_pool_local_ms"]
+        + row["output_unpack_ms"]
+    )
+    return row

@@ -49,6 +49,18 @@ def _write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
     write_stage_csv(path, rows)
 
 
+def _pick_socket_ifname() -> str | None:
+    preferred = ("eno1", "eno8303")
+    try:
+        available = set(os.listdir("/sys/class/net"))
+    except OSError:
+        return None
+    for name in preferred:
+        if name in available:
+            return name
+    return None
+
+
 def _append_worker_debug(cfg: RunConfig, rank: int, message: str) -> None:
     debug_path = Path(cfg.output_root) / "outputs" / cfg.run_id / "torchrec_worker_debug.log"
     debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,22 +210,23 @@ def _run_single_or_dist_worker(
     dense_input_dim = cfg.embedding_dim * len(DEFAULT_CAT_NAMES) + 13
     dense_module = _build_dense_stack(torch, dense_input_dim).to(device)
     if use_dist:
-        dense_module = nn.parallel.DistributedDataParallel(
-            dense_module,
-            device_ids=[local_rank] if device.type == "cuda" else None,
-        )
+        _append_worker_debug(cfg, rank, "skip_dense_ddp")
 
     criterion = nn.BCEWithLogitsLoss()
+    _append_worker_debug(cfg, rank, "after_criterion")
+    _append_worker_debug(cfg, rank, "before_optimizer_init")
     optimizer = torch.optim.SGD(
         list(embedding_module.parameters()) + list(dense_module.parameters()),
         lr=0.01,
     )
+    _append_worker_debug(cfg, rank, "after_optimizer_init")
 
     profiler = build_torchrec_profiler(
         cfg,
         on_trace_ready=_make_trace_handler(cfg, rank) if cfg.torchrec_profiler else None,
     )
     profiler_context = profiler or nullcontext()
+    _append_worker_debug(cfg, rank, "before_training_loop")
 
     rows: list[dict[str, Any]] = []
     with profiler_context:
@@ -431,6 +444,11 @@ class TorchRecRunner(BenchmarkRunner):
         env = os.environ.copy()
         env["RS_DEMO_TORCHREC_WORKER"] = "1"
         env["RS_DEMO_TORCHREC_WORKER_DIR"] = str(rank_dir)
+        socket_ifname = _pick_socket_ifname()
+        if socket_ifname:
+            env.setdefault("NCCL_SOCKET_IFNAME", socket_ifname)
+            env.setdefault("GLOO_SOCKET_IFNAME", socket_ifname)
+        env.setdefault("NCCL_DEBUG", "WARN")
         res = subprocess.run(
             cmd,
             cwd=str(repo_root),

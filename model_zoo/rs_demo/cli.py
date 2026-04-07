@@ -135,6 +135,10 @@ def main(argv: list[str] | None = None) -> int:
         print("[rs_demo] analyzing embupdate stages...")
         analyze_output = analyze_embupdate(repo_root, cfg.jsonl, cfg.csv, top_n=20)
         print(analyze_output)
+        agg = aggregate_torchrec_main_csv(Path(cfg.recstore_main_csv))
+        write_aggregate_csv(Path(cfg.recstore_main_agg_csv), agg)
+        print(f"[rs_demo] recstore main csv: {cfg.recstore_main_csv}")
+        print(f"[rs_demo] recstore main aggregate csv: {cfg.recstore_main_agg_csv}")
 
         print(f"[rs_demo] jsonl: {cfg.jsonl}")
         print(f"[rs_demo] csv:   {cfg.csv}")

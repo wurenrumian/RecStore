@@ -36,6 +36,8 @@ class RunConfig:
     run_id: str = ""
     jsonl: str = ""
     csv: str = ""
+    recstore_main_csv: str = ""
+    recstore_main_agg_csv: str = ""
     library_path: str = ""
     server_log: str = ""
     data_dir: str = "model_zoo/torchrec_dlrm/processed_day_0_data"
@@ -109,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allocator", type=str, default="R2ShmMalloc")
     parser.add_argument("--jsonl", type=str, default="")
     parser.add_argument("--csv", type=str, default="")
+    parser.add_argument("--recstore-main-csv", type=str, default="")
+    parser.add_argument("--recstore-main-agg-csv", type=str, default="")
     parser.add_argument("--library-path", type=str, default="")
     parser.add_argument("--server-log", type=str, default="")
     parser.add_argument(
@@ -199,6 +203,10 @@ def populate_default_paths(cfg: RunConfig) -> None:
         cfg.jsonl = str(outputs_base / "recstore_events.jsonl")
     if not cfg.csv:
         cfg.csv = str(outputs_base / "recstore_embupdate.csv")
+    if not cfg.recstore_main_csv:
+        cfg.recstore_main_csv = str(outputs_base / "recstore_main.csv")
+    if not cfg.recstore_main_agg_csv:
+        cfg.recstore_main_agg_csv = str(outputs_base / "recstore_main_agg.csv")
     if not cfg.server_log:
         cfg.server_log = str(logs_base / "ps_server.log")
     if not cfg.torchrec_trace_dir:
@@ -216,6 +224,8 @@ def populate_default_paths(cfg: RunConfig) -> None:
 def ensure_parent_dirs(cfg: RunConfig) -> None:
     ensure_shared_dir(Path(cfg.jsonl).parent)
     ensure_shared_dir(Path(cfg.csv).parent)
+    ensure_shared_dir(Path(cfg.recstore_main_csv).parent)
+    ensure_shared_dir(Path(cfg.recstore_main_agg_csv).parent)
     ensure_shared_dir(Path(cfg.server_log).parent)
     ensure_shared_dir(Path(cfg.torchrec_trace_dir))
     ensure_shared_dir(Path(cfg.torchrec_main_csv).parent)

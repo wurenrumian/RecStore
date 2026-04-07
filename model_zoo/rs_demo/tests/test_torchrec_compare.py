@@ -12,6 +12,65 @@ from model_zoo.rs_demo.runtime.torchrec_compare import (
 
 
 class TestTorchRecCompare(unittest.TestCase):
+    def test_build_compare_rows_aligned_stage_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            recstore_csv = Path(tmpdir) / "recstore_main.csv"
+            torchrec_csv = Path(tmpdir) / "torchrec.csv"
+
+            with recstore_csv.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "emb_stage_ms",
+                        "dense_fwd_ms",
+                        "backward_ms",
+                        "optimizer_ms",
+                        "step_total_ms",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "emb_stage_ms": 12.0,
+                        "dense_fwd_ms": 4.0,
+                        "backward_ms": 5.0,
+                        "optimizer_ms": 6.0,
+                        "step_total_ms": 30.0,
+                    }
+                )
+
+            with torchrec_csv.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=[
+                        "kv_extended_ms",
+                        "dense_fwd_ms",
+                        "backward_ms",
+                        "optimizer_ms",
+                        "step_total_ms",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "kv_extended_ms": 10.0,
+                        "dense_fwd_ms": 3.0,
+                        "backward_ms": 4.0,
+                        "optimizer_ms": 5.0,
+                        "step_total_ms": 25.0,
+                    }
+                )
+
+            rows = build_compare_rows(recstore_csv, torchrec_csv)
+
+        by_metric = {row["metric"]: row for row in rows}
+        self.assertEqual(by_metric["emb_stage"]["recstore_ms"], 12.0)
+        self.assertEqual(by_metric["emb_stage"]["torchrec_ms"], 10.0)
+        self.assertEqual(by_metric["dense_fwd"]["delta_ms"], 1.0)
+        self.assertEqual(by_metric["backward"]["delta_ms"], 1.0)
+        self.assertEqual(by_metric["optimizer"]["delta_ms"], 1.0)
+        self.assertEqual(by_metric["step_total"]["delta_ms"], 5.0)
+
     def test_build_compare_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             recstore_csv = Path(tmpdir) / "recstore.csv"
