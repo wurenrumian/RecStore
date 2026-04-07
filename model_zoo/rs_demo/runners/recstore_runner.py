@@ -16,6 +16,7 @@ from ..data.dlrm_source import (
     convert_kjt_ids_to_fused_ids,
     inject_project_paths,
 )
+from ..runtime.aligned_training import build_dense_stack, run_dense_backward
 from ..runtime.report import finalize_recstore_row, summarize_us, write_stage_csv
 from .base import BenchmarkRunner
 
@@ -136,13 +137,9 @@ class RecStoreRunner(BenchmarkRunner):
 
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             dense_input_dim = cfg.embedding_dim * len(DEFAULT_CAT_NAMES) + 13
-            dense_module = torch.nn.Sequential(
-                torch.nn.Linear(dense_input_dim, 256),
-                torch.nn.ReLU(),
-                torch.nn.Linear(256, 1),
-            ).to(device)
+            dense_module = build_dense_stack(torch, dense_input_dim).to(device)
             criterion = torch.nn.BCEWithLogitsLoss()
-            optimizer = torch.optim.SGD(dense_module.parameters(), lr=0.01)
+            dense_optimizer = torch.optim.SGD(dense_module.parameters(), lr=0.01)
 
             read_lat_us: list[float] = []
             update_lat_us: list[float] = []
@@ -222,23 +219,29 @@ class RecStoreRunner(BenchmarkRunner):
                         torch.cuda.synchronize(device)
 
                 with stage_timer(row, "backward_ms"):
-                    loss.backward()
+                    pooled_grad = run_dense_backward(
+                        loss=loss,
+                        pooled=pooled,
+                        dense_module=dense_module,
+                        torch=torch,
+                        device=device,
+                    )
+
+                with stage_timer(row, "optimizer_ms"):
+                    dense_optimizer.step()
+                    dense_optimizer.zero_grad(set_to_none=True)
                     if device.type == "cuda":
                         torch.cuda.synchronize(device)
 
-                with stage_timer(row, "optimizer_ms"):
-                    optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
-                    if pooled.grad is None:
-                        raise RuntimeError("missing pooled embedding gradient for recstore update")
-                    grad_chunks = torch.chunk(pooled.grad.detach().to("cpu"), len(DEFAULT_CAT_NAMES), dim=1)
+                with stage_timer(row, "sparse_update_ms"):
+                    grad_chunks = torch.chunk(pooled_grad.to("cpu"), len(DEFAULT_CAT_NAMES), dim=1)
                     update_grads = torch.cat(grad_chunks, dim=0).contiguous()
                     client.emb_update_table("t_cat_0", read_ids, update_grads)
                     if device.type == "cuda":
                         torch.cuda.synchronize(device)
 
                 if step >= cfg.warmup_steps:
-                    update_lat_us.append(row["optimizer_ms"] * 1e3)
+                    update_lat_us.append(row["sparse_update_ms"] * 1e3)
                 known_fused_ids.update(read_ids.tolist())
                 row["step_total_ms"] = (time.perf_counter() - step_start) * 1e3
                 rows.append(finalize_recstore_row(row))

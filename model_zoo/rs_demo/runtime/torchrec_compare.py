@@ -38,12 +38,14 @@ def summarize_recstore_csv(recstore_csv: Path) -> dict[str, float]:
     dense_fwd_ms = _mean(rows, "dense_fwd_ms")
     backward_ms = _mean(rows, "backward_ms")
     optimizer_ms = _mean(rows, "optimizer_ms")
+    sparse_update_ms = _mean(rows, "sparse_update_ms")
     step_total_ms = _mean(rows, "step_total_ms")
     if (
         emb_stage_ms is not None
         and dense_fwd_ms is not None
         and backward_ms is not None
         and optimizer_ms is not None
+        and sparse_update_ms is not None
         and step_total_ms is not None
     ):
         return {
@@ -51,6 +53,7 @@ def summarize_recstore_csv(recstore_csv: Path) -> dict[str, float]:
             "dense_fwd_ms": dense_fwd_ms,
             "backward_ms": backward_ms,
             "optimizer_ms": optimizer_ms,
+            "sparse_update_ms": sparse_update_ms,
             "step_total_ms": step_total_ms,
         }
 
@@ -96,12 +99,14 @@ def summarize_torchrec_main_csv(torchrec_main_csv: Path) -> dict[str, float]:
     dense_fwd_ms = _mean(rows, "dense_fwd_ms")
     backward_ms = _mean(rows, "backward_ms")
     optimizer_ms = _mean(rows, "optimizer_ms")
+    sparse_update_ms = _mean(rows, "sparse_update_ms")
     step_total_ms = _mean(rows, "step_total_ms")
     if (
         emb_stage_ms is not None
         and dense_fwd_ms is not None
         and backward_ms is not None
         and optimizer_ms is not None
+        and sparse_update_ms is not None
         and step_total_ms is not None
     ):
         return {
@@ -109,6 +114,7 @@ def summarize_torchrec_main_csv(torchrec_main_csv: Path) -> dict[str, float]:
             "dense_fwd_ms": dense_fwd_ms,
             "backward_ms": backward_ms,
             "optimizer_ms": optimizer_ms,
+            "sparse_update_ms": sparse_update_ms,
             "step_total_ms": step_total_ms,
         }
 
@@ -146,6 +152,7 @@ def build_compare_rows(recstore_csv: Path, torchrec_main_csv: Path) -> list[dict
         "dense_fwd_ms",
         "backward_ms",
         "optimizer_ms",
+        "sparse_update_ms",
         "step_total_ms",
     ]
     if all(key in recstore for key in aligned_stage_keys) and all(
@@ -156,6 +163,11 @@ def build_compare_rows(recstore_csv: Path, torchrec_main_csv: Path) -> list[dict
             ("dense_fwd", recstore["dense_fwd_ms"], torchrec["dense_fwd_ms"]),
             ("backward", recstore["backward_ms"], torchrec["backward_ms"]),
             ("optimizer", recstore["optimizer_ms"], torchrec["optimizer_ms"]),
+            (
+                "sparse_update",
+                recstore["sparse_update_ms"],
+                torchrec["sparse_update_ms"],
+            ),
             ("step_total", recstore["step_total_ms"], torchrec["step_total_ms"]),
         ]
     else:

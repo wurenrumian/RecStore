@@ -25,6 +25,7 @@ class TestTorchRecCompare(unittest.TestCase):
                         "dense_fwd_ms",
                         "backward_ms",
                         "optimizer_ms",
+                        "sparse_update_ms",
                         "step_total_ms",
                     ],
                 )
@@ -35,6 +36,7 @@ class TestTorchRecCompare(unittest.TestCase):
                         "dense_fwd_ms": 4.0,
                         "backward_ms": 5.0,
                         "optimizer_ms": 6.0,
+                        "sparse_update_ms": 7.0,
                         "step_total_ms": 30.0,
                     }
                 )
@@ -43,20 +45,22 @@ class TestTorchRecCompare(unittest.TestCase):
                 writer = csv.DictWriter(
                     f,
                     fieldnames=[
-                        "kv_extended_ms",
+                        "emb_stage_ms",
                         "dense_fwd_ms",
                         "backward_ms",
                         "optimizer_ms",
+                        "sparse_update_ms",
                         "step_total_ms",
                     ],
                 )
                 writer.writeheader()
                 writer.writerow(
                     {
-                        "kv_extended_ms": 10.0,
+                        "emb_stage_ms": 10.0,
                         "dense_fwd_ms": 3.0,
                         "backward_ms": 4.0,
                         "optimizer_ms": 5.0,
+                        "sparse_update_ms": 6.0,
                         "step_total_ms": 25.0,
                     }
                 )
@@ -69,6 +73,7 @@ class TestTorchRecCompare(unittest.TestCase):
         self.assertEqual(by_metric["dense_fwd"]["delta_ms"], 1.0)
         self.assertEqual(by_metric["backward"]["delta_ms"], 1.0)
         self.assertEqual(by_metric["optimizer"]["delta_ms"], 1.0)
+        self.assertEqual(by_metric["sparse_update"]["delta_ms"], 1.0)
         self.assertEqual(by_metric["step_total"]["delta_ms"], 5.0)
 
     def test_build_compare_rows(self) -> None:

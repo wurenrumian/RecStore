@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import RunConfig, ensure_shared_dir, validate_torchrec_config
+from ..runtime.aligned_training import build_dense_stack, run_dense_backward
 from ..runtime.report import finalize_torchrec_row, write_stage_csv
 from ..runtime.torchrec_profile import build_torchrec_profiler
 from .base import BenchmarkRunner
@@ -92,16 +93,6 @@ def _merge_rank_outputs(paths: list[Path], out_path: Path) -> list[dict[str, Any
     merged.sort(key=lambda row: (int(row.get("rank", 0)), int(row.get("step", 0))))
     _write_rows(out_path, merged)
     return merged
-
-
-def _build_dense_stack(torch, input_dim: int):
-    from torch import nn
-
-    return nn.Sequential(
-        nn.Linear(input_dim, 256),
-        nn.ReLU(),
-        nn.Linear(256, 1),
-    )
 
 
 def _make_trace_handler(cfg: RunConfig, rank: int):
@@ -208,17 +199,15 @@ def _run_single_or_dist_worker(
         collective_measured = 0
 
     dense_input_dim = cfg.embedding_dim * len(DEFAULT_CAT_NAMES) + 13
-    dense_module = _build_dense_stack(torch, dense_input_dim).to(device)
+    dense_module = build_dense_stack(torch, dense_input_dim).to(device)
     if use_dist:
         _append_worker_debug(cfg, rank, "skip_dense_ddp")
 
     criterion = nn.BCEWithLogitsLoss()
     _append_worker_debug(cfg, rank, "after_criterion")
     _append_worker_debug(cfg, rank, "before_optimizer_init")
-    optimizer = torch.optim.SGD(
-        list(embedding_module.parameters()) + list(dense_module.parameters()),
-        lr=0.01,
-    )
+    dense_optimizer = torch.optim.SGD(dense_module.parameters(), lr=0.01)
+    sparse_optimizer = torch.optim.SGD(embedding_module.parameters(), lr=0.01)
     _append_worker_debug(cfg, rank, "after_optimizer_init")
 
     profiler = build_torchrec_profiler(
@@ -301,22 +290,37 @@ def _run_single_or_dist_worker(
                 if labels.ndim == 1:
                     labels = labels.view(-1, 1)
                 loss = criterion(logits, labels)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
                 _append_worker_debug(cfg, rank, f"after_dense_fwd step={step}")
 
             with stage_timer(row, "backward_ms"):
                 _append_worker_debug(cfg, rank, f"before_backward step={step}")
-                loss.backward()
-                if device.type == "cuda":
-                    torch.cuda.synchronize(device)
+                pooled_grad = run_dense_backward(
+                    loss=loss,
+                    pooled=pooled,
+                    dense_module=dense_module,
+                    torch=torch,
+                    device=device,
+                )
                 _append_worker_debug(cfg, rank, f"after_backward step={step}")
 
             with stage_timer(row, "optimizer_ms"):
                 _append_worker_debug(cfg, rank, f"before_optimizer step={step}")
-                optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
+                dense_optimizer.step()
+                dense_optimizer.zero_grad(set_to_none=True)
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
                 _append_worker_debug(cfg, rank, f"after_optimizer step={step}")
+
+            with stage_timer(row, "sparse_update_ms"):
+                _append_worker_debug(cfg, rank, f"before_sparse_update step={step}")
+                pooled.backward(pooled_grad)
+                sparse_optimizer.step()
+                sparse_optimizer.zero_grad(set_to_none=True)
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
+                _append_worker_debug(cfg, rank, f"after_sparse_update step={step}")
 
             if profiler is not None:
                 profiler.step()

@@ -73,6 +73,7 @@ def finalize_torchrec_row(row: dict) -> dict:
         + row["embed_pool_local_ms"]
         + row["output_unpack_ms"]
     )
+    row["emb_stage_ms"] = row["kv_extended_ms"]
     row["network_proxy_torchrec_extended_ms"] = (
         row["collective_total_ms"] + row["input_pack_ms"] + row["output_unpack_ms"]
     )
