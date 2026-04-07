@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import socket
+import tempfile
 import unittest
+from pathlib import Path
 
-from model_zoo.rs_demo.runtime.server import choose_available_ports
+from model_zoo.rs_demo.runtime.server import (
+    choose_available_ports,
+    make_runtime_dir,
+    resolve_kv_data_path,
+)
 
 
 class TestChooseAvailablePorts(unittest.TestCase):
@@ -28,7 +34,34 @@ class TestChooseAvailablePorts(unittest.TestCase):
             self.assertNotEqual((got0, got1), (p0, p1))
             self.assertNotEqual(got0, got1)
 
+    def test_make_runtime_dir_uses_output_root_and_run_id(self) -> None:
+        base_cfg = {"cache_ps": {}, "distributed_client": {"servers": []}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir, runtime_cfg_path = make_runtime_dir(
+                base_cfg=base_cfg,
+                host="127.0.0.1",
+                port0=15123,
+                port1=15124,
+                allocator="PersistLoopShmMalloc",
+                output_root=tmpdir,
+                run_id="case-a",
+                ps_type="BRPC",
+            )
+            self.assertTrue(str(runtime_dir).startswith(f"{tmpdir}/runtime/case-a"))
+            self.assertEqual(runtime_cfg_path, runtime_dir / "recstore_config.json")
+            self.assertTrue(runtime_cfg_path.exists())
+            runtime_cfg = runtime_cfg_path.read_text(encoding="utf-8")
+            self.assertIn(str(Path(tmpdir) / "runtime" / "case-a"), runtime_cfg)
+
+    def test_r2shmmalloc_kv_path_falls_back_to_local_tmp(self) -> None:
+        path = resolve_kv_data_path(
+            output_root="/nas/home/shq/docker/rs_demo",
+            run_id="case-r2",
+            path_suffix="abc123",
+            allocator="R2ShmMalloc",
+        )
+        self.assertEqual(path, "/tmp/rs_demo_kv/case-r2/kv_abc123")
+
 
 if __name__ == "__main__":
     unittest.main()
-

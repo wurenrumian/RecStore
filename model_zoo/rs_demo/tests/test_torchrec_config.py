@@ -7,10 +7,50 @@ from pathlib import Path
 from unittest import mock
 
 from model_zoo.rs_demo import cli
-from model_zoo.rs_demo.config import parse_config, validate_torchrec_config
+from model_zoo.rs_demo.config import (
+    ensure_run_id,
+    parse_config,
+    populate_default_paths,
+    validate_torchrec_config,
+)
 
 
 class TestTorchRecConfig(unittest.TestCase):
+    def test_torchrec_distributed_fields_parse(self) -> None:
+        cfg = parse_config(
+            [
+                "--backend",
+                "torchrec",
+                "--nnodes",
+                "2",
+                "--node-rank",
+                "1",
+                "--nproc-per-node",
+                "4",
+                "--master-addr",
+                "10.0.2.191",
+                "--master-port",
+                "29600",
+                "--rdzv-backend",
+                "c10d",
+                "--rdzv-id",
+                "demo-run",
+                "--output-root",
+                "/nas/home/shq/docker/rs_demo",
+                "--run-id",
+                "case-a",
+            ]
+        )
+        self.assertEqual(cfg.nnodes, 2)
+        self.assertEqual(cfg.node_rank, 1)
+        self.assertEqual(cfg.nproc_per_node, 4)
+        self.assertEqual(cfg.master_addr, "10.0.2.191")
+        self.assertEqual(cfg.master_port, 29600)
+        self.assertEqual(cfg.rdzv_backend, "c10d")
+        self.assertEqual(cfg.rdzv_id, "demo-run")
+        self.assertEqual(cfg.output_root, "/nas/home/shq/docker/rs_demo")
+        self.assertEqual(cfg.run_id, "case-a")
+
     def test_torchrec_backend_parses_profiler_flags(self) -> None:
         cfg = parse_config(
             [
@@ -34,6 +74,7 @@ class TestTorchRecConfig(unittest.TestCase):
             ]
         )
         self.assertEqual(cfg.backend, "torchrec")
+        self.assertEqual(cfg.nproc, 1)
         self.assertTrue(cfg.torchrec_profiler)
         self.assertEqual(cfg.torchrec_profiler_warmup, 1)
         self.assertEqual(cfg.torchrec_profiler_active, 3)
@@ -44,9 +85,28 @@ class TestTorchRecConfig(unittest.TestCase):
         self.assertEqual(cfg.torchrec_trace_csv, "/tmp/example/trace.csv")
 
     def test_torchrec_no_start_server_flag(self) -> None:
-        cfg = parse_config(["--backend", "torchrec", "--no-start-server"])
+        cfg = parse_config(["--backend", "torchrec", "--nproc", "4", "--no-start-server"])
         self.assertEqual(cfg.backend, "torchrec")
+        self.assertEqual(cfg.nproc, 4)
         self.assertFalse(cfg.start_server)
+
+    def test_parse_config_defaults_nproc_per_node_to_nproc(self) -> None:
+        cfg = parse_config(["--backend", "torchrec", "--nproc", "4"])
+        self.assertEqual(cfg.nproc_per_node, 4)
+
+    def test_torchrec_nproc_per_node_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "--nproc-per-node must be greater than 0"):
+            validate_torchrec_config(
+                parse_config(["--backend", "torchrec", "--nproc-per-node", "0"])
+            )
+
+    def test_torchrec_node_rank_must_be_in_range(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "--node-rank must be within \\[0, nnodes\\)"):
+            validate_torchrec_config(
+                parse_config(
+                    ["--backend", "torchrec", "--nnodes", "2", "--node-rank", "2"]
+                )
+            )
 
     def test_torchrec_profiler_allows_subargs_when_enabled(self) -> None:
         cfg = parse_config(
@@ -81,6 +141,56 @@ class TestTorchRecConfig(unittest.TestCase):
                 ]
             )
             validate_torchrec_config(cfg)
+
+    def test_ensure_run_id_generates_when_missing(self) -> None:
+        cfg = parse_config(["--backend", "torchrec"])
+        cfg.run_id = ""
+        ensure_run_id(cfg)
+        self.assertTrue(cfg.run_id.startswith("run_"))
+
+    def test_default_output_root_uses_shared_nas_path(self) -> None:
+        cfg = parse_config(["--backend", "torchrec"])
+        self.assertEqual(cfg.output_root, "/nas/home/shq/docker/rs_demo")
+
+    def test_populate_default_paths_moves_outputs_to_output_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = parse_config(["--backend", "torchrec"])
+            cfg.output_root = tmpdir
+            cfg.run_id = "run_test"
+            populate_default_paths(cfg)
+            self.assertEqual(
+                cfg.jsonl, str(Path(tmpdir) / "outputs" / "run_test" / "recstore_events.jsonl")
+            )
+            self.assertEqual(
+                cfg.csv, str(Path(tmpdir) / "outputs" / "run_test" / "recstore_embupdate.csv")
+            )
+            self.assertEqual(
+                cfg.torchrec_main_csv,
+                str(Path(tmpdir) / "outputs" / "run_test" / "torchrec_main.csv"),
+            )
+            self.assertEqual(
+                cfg.torchrec_main_agg_csv,
+                str(Path(tmpdir) / "outputs" / "run_test" / "torchrec_main_agg.csv"),
+            )
+            self.assertEqual(
+                cfg.torchrec_trace_dir,
+                str(Path(tmpdir) / "outputs" / "run_test" / "torchrec_traces"),
+            )
+            self.assertEqual(
+                cfg.torchrec_trace_csv,
+                str(Path(tmpdir) / "outputs" / "run_test" / "torchrec_trace.csv"),
+            )
+            self.assertEqual(
+                cfg.server_log, str(Path(tmpdir) / "logs" / "run_test" / "ps_server.log")
+            )
+
+    def test_populate_default_paths_respects_explicit_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = parse_config(["--backend", "torchrec", "--jsonl", "/tmp/custom.jsonl"])
+            cfg.output_root = tmpdir
+            cfg.run_id = "run_test"
+            populate_default_paths(cfg)
+            self.assertEqual(cfg.jsonl, "/tmp/custom.jsonl")
 
     def test_cli_writes_trace_csv_only_when_profiler_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -156,15 +266,8 @@ class TestTorchRecConfig(unittest.TestCase):
 
     def test_cli_does_not_write_trace_csv_when_profiler_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            default_trace_csv = Path("/tmp/rs_demo_torchrec_trace.csv")
-            default_main_csv = Path("/tmp/rs_demo_torchrec_main.csv")
-            default_main_agg_csv = Path("/tmp/rs_demo_torchrec_main_agg.csv")
-            if default_trace_csv.exists():
-                default_trace_csv.unlink()
-            if default_main_csv.exists():
-                default_main_csv.unlink()
-            if default_main_agg_csv.exists():
-                default_main_agg_csv.unlink()
+            run_id = "no-profiler"
+            output_root = Path(tmpdir)
 
             class _FakeRunner:
                 def run(self, repo_root, cfg):
@@ -181,10 +284,16 @@ class TestTorchRecConfig(unittest.TestCase):
                         "--steps",
                         "1",
                         "--no-start-server",
+                        "--output-root",
+                        str(output_root),
+                        "--run-id",
+                        run_id,
                     ]
                 )
 
             self.assertEqual(rc, 0)
+            default_trace_csv = output_root / "outputs" / run_id / "torchrec_trace.csv"
+            default_main_agg_csv = output_root / "outputs" / run_id / "torchrec_main_agg.csv"
             self.assertFalse(default_trace_csv.exists())
             self.assertTrue(default_main_agg_csv.exists())
 
