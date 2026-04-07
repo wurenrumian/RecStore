@@ -1,4 +1,5 @@
 #include "framework/op.h"
+#include "framework/ps_client_factory.h"
 #include "ps/grpc/grpc_ps_client.h"
 #include "base/factory.h"
 #include <iostream>
@@ -111,37 +112,7 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 namespace recstore {
 
 BasePSClient* create_ps_client_from_config(const json& config) {
-  std::string ps_type = "GRPC";
-  try {
-    if (config.contains("cache_ps") && config["cache_ps"].contains("ps_type")) {
-      ps_type = config["cache_ps"]["ps_type"].get<std::string>();
-    }
-  } catch (...) {
-  }
-
-  if (false && config.contains("distributed_client")) {
-    std::string type_key =
-        (ps_type == "BRPC") ? "distributed_brpc" : "distributed_grpc";
-    BasePSClient* client =
-        base::Factory<BasePSClient, json>::NewInstance(type_key, config);
-    if (client)
-      return client;
-  }
-
-  json client_config;
-  if (config.contains("client")) {
-    client_config = config["client"];
-  } else {
-    client_config = json{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}};
-  }
-
-  std::string type_key = (ps_type == "BRPC") ? "brpc" : "grpc";
-  BasePSClient* client =
-      base::Factory<BasePSClient, json>::NewInstance(type_key, client_config);
-  if (client == nullptr) {
-    return new GRPCParameterClient(client_config);
-  }
-  return client;
+  return CreateFrameworkPSClient(config);
 }
 
 json GetGlobalConfig() {

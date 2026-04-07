@@ -229,9 +229,9 @@ auto client = base::Factory<recstore::BasePSClient, json>::NewInstance(
 
 ## 10. RDMA 子目录 (`rdma/`)
 
-- `PetPSClient` 等实现 `petps::BaseParameterClient`（定义在 `rdma/base_client.h`），依赖 DSM（`third_party/Mayfly-main`），走 RDMA 路径而非 gRPC/bRPC `ParameterService`。
-- 工厂键为 `"PetPSClient"`（与 `BasePSClient` 的 `"grpc"`/`"brpc"` 不同族）。
-- 适用于低延迟、与 **PetPS / AllShards** 相关的实验或部署；与 `ps_server` + Protobuf 路线**并行存在**，不要混用同一客户端基类。
+- `PetPSClient` / `AllShardsParameterClientWrapper` 继续实现 `rdma/base_client.h` 中的 `BaseParameterClient`，这是 RDMA 原生数据面抽象，不等同于 `ps/base/base_client.h` 中的 `BasePSClient`。
+- RDMA 已具备独立 `Get/Put`、多分片路由和集成测试能力，但主框架仍不会把 `cache_ps.ps_type = RDMA` 当作可直接接入 `KVClientOp` 的类型。
+- 如果后续需要接入主框架，必须新增专门 adapter，而不是修改 RDMA 原生基类去伪装成 grpc/brpc 路线。
 
 ---
 

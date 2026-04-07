@@ -117,6 +117,48 @@ target_link_libraries(test_index PUBLIC
 )
 add_test(NAME test_index COMMAND test_index)
 
+add_executable(test_ps_client_factory test_ps_client_factory.cpp)
+target_link_libraries(test_ps_client_factory PUBLIC
+    base
+    grpc_ps_client
+    brpc_ps_client
+    gflags
+    glog
+    gtest
+    gtest_main
+    pthread
+)
+target_link_options(test_ps_client_factory PUBLIC -Wl,--no-as-needed)
+add_test(NAME test_ps_client_factory COMMAND test_ps_client_factory)
+
+add_executable(test_rdma_protocol test_rdma_protocol.cpp)
+target_link_libraries(test_rdma_protocol PUBLIC
+    base
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_rdma_protocol COMMAND test_rdma_protocol)
+
+add_executable(test_allshards_ps_client test_allshards_ps_client.cpp)
+target_link_libraries(test_allshards_ps_client PUBLIC
+    base
+    wq_ps_client
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_allshards_ps_client COMMAND test_allshards_ps_client)
+
+add_executable(test_ps_transport_benchmark test_ps_transport_benchmark.cpp)
+target_link_libraries(test_ps_transport_benchmark PUBLIC
+    base
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_ps_transport_benchmark COMMAND test_ps_transport_benchmark)
+
 # report 单元测试
 if(CMAKE_BUILD_TYPE MATCHES "Debug" AND USE_PERF_REPORT)
     add_executable(test_report test_report.cpp)
