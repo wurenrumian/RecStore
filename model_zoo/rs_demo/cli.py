@@ -2,10 +2,17 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
-from .config import RunConfig, ensure_parent_dirs, parse_config, validate_torchrec_config
+from .config import (
+    RunConfig,
+    ensure_parent_dirs,
+    parse_config,
+    populate_default_paths,
+    validate_torchrec_config,
+)
 from .runtime.report import analyze_embupdate, setup_local_report_env
 from .runtime.torchrec_aggregate import aggregate_torchrec_main_csv, write_aggregate_csv
 from .runtime.torchrec_compare import build_compare_rows, write_compare_csv
@@ -41,14 +48,17 @@ def build_runner(cfg: RunConfig, runtime_dir: Path):
 
 def main(argv: list[str] | None = None) -> int:
     cfg = parse_config(argv)
+    populate_default_paths(cfg)
     validate_torchrec_config(cfg)
-    if cfg.backend == "torchrec" and cfg.torchrec_profiler:
+    is_torchrec_worker = os.environ.get("RS_DEMO_TORCHREC_WORKER") == "1"
+    if cfg.backend == "torchrec" and cfg.torchrec_profiler and not is_torchrec_worker:
         run_dir = Path(cfg.torchrec_trace_dir) / datetime.now().strftime(
             "run_%Y%m%d_%H%M%S_%f"
         )
         cfg.torchrec_trace_dir = str(run_dir)
     ensure_parent_dirs(cfg)
-    setup_local_report_env(cfg.jsonl)
+    if cfg.backend == "recstore":
+        setup_local_report_env(cfg.jsonl)
 
     if cfg.backend != "recstore":
         cfg.start_server = False
@@ -68,14 +78,19 @@ def main(argv: list[str] | None = None) -> int:
             cfg.server_host, cfg.server_port0, cfg.server_port1
         )
 
-    runtime_dir, runtime_cfg_path = make_runtime_dir(
-        base_cfg=base_cfg,
-        host=cfg.server_host,
-        port0=cfg.server_port0,
-        port1=cfg.server_port1,
-        allocator=cfg.allocator,
-        ps_type=cfg.ps_type,
-    )
+    runtime_dir = Path(cfg.output_root) / "runtime" / cfg.run_id
+    runtime_cfg_path = runtime_dir / "recstore_config.json"
+    if cfg.backend == "recstore":
+        runtime_dir, runtime_cfg_path = make_runtime_dir(
+            base_cfg=base_cfg,
+            host=cfg.server_host,
+            port0=cfg.server_port0,
+            port1=cfg.server_port1,
+            allocator=cfg.allocator,
+            output_root=cfg.output_root,
+            run_id=cfg.run_id,
+            ps_type=cfg.ps_type,
+        )
 
     proc = None
     try:
@@ -98,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         runner = build_runner(cfg, runtime_dir)
         _run_result = runner.run(repo_root, cfg)
         if cfg.backend == "torchrec":
+            if is_torchrec_worker:
+                return 0
             print(f"[rs_demo] torchrec main csv: {cfg.torchrec_main_csv}")
             agg = aggregate_torchrec_main_csv(Path(cfg.torchrec_main_csv))
             write_aggregate_csv(Path(cfg.torchrec_main_agg_csv), agg)
@@ -118,6 +135,10 @@ def main(argv: list[str] | None = None) -> int:
         print("[rs_demo] analyzing embupdate stages...")
         analyze_output = analyze_embupdate(repo_root, cfg.jsonl, cfg.csv, top_n=20)
         print(analyze_output)
+        agg = aggregate_torchrec_main_csv(Path(cfg.recstore_main_csv))
+        write_aggregate_csv(Path(cfg.recstore_main_agg_csv), agg)
+        print(f"[rs_demo] recstore main csv: {cfg.recstore_main_csv}")
+        print(f"[rs_demo] recstore main aggregate csv: {cfg.recstore_main_agg_csv}")
 
         print(f"[rs_demo] jsonl: {cfg.jsonl}")
         print(f"[rs_demo] csv:   {cfg.csv}")
