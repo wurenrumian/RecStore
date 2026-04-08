@@ -28,18 +28,31 @@ def summarize_us(values: list[float]) -> str:
     )
 
 
-def analyze_embupdate(repo_root: Path, jsonl_path: str, csv_path: str, top_n: int = 20) -> str:
+def analyze_embupdate(
+    repo_root: Path,
+    jsonl_path: str,
+    csv_path: str,
+    top_n: int = 20,
+    extra_inputs: list[str] | None = None,
+) -> str:
     cmd = [
         sys.executable,
         str(repo_root / "src/test/scripts/analyze_embupdate_stages.py"),
         "--input",
         jsonl_path,
-        "--group-by-prefix",
-        "--export-csv",
-        csv_path,
-        "--top",
-        str(top_n),
     ]
+    for path in extra_inputs or []:
+        if path:
+            cmd.extend(["--input", path])
+    cmd.extend(
+        [
+            "--group-by-prefix",
+            "--export-csv",
+            csv_path,
+            "--top",
+            str(top_n),
+        ]
+    )
     res = subprocess.run(
         cmd,
         cwd=str(repo_root),

@@ -14,9 +14,16 @@ from ..data.dlrm_source import (
     build_table_offsets_from_eb_configs,
     build_train_dataloader,
     convert_kjt_ids_to_fused_ids,
+    get_default_cat_names,
     inject_project_paths,
 )
-from ..runtime.aligned_training import build_dense_stack, run_dense_backward
+from ..runtime.aligned_training import (
+    build_dense_stack,
+    prepare_dense_input,
+    run_dense_backward,
+    sync_device,
+)
+from ..runtime.recstore_distributed import ShardedRecstoreClient
 from ..runtime.report import finalize_recstore_row, summarize_us, write_stage_csv
 from .base import BenchmarkRunner
 
@@ -61,8 +68,8 @@ class RecStoreRunner(BenchmarkRunner):
 
     def run(self, repo_root: Path, cfg: RunConfig) -> dict:
         inject_project_paths(repo_root)
-        from torchrec.datasets.criteo import DEFAULT_CAT_NAMES  # type: ignore
         from client import RecstoreClient  # type: ignore
+        default_cat_names = get_default_cat_names()
 
         library_path = detect_library_path(repo_root, cfg.library_path)
         print(f"[rs_demo] repo_root={repo_root}")
@@ -73,7 +80,12 @@ class RecStoreRunner(BenchmarkRunner):
         try:
             os.chdir(str(self.runtime_dir))
             torch.manual_seed(cfg.seed)
-            client = RecstoreClient(library_path=str(library_path))
+            raw_client = RecstoreClient(library_path=str(library_path))
+            client = ShardedRecstoreClient(raw_client, self.runtime_dir)
+            if cfg.read_before_update and cfg.read_mode == "prefetch":
+                print("[rs_demo] sharded recstore path uses prefetch read mode")
+            elif cfg.read_mode != "direct":
+                print("[rs_demo] unknown read mode, fallback to direct read mode")
 
             dataset, dataloader = build_train_dataloader(
                 repo_root=repo_root,
@@ -90,7 +102,7 @@ class RecStoreRunner(BenchmarkRunner):
                     "embedding_dim": int(cfg.embedding_dim),
                     "feature_names": [feature_name],
                 }
-                for feature_name in DEFAULT_CAT_NAMES
+                for feature_name in default_cat_names
             ]
 
             t0 = time.perf_counter()
@@ -136,7 +148,7 @@ class RecStoreRunner(BenchmarkRunner):
             )
 
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            dense_input_dim = cfg.embedding_dim * len(DEFAULT_CAT_NAMES) + 13
+            dense_input_dim = cfg.embedding_dim * len(default_cat_names) + 13
             dense_module = build_dense_stack(torch, dense_input_dim).to(device)
             criterion = torch.nn.BCEWithLogitsLoss()
             dense_optimizer = torch.optim.SGD(dense_module.parameters(), lr=0.01)
@@ -187,11 +199,10 @@ class RecStoreRunner(BenchmarkRunner):
 
                 embeddings = None
                 with stage_timer(row, "embed_lookup_local_ms"):
-                    if cfg.read_mode == "direct":
-                        embeddings = client.emb_read(read_ids, cfg.embedding_dim)
+                    if cfg.read_before_update and cfg.read_mode == "prefetch":
+                        embeddings = client.emb_read_prefetch(read_ids, cfg.embedding_dim)
                     else:
-                        pid = client.emb_prefetch(read_ids)
-                        embeddings = client.emb_wait_result(pid, cfg.embedding_dim)
+                        embeddings = client.emb_read(read_ids, cfg.embedding_dim)
                 if embeddings is None:
                     raise RuntimeError("recstore emb_read returned no embeddings")
                 if step >= cfg.warmup_steps:
@@ -199,24 +210,26 @@ class RecStoreRunner(BenchmarkRunner):
 
                 with stage_timer(row, "embed_pool_local_ms"):
                     pooled_chunks = []
-                    for table_idx in range(len(DEFAULT_CAT_NAMES)):
+                    for table_idx in range(len(default_cat_names)):
                         start = table_idx * batch_rows
                         end = start + batch_rows
                         pooled_chunks.append(embeddings[start:end])
                     pooled_cpu = torch.cat(pooled_chunks, dim=1)
 
                 with stage_timer(row, "output_unpack_ms"):
-                    pooled = pooled_cpu.to(device).detach().requires_grad_(True)
-                    dense_input = torch.cat([dense_batch.to(device), pooled], dim=1)
+                    dense_input, pooled, labels = prepare_dense_input(
+                        dense_batch=dense_batch,
+                        pooled_source=pooled_cpu,
+                        labels_batch=labels_batch,
+                        torch=torch,
+                        device=device,
+                    )
 
                 with stage_timer(row, "dense_fwd_ms"):
+                    sync_device(torch, device)
                     logits = dense_module(dense_input)
-                    labels = labels_batch.to(device).float()
-                    if labels.ndim == 1:
-                        labels = labels.view(-1, 1)
                     loss = criterion(logits, labels)
-                    if device.type == "cuda":
-                        torch.cuda.synchronize(device)
+                    sync_device(torch, device)
 
                 with stage_timer(row, "backward_ms"):
                     pooled_grad = run_dense_backward(
@@ -228,17 +241,17 @@ class RecStoreRunner(BenchmarkRunner):
                     )
 
                 with stage_timer(row, "optimizer_ms"):
+                    sync_device(torch, device)
                     dense_optimizer.step()
                     dense_optimizer.zero_grad(set_to_none=True)
-                    if device.type == "cuda":
-                        torch.cuda.synchronize(device)
+                    sync_device(torch, device)
 
                 with stage_timer(row, "sparse_update_ms"):
-                    grad_chunks = torch.chunk(pooled_grad.to("cpu"), len(DEFAULT_CAT_NAMES), dim=1)
+                    sync_device(torch, device)
+                    grad_chunks = torch.chunk(pooled_grad.to("cpu"), len(default_cat_names), dim=1)
                     update_grads = torch.cat(grad_chunks, dim=0).contiguous()
                     client.emb_update_table("t_cat_0", read_ids, update_grads)
-                    if device.type == "cuda":
-                        torch.cuda.synchronize(device)
+                    sync_device(torch, device)
 
                 if step >= cfg.warmup_steps:
                     update_lat_us.append(row["sparse_update_ms"] * 1e3)

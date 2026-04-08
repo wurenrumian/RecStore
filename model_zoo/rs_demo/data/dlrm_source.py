@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import sys
 from pathlib import Path
 
@@ -21,8 +22,7 @@ def build_kjt_batch_from_dense_sparse_labels(
     labels_batch: torch.Tensor,
 ):
     del labels_batch
-    from torchrec.datasets.criteo import DEFAULT_CAT_NAMES
-    from torchrec.sparse.jagged_tensor import KeyedJaggedTensor
+    cat_names = get_default_cat_names()
 
     sparse_mat = sparse_batch.to(torch.long)
     batch_size = sparse_mat.shape[0]
@@ -31,12 +31,58 @@ def build_kjt_batch_from_dense_sparse_labels(
     one_lengths = torch.ones(batch_size, dtype=torch.int32, device=values.device)
     lengths = torch.cat([one_lengths for _ in range(26)], dim=0)
 
-    kjt = KeyedJaggedTensor.from_lengths_sync(
-        keys=DEFAULT_CAT_NAMES,
-        values=values,
-        lengths=lengths,
-    )
+    kjt = build_sparse_features(cat_names, values, lengths)
     return dense_batch, kjt
+
+
+def get_default_cat_names() -> list[str]:
+    try:
+        criteo = importlib.import_module("torchrec.datasets.criteo")
+        return list(criteo.DEFAULT_CAT_NAMES)
+    except ModuleNotFoundError:
+        return [f"cat_{idx}" for idx in range(26)]
+
+
+class _SimpleJaggedValues:
+    def __init__(self, values: torch.Tensor) -> None:
+        self._values = values
+
+    def values(self) -> torch.Tensor:
+        return self._values
+
+
+class _SimpleKeyedJaggedTensor:
+    def __init__(self, keys: list[str], values: torch.Tensor, lengths: torch.Tensor) -> None:
+        self._keys = list(keys)
+        self._values = values
+        self._lengths = lengths
+        self._mapping = self._build_mapping()
+
+    def _build_mapping(self) -> dict[str, _SimpleJaggedValues]:
+        mapping: dict[str, _SimpleJaggedValues] = {}
+        batch_size = self._lengths.shape[0] // len(self._keys)
+        for key_idx, key in enumerate(self._keys):
+            chunk = self._values[key_idx * batch_size : (key_idx + 1) * batch_size].contiguous()
+            mapping[key] = _SimpleJaggedValues(chunk)
+        return mapping
+
+    def keys(self) -> list[str]:
+        return list(self._keys)
+
+    def __getitem__(self, key: str) -> _SimpleJaggedValues:
+        return self._mapping[key]
+
+
+def build_sparse_features(keys: list[str], values: torch.Tensor, lengths: torch.Tensor):
+    try:
+        jagged_tensor = importlib.import_module("torchrec.sparse.jagged_tensor")
+        return jagged_tensor.KeyedJaggedTensor.from_lengths_sync(
+            keys=keys,
+            values=values,
+            lengths=lengths,
+        )
+    except ModuleNotFoundError:
+        return _SimpleKeyedJaggedTensor(keys, values, lengths)
 
 
 def build_batch_ids_from_kjt(sparse_features) -> torch.Tensor:
@@ -94,4 +140,3 @@ def build_train_dataloader(
         num_workers=0,
     )
     return dataset, dataloader
-

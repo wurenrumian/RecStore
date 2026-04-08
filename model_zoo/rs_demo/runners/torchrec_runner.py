@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from ..config import RunConfig, ensure_shared_dir, validate_torchrec_config
-from ..runtime.aligned_training import build_dense_stack, run_dense_backward
+from ..runtime.aligned_training import (
+    build_dense_stack,
+    prepare_dense_input,
+    run_dense_backward,
+    sync_device,
+)
 from ..runtime.report import finalize_torchrec_row, write_stage_csv
 from ..runtime.torchrec_profile import build_torchrec_profiler
 from .base import BenchmarkRunner
@@ -269,6 +274,9 @@ def _run_single_or_dist_worker(
             with stage_timer(row, "embed_pool_local_ms"):
                 _append_worker_debug(cfg, rank, f"before_pool step={step}")
                 pooled = torch.cat([embeddings[key] for key in DEFAULT_CAT_NAMES], dim=1)
+                pooled = pooled.detach().contiguous()
+                if device.type == "cuda":
+                    torch.cuda.synchronize(device)
                 _append_worker_debug(cfg, rank, f"after_pool step={step}")
 
             if use_dist:
@@ -280,18 +288,21 @@ def _run_single_or_dist_worker(
 
             with stage_timer(row, "output_unpack_ms"):
                 _append_worker_debug(cfg, rank, f"before_output_unpack step={step}")
-                dense_input = torch.cat([dense_batch.to(device), pooled], dim=1)
+                dense_input, pooled, labels = prepare_dense_input(
+                    dense_batch=dense_batch,
+                    pooled_source=pooled,
+                    labels_batch=labels_batch,
+                    torch=torch,
+                    device=device,
+                )
                 _append_worker_debug(cfg, rank, f"after_output_unpack step={step}")
 
             with stage_timer(row, "dense_fwd_ms"):
                 _append_worker_debug(cfg, rank, f"before_dense_fwd step={step}")
+                sync_device(torch, device)
                 logits = dense_module(dense_input)
-                labels = labels_batch.to(device).float()
-                if labels.ndim == 1:
-                    labels = labels.view(-1, 1)
                 loss = criterion(logits, labels)
-                if device.type == "cuda":
-                    torch.cuda.synchronize(device)
+                sync_device(torch, device)
                 _append_worker_debug(cfg, rank, f"after_dense_fwd step={step}")
 
             with stage_timer(row, "backward_ms"):
@@ -307,19 +318,19 @@ def _run_single_or_dist_worker(
 
             with stage_timer(row, "optimizer_ms"):
                 _append_worker_debug(cfg, rank, f"before_optimizer step={step}")
+                sync_device(torch, device)
                 dense_optimizer.step()
                 dense_optimizer.zero_grad(set_to_none=True)
-                if device.type == "cuda":
-                    torch.cuda.synchronize(device)
+                sync_device(torch, device)
                 _append_worker_debug(cfg, rank, f"after_optimizer step={step}")
 
             with stage_timer(row, "sparse_update_ms"):
                 _append_worker_debug(cfg, rank, f"before_sparse_update step={step}")
+                sync_device(torch, device)
                 pooled.backward(pooled_grad)
                 sparse_optimizer.step()
                 sparse_optimizer.zero_grad(set_to_none=True)
-                if device.type == "cuda":
-                    torch.cuda.synchronize(device)
+                sync_device(torch, device)
                 _append_worker_debug(cfg, rank, f"after_sparse_update step={step}")
 
             if profiler is not None:
@@ -452,6 +463,8 @@ class TorchRecRunner(BenchmarkRunner):
         if socket_ifname:
             env.setdefault("NCCL_SOCKET_IFNAME", socket_ifname)
             env.setdefault("GLOO_SOCKET_IFNAME", socket_ifname)
+        env.setdefault("NCCL_IB_DISABLE", "1")
+        env.setdefault("NCCL_SOCKET_FAMILY", "AF_INET")
         env.setdefault("NCCL_DEBUG", "WARN")
         res = subprocess.run(
             cmd,
