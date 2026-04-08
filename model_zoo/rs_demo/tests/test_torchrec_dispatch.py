@@ -130,6 +130,54 @@ class TestTorchRecDispatch(unittest.TestCase):
         self.assertEqual(result["backend"], "torchrec")
         dist_run.assert_called_once()
 
+    def test_runner_sets_explicit_socket_env_for_multi_node(self) -> None:
+        cfg = RunConfig(
+            backend="torchrec",
+            steps=1,
+            nnodes=2,
+            node_rank=0,
+            nproc_per_node=1,
+            master_addr="10.0.2.196",
+            master_port=29611,
+            rdzv_backend="c10d",
+            rdzv_id="env-case",
+            output_root="/tmp/rs_demo",
+            run_id="env-case",
+            torchrec_main_csv="/tmp/rs_demo/out.csv",
+            torchrec_main_agg_csv="/tmp/rs_demo/out_agg.csv",
+            torchrec_trace_dir="/tmp/rs_demo/traces",
+            torchrec_trace_csv="/tmp/rs_demo/trace.csv",
+        )
+        runner = TorchRecRunner(Path("/tmp/runtime"))
+        fake_result = mock.Mock(returncode=0, stdout="", stderr="")
+        run_mock = mock.Mock(return_value=fake_result)
+        with mock.patch(
+            "model_zoo.rs_demo.runners.torchrec_runner.ensure_torchrec_available",
+            return_value=None,
+        ), mock.patch(
+            "model_zoo.rs_demo.runners.torchrec_runner._pick_socket_ifname",
+            return_value="eno1",
+        ), mock.patch(
+            "model_zoo.rs_demo.runners.torchrec_runner.subprocess.run",
+            run_mock,
+        ), mock.patch(
+            "model_zoo.rs_demo.runners.torchrec_runner._merge_rank_outputs",
+            return_value=[],
+        ), mock.patch(
+            "model_zoo.rs_demo.runners.torchrec_runner.ensure_shared_dir",
+            return_value=None,
+        ), mock.patch(
+            "pathlib.Path.exists",
+            return_value=True,
+        ):
+            runner.run(Path("/app/RecStore"), cfg)
+
+        env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(env["NCCL_SOCKET_IFNAME"], "eno1")
+        self.assertEqual(env["GLOO_SOCKET_IFNAME"], "eno1")
+        self.assertEqual(env["NCCL_IB_DISABLE"], "1")
+        self.assertEqual(env["NCCL_SOCKET_FAMILY"], "AF_INET")
+
 
 if __name__ == "__main__":
     unittest.main()
