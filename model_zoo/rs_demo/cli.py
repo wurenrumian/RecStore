@@ -31,6 +31,12 @@ def repo_root_from_this_file() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def estimate_recstore_kv_capacity(num_embeddings: int, table_count: int = 26) -> int:
+    # Keep the runtime capacity close to the benchmark scale so ps_server
+    # initialization does not reserve the oversized repository default.
+    return max(int(num_embeddings) * int(table_count) * 2, 100_000)
+
+
 def build_runner(cfg: RunConfig, runtime_dir: Path):
     if cfg.backend == "recstore":
         from .runners.recstore_runner import RecStoreRunner
@@ -90,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=cfg.output_root,
             run_id=cfg.run_id,
             ps_type=cfg.ps_type,
+            kv_capacity=estimate_recstore_kv_capacity(cfg.num_embeddings),
         )
 
     proc = None

@@ -53,6 +53,31 @@ class TestChooseAvailablePorts(unittest.TestCase):
             runtime_cfg = runtime_cfg_path.read_text(encoding="utf-8")
             self.assertIn(str(Path(tmpdir) / "runtime" / "case-a"), runtime_cfg)
 
+    def test_make_runtime_dir_overrides_kv_capacity_when_requested(self) -> None:
+        base_cfg = {
+            "cache_ps": {
+                "base_kv_config": {
+                    "capacity": 8_000_000,
+                }
+            },
+            "distributed_client": {"servers": []},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir, runtime_cfg_path = make_runtime_dir(
+                base_cfg=base_cfg,
+                host="127.0.0.1",
+                port0=15123,
+                port1=15124,
+                allocator="PersistLoopShmMalloc",
+                output_root=tmpdir,
+                run_id="case-cap",
+                ps_type="BRPC",
+                kv_capacity=520_000,
+            )
+            self.assertTrue(str(runtime_dir).startswith(f"{tmpdir}/runtime/case-cap"))
+            runtime_cfg = runtime_cfg_path.read_text(encoding="utf-8")
+            self.assertIn('"capacity": 520000', runtime_cfg)
+
     def test_r2shmmalloc_kv_path_falls_back_to_local_tmp(self) -> None:
         path = resolve_kv_data_path(
             output_root="/nas/home/shq/docker/rs_demo",

@@ -93,6 +93,7 @@ def build_runtime_config(
     ps_type: str,
     output_root: str,
     run_id: str,
+    kv_capacity: int | None = None,
 ) -> dict:
     cfg = copy.deepcopy(base_cfg)
     cfg.setdefault("cache_ps", {})
@@ -125,6 +126,8 @@ def build_runtime_config(
         allocator=allocator,
     )
     base_kv["index_type"] = "DRAM"
+    if kv_capacity is not None:
+        base_kv["capacity"] = int(kv_capacity)
     return cfg
 
 
@@ -186,6 +189,7 @@ def make_runtime_dir(
     output_root: str,
     run_id: str,
     ps_type: str = "BRPC",
+    kv_capacity: int | None = None,
 ) -> tuple[Path, Path]:
     unique_tag = f"{time.time_ns()}_{uuid.uuid4().hex[:8]}"
     runtime_cfg = build_runtime_config(
@@ -198,6 +202,7 @@ def make_runtime_dir(
         ps_type=ps_type,
         output_root=output_root,
         run_id=run_id,
+        kv_capacity=kv_capacity,
     )
     runtime_dir = Path(output_root) / "runtime" / run_id / unique_tag
     runtime_dir.mkdir(parents=True, exist_ok=True)
