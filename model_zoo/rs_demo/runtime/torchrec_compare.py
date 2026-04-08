@@ -6,7 +6,9 @@ from pathlib import Path
 
 def _load_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        rows = list(csv.DictReader(f))
+    measured = [row for row in rows if row.get("warmup_excluded", "") != "1"]
+    return measured or rows
 
 
 def _mean(rows: list[dict[str, str]], column: str) -> float | None:

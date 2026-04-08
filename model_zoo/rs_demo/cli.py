@@ -133,7 +133,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         print("[rs_demo] analyzing embupdate stages...")
-        analyze_output = analyze_embupdate(repo_root, cfg.jsonl, cfg.csv, top_n=20)
+        extra_inputs: list[str] = []
+        server_log_path = Path(cfg.server_log)
+        if server_log_path.exists():
+            extra_inputs.append(str(server_log_path))
+        analyze_output = analyze_embupdate(
+            repo_root,
+            cfg.jsonl,
+            cfg.csv,
+            top_n=20,
+            extra_inputs=extra_inputs,
+        )
         print(analyze_output)
         agg = aggregate_torchrec_main_csv(Path(cfg.recstore_main_csv))
         write_aggregate_csv(Path(cfg.recstore_main_agg_csv), agg)
