@@ -200,6 +200,20 @@ def validate_torchrec_config(cfg: RunConfig) -> None:
         )
 
 
+def validate_recstore_config(cfg: RunConfig) -> None:
+    if cfg.backend != "recstore":
+        return
+
+    if cfg.nnodes <= 0:
+        raise RuntimeError("--nnodes must be greater than 0.")
+    if cfg.nproc_per_node <= 0:
+        raise RuntimeError("--nproc-per-node must be greater than 0.")
+    if cfg.node_rank < 0 or cfg.node_rank >= cfg.nnodes:
+        raise RuntimeError("--node-rank must be within [0, nnodes).")
+    if cfg.nnodes > 1:
+        raise RuntimeError("RecStore multi-trainer currently supports only --nnodes=1.")
+
+
 def ensure_run_id(cfg: RunConfig) -> None:
     if cfg.run_id:
         return

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import json
 import os
 import pickle
 import subprocess
@@ -70,12 +72,55 @@ def _pick_socket_ifname() -> str | None:
     return None
 
 
+def _debug_log_path(cfg: RunConfig, rank: int) -> Path:
+    return Path(cfg.output_root) / "outputs" / cfg.run_id / f"torchrec_worker_rank{rank}.log"
+
+
 def _append_worker_debug(cfg: RunConfig, rank: int, message: str) -> None:
-    debug_path = Path(cfg.output_root) / "outputs" / cfg.run_id / "torchrec_worker_debug.log"
+    debug_path = _debug_log_path(cfg, rank)
     debug_path.parent.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with debug_path.open("a", encoding="utf-8") as f:
         f.write(f"{timestamp} rank={rank} {message}\n")
+
+
+def _build_worker_fingerprint(repo_root: Path) -> dict[str, dict[str, str]]:
+    rel_paths = [
+        "model_zoo/rs_demo/config.py",
+        "model_zoo/rs_demo/runners/torchrec_runner.py",
+        "model_zoo/rs_demo/runtime/hybrid_dlrm.py",
+    ]
+    files: dict[str, str] = {}
+    for rel_path in rel_paths:
+        path = repo_root / rel_path
+        files[rel_path] = hashlib.md5(path.read_bytes()).hexdigest()
+    return {"files": files}
+
+
+def _write_or_verify_worker_fingerprint(
+    rank: int,
+    world_size: int,
+    fingerprint: dict[str, dict[str, str]],
+    fingerprint_path: Path,
+) -> None:
+    fingerprint_path.parent.mkdir(parents=True, exist_ok=True)
+    if fingerprint_path.exists():
+        all_fingerprints = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+    else:
+        all_fingerprints = {}
+
+    all_fingerprints[str(rank)] = fingerprint
+    fingerprint_path.write_text(
+        json.dumps(all_fingerprints, sort_keys=True, indent=2),
+        encoding="utf-8",
+    )
+
+    if rank != 0:
+        baseline = all_fingerprints.get("0")
+        if baseline is not None and baseline != fingerprint:
+            raise RuntimeError(
+                f"worker fingerprint mismatch: rank0={baseline} rank{rank}={fingerprint}"
+            )
 
 
 def _summarize_sharding_plan(plan: Any) -> str:
@@ -214,6 +259,17 @@ def _run_single_or_dist_worker(
         _append_worker_debug(cfg, rank, f"before_init_process_group device={device}")
         dist.init_process_group(backend=backend, device_id=device if device.type == "cuda" else None)
         _append_worker_debug(cfg, rank, "after_init_process_group")
+
+    if is_dist:
+        fingerprint_path = Path(cfg.output_root) / "outputs" / cfg.run_id / "torchrec_worker_fingerprints.json"
+        fingerprint = _build_worker_fingerprint(repo_root)
+        _write_or_verify_worker_fingerprint(
+            rank=rank,
+            world_size=world_size,
+            fingerprint=fingerprint,
+            fingerprint_path=fingerprint_path,
+        )
+        _append_worker_debug(cfg, rank, f"worker_fingerprint {fingerprint}")
 
     torch.manual_seed(cfg.seed + rank)
 
