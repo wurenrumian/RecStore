@@ -186,6 +186,15 @@ def trace_token(unique_id: str) -> str:
     return unique_id
 
 
+def _sort_trace_tokens(tokens: List[str]) -> List[str]:
+    def key(token: str) -> tuple[int, object]:
+        if token.isdigit():
+            return (0, int(token))
+        return (1, token)
+
+    return sorted(tokens, key=key)
+
+
 def build_merged_request_map(by_trace: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, float]]:
     merged: Dict[str, Dict[str, float]] = {}
     for unique_id, metrics in by_trace.items():
@@ -193,6 +202,33 @@ def build_merged_request_map(by_trace: Dict[str, Dict[str, float]]) -> Dict[str,
         dst = merged.setdefault(token, {})
         for k, v in metrics.items():
             dst[k] = v
+
+    client_only_tokens = [
+        token
+        for token, metrics in merged.items()
+        if (metrics.get("op_total_us") is not None or metrics.get("client_rpc_us") is not None)
+        and metrics.get("server_total_us") is None
+    ]
+    server_only_tokens = [
+        token
+        for token, metrics in merged.items()
+        if metrics.get("server_total_us") is not None
+        and metrics.get("op_total_us") is None
+        and metrics.get("client_rpc_us") is None
+    ]
+
+    for client_token, server_token in zip(
+        _sort_trace_tokens(client_only_tokens),
+        _sort_trace_tokens(server_only_tokens),
+    ):
+        client_metrics = merged.get(client_token)
+        server_metrics = merged.get(server_token)
+        if client_metrics is None or server_metrics is None:
+            continue
+        for k, v in server_metrics.items():
+            client_metrics.setdefault(k, v)
+        del merged[server_token]
+
     return merged
 
 

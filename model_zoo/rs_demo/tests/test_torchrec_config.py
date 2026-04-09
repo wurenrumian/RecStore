@@ -11,11 +11,31 @@ from model_zoo.rs_demo.config import (
     ensure_run_id,
     parse_config,
     populate_default_paths,
+    validate_recstore_config,
     validate_torchrec_config,
 )
 
 
 class TestTorchRecConfig(unittest.TestCase):
+    def test_recstore_distributed_rejects_multi_node(self) -> None:
+        cfg = parse_config(
+            [
+                "--backend",
+                "recstore",
+                "--nnodes",
+                "2",
+                "--node-rank",
+                "0",
+                "--nproc-per-node",
+                "1",
+            ]
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "RecStore multi-trainer currently supports only --nnodes=1",
+        ):
+            validate_recstore_config(cfg)
+
     def test_torchrec_distributed_fields_parse(self) -> None:
         cfg = parse_config(
             [
@@ -296,6 +316,41 @@ class TestTorchRecConfig(unittest.TestCase):
             default_main_agg_csv = output_root / "outputs" / run_id / "torchrec_main_agg.csv"
             self.assertFalse(default_trace_csv.exists())
             self.assertTrue(default_main_agg_csv.exists())
+
+    def test_cli_recstore_worker_skips_post_process(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_cfg = {
+                "client": {"host": "127.0.0.1", "port": 15123, "shard": 0},
+                "cache_ps": {"servers": []},
+                "distributed_client": {"servers": []},
+            }
+            (Path(tmpdir) / "recstore_config.json").write_text(
+                json.dumps(base_cfg),
+                encoding="utf-8",
+            )
+
+            class _FakeRunner:
+                def run(self, repo_root, cfg):
+                    return {"backend": "recstore", "rows": []}
+
+            with mock.patch.dict("os.environ", {"RS_DEMO_RECSTORE_WORKER": "1"}, clear=False):
+                with mock.patch.object(cli, "build_runner", return_value=_FakeRunner()):
+                    with mock.patch.object(cli, "repo_root_from_this_file", return_value=Path(tmpdir)):
+                        rc = cli.main(
+                            [
+                                "--backend",
+                                "recstore",
+                                "--steps",
+                                "1",
+                                "--no-start-server",
+                                "--output-root",
+                                tmpdir,
+                                "--run-id",
+                                "recstore-worker",
+                            ]
+                        )
+
+            self.assertEqual(rc, 0)
 
 
 if __name__ == "__main__":

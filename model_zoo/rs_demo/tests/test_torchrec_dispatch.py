@@ -1,15 +1,196 @@
 from __future__ import annotations
 
+import json
+import pickle
+import tempfile
 from pathlib import Path
 from unittest import mock
 import unittest
 
 from model_zoo.rs_demo.cli import build_runner
 from model_zoo.rs_demo.config import RunConfig
-from model_zoo.rs_demo.runners.torchrec_runner import TorchRecRunner
+from model_zoo.rs_demo.runners.torchrec_runner import (
+    TorchRecRunner,
+    _barrier_for_step_alignment,
+    _build_worker_fingerprint,
+    _debug_log_path,
+    _write_or_verify_worker_fingerprint,
+    _compute_or_load_shared_sharding_plan,
+    _summarize_sharding_plan,
+)
+
+
+class _FakeDist:
+    def __init__(self) -> None:
+        self.barrier_calls = 0
+
+    def barrier(self, device_ids=None) -> None:
+        self.barrier_calls += 1
+
+
+class _FakePlanner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def plan(self, module, sharders):
+        self.calls += 1
+        return {"module": module, "sharders": sharders, "token": "rank0-plan"}
+
+
+class _FakeParameterSharding:
+    def __init__(self, sharding_type: str, compute_kernel: str, ranks: list[int]) -> None:
+        self.sharding_type = sharding_type
+        self.compute_kernel = compute_kernel
+        self.ranks = ranks
+
+
+class _FakePlan:
+    def __init__(self, plan_by_module):
+        self.plan = plan_by_module
 
 
 class TestTorchRecDispatch(unittest.TestCase):
+    def test_debug_log_path_is_rank_scoped(self) -> None:
+        cfg = RunConfig(output_root="/tmp/rs_demo", run_id="case-debug")
+
+        path = _debug_log_path(cfg, rank=7)
+
+        self.assertEqual(
+            path,
+            Path("/tmp/rs_demo/outputs/case-debug/torchrec_worker_rank7.log"),
+        )
+
+    def test_build_worker_fingerprint_includes_critical_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            for rel_path in (
+                "model_zoo/rs_demo/config.py",
+                "model_zoo/rs_demo/runners/torchrec_runner.py",
+                "model_zoo/rs_demo/runtime/hybrid_dlrm.py",
+            ):
+                path = repo_root / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(rel_path, encoding="utf-8")
+
+            fingerprint = _build_worker_fingerprint(repo_root)
+
+        self.assertIn("files", fingerprint)
+        self.assertIn("model_zoo/rs_demo/config.py", fingerprint["files"])
+        self.assertIn("model_zoo/rs_demo/runners/torchrec_runner.py", fingerprint["files"])
+        self.assertIn("model_zoo/rs_demo/runtime/hybrid_dlrm.py", fingerprint["files"])
+
+    def test_write_or_verify_worker_fingerprint_accepts_matching_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fingerprint_path = Path(tmpdir) / "fingerprints.json"
+            fingerprint = {"files": {"a.py": "hash-a"}}
+
+            _write_or_verify_worker_fingerprint(
+                rank=0,
+                world_size=2,
+                fingerprint=fingerprint,
+                fingerprint_path=fingerprint_path,
+            )
+            _write_or_verify_worker_fingerprint(
+                rank=1,
+                world_size=2,
+                fingerprint=fingerprint,
+                fingerprint_path=fingerprint_path,
+            )
+
+            stored = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(stored["0"], fingerprint)
+        self.assertEqual(stored["1"], fingerprint)
+
+    def test_write_or_verify_worker_fingerprint_rejects_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fingerprint_path = Path(tmpdir) / "fingerprints.json"
+            _write_or_verify_worker_fingerprint(
+                rank=0,
+                world_size=2,
+                fingerprint={"files": {"a.py": "hash-a"}},
+                fingerprint_path=fingerprint_path,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "worker fingerprint mismatch"):
+                _write_or_verify_worker_fingerprint(
+                    rank=1,
+                    world_size=2,
+                    fingerprint={"files": {"a.py": "hash-b"}},
+                    fingerprint_path=fingerprint_path,
+                )
+
+    def test_barrier_for_step_alignment_uses_local_rank_on_cuda(self) -> None:
+        fake_dist = _FakeDist()
+        device = mock.Mock()
+        device.type = "cuda"
+
+        _barrier_for_step_alignment(fake_dist, device, local_rank=3, use_dist=True)
+
+        self.assertEqual(fake_dist.barrier_calls, 1)
+
+    def test_barrier_for_step_alignment_skips_single_process(self) -> None:
+        fake_dist = _FakeDist()
+        device = mock.Mock()
+        device.type = "cpu"
+
+        _barrier_for_step_alignment(fake_dist, device, local_rank=0, use_dist=False)
+
+        self.assertEqual(fake_dist.barrier_calls, 0)
+
+    def test_plan_summary_formats_table_entries(self) -> None:
+        summary = _summarize_sharding_plan(
+            _FakePlan(
+                {
+                    "": {
+                        "t_cat_0": _FakeParameterSharding("table_wise", "dense", [0]),
+                        "t_cat_1": _FakeParameterSharding("row_wise", "fused", [1]),
+                    }
+                }
+            )
+        )
+
+        self.assertIn("module=<root>", summary)
+        self.assertIn("t_cat_0:table_wise:dense:ranks=[0]", summary)
+        self.assertIn("t_cat_1:row_wise:fused:ranks=[1]", summary)
+
+    def test_rank0_computes_and_persists_shared_sharding_plan(self) -> None:
+        fake_dist = _FakeDist()
+        planner = _FakePlanner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = _compute_or_load_shared_sharding_plan(
+                dist=fake_dist,
+                rank=0,
+                embedding_module="emb",
+                sharders=["s"],
+                planner=planner,
+                plan_path=Path(tmpdir) / "plan.pkl",
+            )
+
+        self.assertEqual(plan["token"], "rank0-plan")
+        self.assertEqual(planner.calls, 1)
+        self.assertEqual(fake_dist.barrier_calls, 0)
+
+    def test_nonzero_rank_loads_shared_sharding_plan(self) -> None:
+        fake_dist = _FakeDist()
+        planner = _FakePlanner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = Path(tmpdir) / "plan.pkl"
+            with plan_path.open("wb") as f:
+                pickle.dump({"token": "rank0-plan"}, f)
+            plan = _compute_or_load_shared_sharding_plan(
+                dist=fake_dist,
+                rank=1,
+                embedding_module="emb",
+                sharders=["s"],
+                planner=planner,
+                plan_path=plan_path,
+            )
+
+        self.assertEqual(plan["token"], "rank0-plan")
+        self.assertEqual(planner.calls, 0)
+        self.assertEqual(fake_dist.barrier_calls, 0)
+
     def test_build_runner_torchrec_requires_dependency(self) -> None:
         cfg = RunConfig(backend="torchrec")
         with mock.patch(

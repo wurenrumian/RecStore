@@ -11,6 +11,7 @@ from .config import (
     ensure_parent_dirs,
     parse_config,
     populate_default_paths,
+    validate_recstore_config,
     validate_torchrec_config,
 )
 from .runtime.report import analyze_embupdate, setup_local_report_env
@@ -31,6 +32,12 @@ def repo_root_from_this_file() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def estimate_recstore_kv_capacity(num_embeddings: int, table_count: int = 26) -> int:
+    # Keep the runtime capacity close to the benchmark scale so ps_server
+    # initialization does not reserve the oversized repository default.
+    return max(int(num_embeddings) * int(table_count) * 2, 100_000)
+
+
 def build_runner(cfg: RunConfig, runtime_dir: Path):
     if cfg.backend == "recstore":
         from .runners.recstore_runner import RecStoreRunner
@@ -49,8 +56,10 @@ def build_runner(cfg: RunConfig, runtime_dir: Path):
 def main(argv: list[str] | None = None) -> int:
     cfg = parse_config(argv)
     populate_default_paths(cfg)
+    validate_recstore_config(cfg)
     validate_torchrec_config(cfg)
     is_torchrec_worker = os.environ.get("RS_DEMO_TORCHREC_WORKER") == "1"
+    is_recstore_worker = os.environ.get("RS_DEMO_RECSTORE_WORKER") == "1"
     if cfg.backend == "torchrec" and cfg.torchrec_profiler and not is_torchrec_worker:
         run_dir = Path(cfg.torchrec_trace_dir) / datetime.now().strftime(
             "run_%Y%m%d_%H%M%S_%f"
@@ -90,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=cfg.output_root,
             run_id=cfg.run_id,
             ps_type=cfg.ps_type,
+            kv_capacity=estimate_recstore_kv_capacity(cfg.num_embeddings),
         )
 
     proc = None
@@ -132,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[rs_demo] torchrec compare csv: {cfg.torchrec_compare_csv}")
             return 0
 
+        if is_recstore_worker:
+            return 0
         print("[rs_demo] analyzing embupdate stages...")
         extra_inputs: list[str] = []
         server_log_path = Path(cfg.server_log)
