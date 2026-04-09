@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "framework/ps_client_factory.h"
+#include "ps/brpc/brpc_ps_client.h"
 
 namespace recstore {
 
@@ -52,6 +53,17 @@ TEST(PSClientFactoryTest, PreservesExplicitBrpcClientConfig) {
   EXPECT_EQ(client_config["host"], "10.0.0.5");
   EXPECT_EQ(client_config["port"], 25123);
   EXPECT_EQ(client_config["shard"], 1);
+}
+
+TEST(PSClientFactoryTest, CreatesBrpcClientWithoutFactoryRegistration) {
+  json config = {
+      {"cache_ps", {{"ps_type", "BRPC"}}},
+      {"client", {{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}},
+  };
+
+  std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
+  ASSERT_NE(client, nullptr);
+  EXPECT_NE(dynamic_cast<BRPCParameterClient*>(client.get()), nullptr);
 }
 
 } // namespace recstore

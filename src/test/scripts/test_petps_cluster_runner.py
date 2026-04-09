@@ -1,6 +1,7 @@
 import unittest
+from unittest import mock
 
-from petps_cluster_runner import PetPSClusterRunner
+from petps_cluster_runner import LOCAL_MEMCACHED_SERVER, PetPSClusterRunner
 
 
 class TestPetPSClusterRunner(unittest.TestCase):
@@ -36,6 +37,42 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn("--global_id=2", cmd)
         self.assertIn("--num_server_processes=2", cmd)
         self.assertIn("--num_client_processes=1", cmd)
+
+    def test_build_env_includes_local_memcached_override(self):
+        runner = PetPSClusterRunner(num_servers=2, num_clients=1, memcached_port=12345)
+        env = runner.build_env()
+        self.assertEqual(env["RECSTORE_MEMCACHED_HOST"], "127.0.0.1")
+        self.assertEqual(env["RECSTORE_MEMCACHED_PORT"], "12345")
+        self.assertEqual(env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"], "1")
+
+    def test_build_memcached_cmd_uses_local_helper(self):
+        runner = PetPSClusterRunner(memcached_port=12345)
+        cmd = runner.build_memcached_cmd()
+        self.assertEqual(cmd[0], "python3")
+        self.assertEqual(cmd[1], str(LOCAL_MEMCACHED_SERVER))
+        self.assertIn("--port", cmd)
+
+    @mock.patch("petps_cluster_runner.socket.create_connection")
+    def test_memcached_preflight_success(self, mock_conn):
+        runner = PetPSClusterRunner(use_local_memcached="never")
+        conn = mock.MagicMock()
+        conn.recv.return_value = b"END\r\n"
+        mock_conn.return_value.__enter__.return_value = conn
+        runner.check_memcached_ready()
+
+    @mock.patch("petps_cluster_runner.socket.create_connection")
+    def test_memcached_preflight_failure_raises(self, mock_conn):
+        runner = PetPSClusterRunner(use_local_memcached="never")
+        mock_conn.side_effect = OSError("refused")
+        with self.assertRaises(RuntimeError):
+            runner.check_memcached_ready()
+
+    @mock.patch("petps_cluster_runner.subprocess.Popen")
+    def test_memcached_helper_fallback_to_external(self, mock_popen):
+        runner = PetPSClusterRunner(use_local_memcached="auto")
+        mock_popen.side_effect = PermissionError("Operation not permitted")
+        runner._start_memcached()
+        self.assertIsNone(runner.memcached_process)
 
 
 if __name__ == "__main__":

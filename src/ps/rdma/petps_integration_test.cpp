@@ -1,3 +1,5 @@
+#include <folly/init/Init.h>
+#include <folly/init/Init.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -111,4 +113,10 @@ TEST(PetPSIntegrationTest, PutGetRoundTripMultiShard) {
 
   ExpectFlatSlots(output.data(), values, embedding_dim);
   wrapper.RevokeRPCResource(rpc_id);
+}
+
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  folly::Init init(&argc, &argv);
+  return RUN_ALL_TESTS();
 }

@@ -8,6 +8,7 @@
 #include "base/factory.h"
 #include "base/json.h"
 #include "ps/base/base_client.h"
+#include "ps/brpc/brpc_ps_client.h"
 #include "ps/grpc/grpc_ps_client.h"
 
 namespace recstore {
@@ -58,6 +59,10 @@ inline BasePSClient* CreateFrameworkPSClient(const json& config) {
 
   if (ps_type == "GRPC") {
     return new GRPCParameterClient(client_config);
+  }
+
+  if (ps_type == "BRPC") {
+    return new BRPCParameterClient(client_config);
   }
 
   throw std::runtime_error(

@@ -8,6 +8,7 @@
 #include "base/array.h"
 #include "benchmark/ps_transport_benchmark_config.h"
 #include "framework/ps_client_factory.h"
+#include "ps/brpc/brpc_ps_client.h"
 #include "ps/rdma/allshards_ps_client.h"
 #include "ps/rdma/petps_client.h"
 
@@ -53,9 +54,10 @@ int main(int argc, char** argv) {
       auto start = std::chrono::steady_clock::now();
       for (int i = 0; i < FLAGS_iterations; ++i) {
         client.PutParameter(keys, values);
-        std::vector<float> output(
-            keys.size() * (FLAGS_value_size / sizeof(float)) + 1, 0.0f);
-        int rpc_id = client.GetParameter(key_array, output.data(), false, 0);
+        void* recv_buffer =
+            client.GetReceiveBuffer(client.ResponseBufferBytes(keys.size()));
+        int rpc_id = client.GetParameter(
+            key_array, static_cast<float*>(recv_buffer), false, 0);
         client.WaitRPCFinish(rpc_id);
         client.RevokeRPCResource(rpc_id);
       }
@@ -103,9 +105,16 @@ int main(int argc, char** argv) {
   auto start = std::chrono::steady_clock::now();
   for (int i = 0; i < FLAGS_iterations; ++i) {
     client->PutParameter(key_array, values);
-    std::vector<float> output(
-        keys.size() * (FLAGS_value_size / sizeof(float)), 0.0f);
-    client->GetParameter(key_array, output.data());
+    if (BenchmarkUsesVectorGet(transport)) {
+      auto* brpc_client = dynamic_cast<BRPCParameterClient*>(client.get());
+      CHECK_NE(brpc_client, nullptr);
+      std::vector<std::vector<float>> output;
+      brpc_client->GetParameter(key_array, &output);
+    } else {
+      std::vector<float> output(
+          keys.size() * (FLAGS_value_size / sizeof(float)), 0.0f);
+      client->GetParameter(key_array, output.data());
+    }
   }
   auto end = std::chrono::steady_clock::now();
   std::cout << "transport=" << transport << " elapsed_us="

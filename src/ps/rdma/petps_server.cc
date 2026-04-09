@@ -147,9 +147,11 @@ private:
       }
     }
 
-    std::int32_t code = static_cast<std::int32_t>(status);
+    const std::int32_t code = static_cast<std::int32_t>(status);
+    auto* ack_buf = dsm_->get_rdma_buffer();
+    std::memcpy(ack_buf, &code, sizeof(code));
     dsm_->write(
-        reinterpret_cast<const char*>(&code),
+        ack_buf,
         recv->receive_gaddr,
         sizeof(code),
         true,

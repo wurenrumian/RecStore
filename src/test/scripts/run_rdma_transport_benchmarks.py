@@ -22,9 +22,22 @@ def main():
         "--brpc-config",
         default="./src/test/scripts/recstore_config.brpc.json",
     )
+    parser.add_argument(
+        "--use-local-memcached",
+        choices=["always", "auto", "never"],
+        default="auto",
+    )
+    parser.add_argument("--memcached-host", default="127.0.0.1")
+    parser.add_argument("--memcached-port", type=int, default=21211)
     args = parser.parse_args()
 
-    rdma_runner = PetPSClusterRunner(num_servers=1, num_clients=1)
+    rdma_runner = PetPSClusterRunner(
+        num_servers=1,
+        num_clients=1,
+        use_local_memcached=args.use_local_memcached,
+        memcached_host=args.memcached_host,
+        memcached_port=args.memcached_port,
+    )
     with rdma_runner.run():
         rc = rdma_runner.run_client(
             [args.benchmark_binary, "--transport=rdma", "--num_shards=1", "--iterations=20"]

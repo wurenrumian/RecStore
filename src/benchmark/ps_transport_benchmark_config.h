@@ -25,3 +25,12 @@ inline nlohmann::json BuildRpcBenchmarkConfig(const std::string& transport,
       {"client", {{"host", host}, {"port", port}, {"shard", 0}}},
   };
 }
+
+inline bool BenchmarkRequiresManagedReceiveBuffer(const std::string& transport,
+                                                  int num_shards) {
+  return NormalizeBenchmarkTransport(transport) == "RDMA" && num_shards == 1;
+}
+
+inline bool BenchmarkUsesVectorGet(const std::string& transport) {
+  return NormalizeBenchmarkTransport(transport) == "BRPC";
+}
