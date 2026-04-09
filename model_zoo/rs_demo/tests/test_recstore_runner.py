@@ -17,8 +17,10 @@ class _DummyDense(torch.nn.Module):
         super().__init__()
         self.linear = torch.nn.Linear(17, 1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear(x)
+    def forward(self, dense_features: torch.Tensor, embedded_sparse: torch.Tensor) -> torch.Tensor:
+        flat_sparse = embedded_sparse.reshape(embedded_sparse.shape[0], -1)
+        features = torch.cat([dense_features, flat_sparse], dim=1).to(self.linear.weight.device)
+        return self.linear(features)
 
 
 class _FakeShardedClient:
@@ -112,39 +114,47 @@ class TestRecStoreRunner(unittest.TestCase):
                                             lambda *args, **kwargs: torch.tensor([3], dtype=torch.int64),
                                         ):
                                             with mock.patch(
-                                                "model_zoo.rs_demo.runners.recstore_runner.build_dense_stack",
-                                                lambda *args, **kwargs: _DummyDense(),
+                                                "model_zoo.rs_demo.runners.recstore_runner.build_hybrid_dense_arch",
+                                                lambda *args, **kwargs: _DummyDense().to(kwargs["device"]),
                                             ):
                                                 with mock.patch(
-                                                    "model_zoo.rs_demo.runners.recstore_runner.prepare_dense_input",
-                                                    lambda **kwargs: (
-                                                        torch.zeros((1, 17), dtype=torch.float32, device=kwargs["device"]),
-                                                        torch.zeros((1, 4), dtype=torch.float32, device=kwargs["device"], requires_grad=True),
-                                                        torch.zeros((1, 1), dtype=torch.float32, device=kwargs["device"]),
-                                                    ),
+                                                    "model_zoo.rs_demo.runners.recstore_runner.reshape_recstore_embeddings_for_dlrm",
+                                                    lambda **kwargs: torch.zeros((1, 1, 4), dtype=torch.float32),
                                                 ):
                                                     with mock.patch(
-                                                        "model_zoo.rs_demo.runners.recstore_runner.run_dense_backward",
-                                                        lambda **kwargs: torch.zeros((1, 4), dtype=torch.float32),
+                                                        "model_zoo.rs_demo.runners.recstore_runner.prepare_hybrid_dlrm_input",
+                                                        lambda **kwargs: (
+                                                            torch.zeros((1, 13), dtype=torch.float32, device=kwargs["device"]),
+                                                            torch.zeros((1, 1, 4), dtype=torch.float32, device=kwargs["device"], requires_grad=True),
+                                                            torch.zeros((1, 1), dtype=torch.float32, device=kwargs["device"]),
+                                                        ),
                                                     ):
                                                         with mock.patch(
-                                                            "model_zoo.rs_demo.runners.recstore_runner.sync_device",
-                                                            lambda *args, **kwargs: None,
+                                                            "model_zoo.rs_demo.runners.recstore_runner.run_hybrid_backward",
+                                                            lambda **kwargs: torch.zeros((1, 1, 4), dtype=torch.float32),
                                                         ):
                                                             with mock.patch(
-                                                                "model_zoo.rs_demo.runners.recstore_runner.finalize_recstore_row",
-                                                                lambda row: row,
+                                                            "model_zoo.rs_demo.runners.recstore_runner.flatten_embedded_sparse_grad_for_recstore",
+                                                                lambda grad: torch.zeros((1, 4), dtype=torch.float32),
                                                             ):
                                                                 with mock.patch(
-                                                                    "model_zoo.rs_demo.runners.recstore_runner.summarize_us",
-                                                                    lambda xs: "ok",
+                                                                    "model_zoo.rs_demo.runners.recstore_runner.sync_device",
+                                                                    lambda *args, **kwargs: None,
                                                                 ):
                                                                     with mock.patch(
-                                                                        "model_zoo.rs_demo.runners.recstore_runner.write_stage_csv",
-                                                                        lambda *args, **kwargs: None,
+                                                                        "model_zoo.rs_demo.runners.recstore_runner.finalize_recstore_row",
+                                                                        lambda row: row,
                                                                     ):
-                                                                        runner = RecStoreRunner(runner_runtime)
-                                                                        runner.run(repo_root=repo_root, cfg=cfg)
+                                                                        with mock.patch(
+                                                                            "model_zoo.rs_demo.runners.recstore_runner.summarize_us",
+                                                                            lambda xs: "ok",
+                                                                        ):
+                                                                            with mock.patch(
+                                                                                "model_zoo.rs_demo.runners.recstore_runner.write_stage_csv",
+                                                                                lambda *args, **kwargs: None,
+                                                                            ):
+                                                                                runner = RecStoreRunner(runner_runtime)
+                                                                                runner.run(repo_root=repo_root, cfg=cfg)
 
         self.assertEqual(fake_client.emb_read_calls, 0)
         self.assertEqual(fake_client.emb_read_prefetch_calls, 1)

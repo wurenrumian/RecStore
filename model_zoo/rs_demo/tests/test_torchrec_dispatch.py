@@ -1,15 +1,122 @@
 from __future__ import annotations
 
+import pickle
+import tempfile
 from pathlib import Path
 from unittest import mock
 import unittest
 
 from model_zoo.rs_demo.cli import build_runner
 from model_zoo.rs_demo.config import RunConfig
-from model_zoo.rs_demo.runners.torchrec_runner import TorchRecRunner
+from model_zoo.rs_demo.runners.torchrec_runner import (
+    TorchRecRunner,
+    _barrier_for_step_alignment,
+    _compute_or_load_shared_sharding_plan,
+    _summarize_sharding_plan,
+)
+
+
+class _FakeDist:
+    def __init__(self) -> None:
+        self.barrier_calls = 0
+
+    def barrier(self, device_ids=None) -> None:
+        self.barrier_calls += 1
+
+
+class _FakePlanner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def plan(self, module, sharders):
+        self.calls += 1
+        return {"module": module, "sharders": sharders, "token": "rank0-plan"}
+
+
+class _FakeParameterSharding:
+    def __init__(self, sharding_type: str, compute_kernel: str, ranks: list[int]) -> None:
+        self.sharding_type = sharding_type
+        self.compute_kernel = compute_kernel
+        self.ranks = ranks
+
+
+class _FakePlan:
+    def __init__(self, plan_by_module):
+        self.plan = plan_by_module
 
 
 class TestTorchRecDispatch(unittest.TestCase):
+    def test_barrier_for_step_alignment_uses_local_rank_on_cuda(self) -> None:
+        fake_dist = _FakeDist()
+        device = mock.Mock()
+        device.type = "cuda"
+
+        _barrier_for_step_alignment(fake_dist, device, local_rank=3, use_dist=True)
+
+        self.assertEqual(fake_dist.barrier_calls, 1)
+
+    def test_barrier_for_step_alignment_skips_single_process(self) -> None:
+        fake_dist = _FakeDist()
+        device = mock.Mock()
+        device.type = "cpu"
+
+        _barrier_for_step_alignment(fake_dist, device, local_rank=0, use_dist=False)
+
+        self.assertEqual(fake_dist.barrier_calls, 0)
+
+    def test_plan_summary_formats_table_entries(self) -> None:
+        summary = _summarize_sharding_plan(
+            _FakePlan(
+                {
+                    "": {
+                        "t_cat_0": _FakeParameterSharding("table_wise", "dense", [0]),
+                        "t_cat_1": _FakeParameterSharding("row_wise", "fused", [1]),
+                    }
+                }
+            )
+        )
+
+        self.assertIn("module=<root>", summary)
+        self.assertIn("t_cat_0:table_wise:dense:ranks=[0]", summary)
+        self.assertIn("t_cat_1:row_wise:fused:ranks=[1]", summary)
+
+    def test_rank0_computes_and_persists_shared_sharding_plan(self) -> None:
+        fake_dist = _FakeDist()
+        planner = _FakePlanner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan = _compute_or_load_shared_sharding_plan(
+                dist=fake_dist,
+                rank=0,
+                embedding_module="emb",
+                sharders=["s"],
+                planner=planner,
+                plan_path=Path(tmpdir) / "plan.pkl",
+            )
+
+        self.assertEqual(plan["token"], "rank0-plan")
+        self.assertEqual(planner.calls, 1)
+        self.assertEqual(fake_dist.barrier_calls, 0)
+
+    def test_nonzero_rank_loads_shared_sharding_plan(self) -> None:
+        fake_dist = _FakeDist()
+        planner = _FakePlanner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plan_path = Path(tmpdir) / "plan.pkl"
+            with plan_path.open("wb") as f:
+                pickle.dump({"token": "rank0-plan"}, f)
+            plan = _compute_or_load_shared_sharding_plan(
+                dist=fake_dist,
+                rank=1,
+                embedding_module="emb",
+                sharders=["s"],
+                planner=planner,
+                plan_path=plan_path,
+            )
+
+        self.assertEqual(plan["token"], "rank0-plan")
+        self.assertEqual(planner.calls, 0)
+        self.assertEqual(fake_dist.barrier_calls, 0)
+
     def test_build_runner_torchrec_requires_dependency(self) -> None:
         cfg = RunConfig(backend="torchrec")
         with mock.patch(
