@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import pickle
 import tempfile
 from pathlib import Path
@@ -11,6 +12,9 @@ from model_zoo.rs_demo.config import RunConfig
 from model_zoo.rs_demo.runners.torchrec_runner import (
     TorchRecRunner,
     _barrier_for_step_alignment,
+    _build_worker_fingerprint,
+    _debug_log_path,
+    _write_or_verify_worker_fingerprint,
     _compute_or_load_shared_sharding_plan,
     _summarize_sharding_plan,
 )
@@ -46,6 +50,76 @@ class _FakePlan:
 
 
 class TestTorchRecDispatch(unittest.TestCase):
+    def test_debug_log_path_is_rank_scoped(self) -> None:
+        cfg = RunConfig(output_root="/tmp/rs_demo", run_id="case-debug")
+
+        path = _debug_log_path(cfg, rank=7)
+
+        self.assertEqual(
+            path,
+            Path("/tmp/rs_demo/outputs/case-debug/torchrec_worker_rank7.log"),
+        )
+
+    def test_build_worker_fingerprint_includes_critical_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            for rel_path in (
+                "model_zoo/rs_demo/config.py",
+                "model_zoo/rs_demo/runners/torchrec_runner.py",
+                "model_zoo/rs_demo/runtime/hybrid_dlrm.py",
+            ):
+                path = repo_root / rel_path
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(rel_path, encoding="utf-8")
+
+            fingerprint = _build_worker_fingerprint(repo_root)
+
+        self.assertIn("files", fingerprint)
+        self.assertIn("model_zoo/rs_demo/config.py", fingerprint["files"])
+        self.assertIn("model_zoo/rs_demo/runners/torchrec_runner.py", fingerprint["files"])
+        self.assertIn("model_zoo/rs_demo/runtime/hybrid_dlrm.py", fingerprint["files"])
+
+    def test_write_or_verify_worker_fingerprint_accepts_matching_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fingerprint_path = Path(tmpdir) / "fingerprints.json"
+            fingerprint = {"files": {"a.py": "hash-a"}}
+
+            _write_or_verify_worker_fingerprint(
+                rank=0,
+                world_size=2,
+                fingerprint=fingerprint,
+                fingerprint_path=fingerprint_path,
+            )
+            _write_or_verify_worker_fingerprint(
+                rank=1,
+                world_size=2,
+                fingerprint=fingerprint,
+                fingerprint_path=fingerprint_path,
+            )
+
+            stored = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(stored["0"], fingerprint)
+        self.assertEqual(stored["1"], fingerprint)
+
+    def test_write_or_verify_worker_fingerprint_rejects_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fingerprint_path = Path(tmpdir) / "fingerprints.json"
+            _write_or_verify_worker_fingerprint(
+                rank=0,
+                world_size=2,
+                fingerprint={"files": {"a.py": "hash-a"}},
+                fingerprint_path=fingerprint_path,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "worker fingerprint mismatch"):
+                _write_or_verify_worker_fingerprint(
+                    rank=1,
+                    world_size=2,
+                    fingerprint={"files": {"a.py": "hash-b"}},
+                    fingerprint_path=fingerprint_path,
+                )
+
     def test_barrier_for_step_alignment_uses_local_rank_on_cuda(self) -> None:
         fake_dist = _FakeDist()
         device = mock.Mock()

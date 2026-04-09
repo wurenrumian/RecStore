@@ -78,6 +78,23 @@ class TestChooseAvailablePorts(unittest.TestCase):
             runtime_cfg = runtime_cfg_path.read_text(encoding="utf-8")
             self.assertIn('"capacity": 520000', runtime_cfg)
 
+    def test_make_runtime_dir_keeps_shared_base_kv_prefix_for_sharded_server(self) -> None:
+        base_cfg = {"cache_ps": {}, "distributed_client": {"servers": []}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _runtime_dir, runtime_cfg_path = make_runtime_dir(
+                base_cfg=base_cfg,
+                host="127.0.0.1",
+                port0=15123,
+                port1=15124,
+                allocator="PersistLoopShmMalloc",
+                output_root=tmpdir,
+                run_id="case-shards",
+                ps_type="BRPC",
+            )
+            runtime_cfg = runtime_cfg_path.read_text(encoding="utf-8")
+            self.assertIn('"path"', runtime_cfg)
+            self.assertIn(str(Path(tmpdir) / "runtime" / "case-shards"), runtime_cfg)
+
     def test_r2shmmalloc_kv_path_falls_back_to_local_tmp(self) -> None:
         path = resolve_kv_data_path(
             output_root="/nas/home/shq/docker/rs_demo",
