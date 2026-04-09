@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+import pickle
 import subprocess
 import sys
 import time
@@ -10,10 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from ..config import RunConfig, ensure_shared_dir, validate_torchrec_config
-from ..runtime.aligned_training import (
-    build_dense_stack,
-    prepare_dense_input,
-    run_dense_backward,
+from ..runtime.hybrid_dlrm import (
+    build_hybrid_dense_arch,
+    parse_layer_sizes,
+    prepare_hybrid_dlrm_input,
+    reshape_torchrec_embeddings_for_dlrm,
+    run_hybrid_backward,
     sync_device,
 )
 from ..runtime.report import finalize_torchrec_row, write_stage_csv
@@ -75,6 +78,55 @@ def _append_worker_debug(cfg: RunConfig, rank: int, message: str) -> None:
         f.write(f"{timestamp} rank={rank} {message}\n")
 
 
+def _summarize_sharding_plan(plan: Any) -> str:
+    plan_map = getattr(plan, "plan", {})
+    if not isinstance(plan_map, dict):
+        return f"plan_type={type(plan).__name__}"
+
+    module_summaries: list[str] = []
+    for module_path, module_plan in sorted(plan_map.items(), key=lambda item: str(item[0])):
+        table_summaries: list[str] = []
+        if isinstance(module_plan, dict):
+            for table_name, parameter_sharding in sorted(
+                module_plan.items(), key=lambda item: str(item[0])
+            ):
+                sharding_type = getattr(parameter_sharding, "sharding_type", "unknown")
+                compute_kernel = getattr(parameter_sharding, "compute_kernel", "unknown")
+                ranks = getattr(parameter_sharding, "ranks", None)
+                table_summaries.append(
+                    f"{table_name}:{sharding_type}:{compute_kernel}:ranks={ranks}"
+                )
+        module_label = module_path or "<root>"
+        module_summaries.append(
+            f"module={module_label}[{'; '.join(table_summaries) if table_summaries else 'empty'}]"
+        )
+    return " | ".join(module_summaries) if module_summaries else "plan=empty"
+
+
+def _compute_or_load_shared_sharding_plan(
+    dist,
+    rank: int,
+    embedding_module,
+    sharders,
+    planner,
+    plan_path: Path,
+):
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    if rank == 0:
+        plan = planner.plan(embedding_module, sharders)
+        with plan_path.open("wb") as f:
+            pickle.dump(plan, f)
+    else:
+        wait_deadline = time.monotonic() + 60.0
+        while not plan_path.exists():
+            if time.monotonic() >= wait_deadline:
+                raise TimeoutError(f"Timed out waiting for shared sharding plan: {plan_path}")
+            time.sleep(0.1)
+    with plan_path.open("rb") as f:
+        plan = pickle.load(f)
+    return plan
+
+
 def _merge_rank_outputs(paths: list[Path], out_path: Path) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     for path in paths:
@@ -106,6 +158,15 @@ def _make_trace_handler(cfg: RunConfig, rank: int):
         prof.export_chrome_trace(str(trace_path))
 
     return _handler
+
+
+def _barrier_for_step_alignment(dist, device, local_rank: int, use_dist: bool) -> None:
+    if not use_dist:
+        return
+    if device.type == "cuda":
+        dist.barrier(device_ids=[local_rank])
+    else:
+        dist.barrier()
 
 
 def _run_single_or_dist_worker(
@@ -187,14 +248,35 @@ def _run_single_or_dist_worker(
                 compute_device=device.type,
             )
         )
-        plan = planner.plan(embedding_module, sharders)
-        _append_worker_debug(cfg, rank, "after_sharding_plan")
-        embedding_module = DistributedModelParallel(
-            module=embedding_module,
-            device=device,
+        plan = _compute_or_load_shared_sharding_plan(
+            dist=dist,
+            rank=rank,
+            embedding_module=embedding_module,
             sharders=sharders,
-            plan=plan,
+            planner=planner,
+            plan_path=Path(cfg.output_root) / "outputs" / cfg.run_id / "torchrec_plan.pkl",
         )
+        _append_worker_debug(cfg, rank, "after_sharding_plan")
+        _append_worker_debug(cfg, rank, f"plan_summary {_summarize_sharding_plan(plan)}")
+        _append_worker_debug(
+            cfg,
+            rank,
+            f"before_distributed_model_parallel state_dict_keys={list(embedding_module.state_dict().keys())}",
+        )
+        try:
+            embedding_module = DistributedModelParallel(
+                module=embedding_module,
+                device=device,
+                sharders=sharders,
+                plan=plan,
+            )
+        except Exception as exc:
+            _append_worker_debug(
+                cfg,
+                rank,
+                f"dmp_init_exception type={type(exc).__name__} message={exc}",
+            )
+            raise
         _append_worker_debug(cfg, rank, "after_distributed_model_parallel")
         collective_mode = "measured_distributed"
         collective_measured = 1
@@ -203,8 +285,15 @@ def _run_single_or_dist_worker(
         collective_mode = "not_measured_single_process"
         collective_measured = 0
 
-    dense_input_dim = cfg.embedding_dim * len(DEFAULT_CAT_NAMES) + 13
-    dense_module = build_dense_stack(torch, dense_input_dim).to(device)
+    dense_module = build_hybrid_dense_arch(
+        torch=torch,
+        dense_in_features=13,
+        embedding_dim=cfg.embedding_dim,
+        num_sparse_features=len(DEFAULT_CAT_NAMES),
+        dense_arch_layer_sizes=parse_layer_sizes(cfg.dense_arch_layer_sizes),
+        over_arch_layer_sizes=parse_layer_sizes(cfg.over_arch_layer_sizes),
+        device=device,
+    )
     if use_dist:
         _append_worker_debug(cfg, rank, "skip_dense_ddp")
 
@@ -273,8 +362,11 @@ def _run_single_or_dist_worker(
 
             with stage_timer(row, "embed_pool_local_ms"):
                 _append_worker_debug(cfg, rank, f"before_pool step={step}")
-                pooled = torch.cat([embeddings[key] for key in DEFAULT_CAT_NAMES], dim=1)
-                pooled = pooled.detach().contiguous()
+                embedded_sparse_source = reshape_torchrec_embeddings_for_dlrm(
+                    embeddings=embeddings,
+                    feature_names=DEFAULT_CAT_NAMES,
+                    torch=torch,
+                )
                 if device.type == "cuda":
                     torch.cuda.synchronize(device)
                 _append_worker_debug(cfg, rank, f"after_pool step={step}")
@@ -288,28 +380,29 @@ def _run_single_or_dist_worker(
 
             with stage_timer(row, "output_unpack_ms"):
                 _append_worker_debug(cfg, rank, f"before_output_unpack step={step}")
-                dense_input, pooled, labels = prepare_dense_input(
+                dense_features, embedded_sparse, labels = prepare_hybrid_dlrm_input(
                     dense_batch=dense_batch,
-                    pooled_source=pooled,
+                    embedded_sparse_source=embedded_sparse_source,
                     labels_batch=labels_batch,
                     torch=torch,
                     device=device,
+                    detach_sparse=False,
                 )
                 _append_worker_debug(cfg, rank, f"after_output_unpack step={step}")
 
             with stage_timer(row, "dense_fwd_ms"):
                 _append_worker_debug(cfg, rank, f"before_dense_fwd step={step}")
                 sync_device(torch, device)
-                logits = dense_module(dense_input)
+                logits = dense_module(dense_features, embedded_sparse)
                 loss = criterion(logits, labels)
                 sync_device(torch, device)
                 _append_worker_debug(cfg, rank, f"after_dense_fwd step={step}")
 
             with stage_timer(row, "backward_ms"):
                 _append_worker_debug(cfg, rank, f"before_backward step={step}")
-                pooled_grad = run_dense_backward(
+                embedded_sparse_grad = run_hybrid_backward(
                     loss=loss,
-                    pooled=pooled,
+                    embedded_sparse=embedded_sparse,
                     dense_module=dense_module,
                     torch=torch,
                     device=device,
@@ -327,7 +420,7 @@ def _run_single_or_dist_worker(
             with stage_timer(row, "sparse_update_ms"):
                 _append_worker_debug(cfg, rank, f"before_sparse_update step={step}")
                 sync_device(torch, device)
-                pooled.backward(pooled_grad)
+                embedded_sparse.backward(embedded_sparse_grad)
                 sparse_optimizer.step()
                 sparse_optimizer.zero_grad(set_to_none=True)
                 sync_device(torch, device)
@@ -338,6 +431,14 @@ def _run_single_or_dist_worker(
 
             row["step_total_ms"] = (time.perf_counter() - step_start) * 1e3
             rows.append(finalize_torchrec_row(row))
+            _append_worker_debug(cfg, rank, f"before_step_barrier step={step}")
+            _barrier_for_step_alignment(
+                dist=dist,
+                device=device,
+                local_rank=local_rank,
+                use_dist=use_dist,
+            )
+            _append_worker_debug(cfg, rank, f"after_step_barrier step={step}")
 
     _append_worker_debug(cfg, rank, f"before_write_rows count={len(rows)} out_csv={out_csv}")
     _write_rows(out_csv, rows)

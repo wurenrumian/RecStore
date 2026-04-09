@@ -43,6 +43,8 @@ class RunConfig:
     data_dir: str = "model_zoo/torchrec_dlrm/processed_day_0_data"
     train_ratio: float = 0.8
     fuse_k: int = 30
+    dense_arch_layer_sizes: str = "512,256,128"
+    over_arch_layer_sizes: str = "1024,1024,512,256,1"
     backend: str = "recstore"
     nproc: int = 1
     nnodes: int = 1
@@ -122,6 +124,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--fuse-k", type=int, default=30)
+    parser.add_argument(
+        "--dense-arch-layer-sizes",
+        type=str,
+        default="512,256,128",
+    )
+    parser.add_argument(
+        "--over-arch-layer-sizes",
+        type=str,
+        default="1024,1024,512,256,1",
+    )
     parser.add_argument("--torchrec-profiler", action="store_true", default=False)
     parser.add_argument("--torchrec-profiler-warmup", type=int, default=0)
     parser.add_argument("--torchrec-profiler-active", type=int, default=2)

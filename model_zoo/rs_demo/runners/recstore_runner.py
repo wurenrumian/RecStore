@@ -17,10 +17,13 @@ from ..data.dlrm_source import (
     get_default_cat_names,
     inject_project_paths,
 )
-from ..runtime.aligned_training import (
-    build_dense_stack,
-    prepare_dense_input,
-    run_dense_backward,
+from ..runtime.hybrid_dlrm import (
+    build_hybrid_dense_arch,
+    flatten_embedded_sparse_grad_for_recstore,
+    parse_layer_sizes,
+    prepare_hybrid_dlrm_input,
+    reshape_recstore_embeddings_for_dlrm,
+    run_hybrid_backward,
     sync_device,
 )
 from ..runtime.recstore_distributed import ShardedRecstoreClient
@@ -148,8 +151,15 @@ class RecStoreRunner(BenchmarkRunner):
             )
 
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            dense_input_dim = cfg.embedding_dim * len(default_cat_names) + 13
-            dense_module = build_dense_stack(torch, dense_input_dim).to(device)
+            dense_module = build_hybrid_dense_arch(
+                torch=torch,
+                dense_in_features=13,
+                embedding_dim=cfg.embedding_dim,
+                num_sparse_features=len(default_cat_names),
+                dense_arch_layer_sizes=parse_layer_sizes(cfg.dense_arch_layer_sizes),
+                over_arch_layer_sizes=parse_layer_sizes(cfg.over_arch_layer_sizes),
+                device=device,
+            )
             criterion = torch.nn.BCEWithLogitsLoss()
             dense_optimizer = torch.optim.SGD(dense_module.parameters(), lr=0.01)
 
@@ -209,32 +219,32 @@ class RecStoreRunner(BenchmarkRunner):
                     read_lat_us.append(row["embed_lookup_local_ms"] * 1e3)
 
                 with stage_timer(row, "embed_pool_local_ms"):
-                    pooled_chunks = []
-                    for table_idx in range(len(default_cat_names)):
-                        start = table_idx * batch_rows
-                        end = start + batch_rows
-                        pooled_chunks.append(embeddings[start:end])
-                    pooled_cpu = torch.cat(pooled_chunks, dim=1)
+                    embedded_sparse_cpu = reshape_recstore_embeddings_for_dlrm(
+                        embeddings=embeddings,
+                        batch_rows=batch_rows,
+                        num_sparse_features=len(default_cat_names),
+                    )
 
                 with stage_timer(row, "output_unpack_ms"):
-                    dense_input, pooled, labels = prepare_dense_input(
+                    dense_features, embedded_sparse, labels = prepare_hybrid_dlrm_input(
                         dense_batch=dense_batch,
-                        pooled_source=pooled_cpu,
+                        embedded_sparse_source=embedded_sparse_cpu,
                         labels_batch=labels_batch,
                         torch=torch,
                         device=device,
+                        detach_sparse=True,
                     )
 
                 with stage_timer(row, "dense_fwd_ms"):
                     sync_device(torch, device)
-                    logits = dense_module(dense_input)
+                    logits = dense_module(dense_features, embedded_sparse)
                     loss = criterion(logits, labels)
                     sync_device(torch, device)
 
                 with stage_timer(row, "backward_ms"):
-                    pooled_grad = run_dense_backward(
+                    embedded_sparse_grad = run_hybrid_backward(
                         loss=loss,
-                        pooled=pooled,
+                        embedded_sparse=embedded_sparse,
                         dense_module=dense_module,
                         torch=torch,
                         device=device,
@@ -248,8 +258,9 @@ class RecStoreRunner(BenchmarkRunner):
 
                 with stage_timer(row, "sparse_update_ms"):
                     sync_device(torch, device)
-                    grad_chunks = torch.chunk(pooled_grad.to("cpu"), len(default_cat_names), dim=1)
-                    update_grads = torch.cat(grad_chunks, dim=0).contiguous()
+                    update_grads = flatten_embedded_sparse_grad_for_recstore(
+                        embedded_sparse_grad.to("cpu")
+                    )
                     client.emb_update_table("t_cat_0", read_ids, update_grads)
                     sync_device(torch, device)
 
