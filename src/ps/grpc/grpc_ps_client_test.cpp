@@ -88,6 +88,73 @@ void TestFactoryClient() {
   }
 }
 
+void TestAsyncReadWriteConcurrency() {
+  std::cout << "\n=== Testing gRPC Async Read/Write Concurrency ==="
+            << std::endl;
+
+  GRPCParameterClient client("127.0.0.1", kGrpcTestPort, 1);
+  CHECK(client.ClearPS());
+
+  struct CaseData {
+    std::vector<uint64_t> keys;
+    std::vector<std::vector<float>> values;
+  };
+
+  constexpr int kCaseNum     = 4;
+  constexpr int kRowsPerCase = 12;
+  constexpr int kDim         = 4;
+
+  std::vector<CaseData> cases(kCaseNum);
+  for (int c = 0; c < kCaseNum; ++c) {
+    auto& cs = cases[c];
+    cs.keys.reserve(kRowsPerCase);
+    cs.values.reserve(kRowsPerCase);
+    for (int i = 0; i < kRowsPerCase; ++i) {
+      uint64_t key = 10000 + static_cast<uint64_t>(c * 100 + i);
+      cs.keys.push_back(key);
+      cs.values.push_back(
+          {static_cast<float>(key),
+           static_cast<float>(key + 1),
+           static_cast<float>(key + 2),
+           static_cast<float>(key + 3)});
+    }
+  }
+
+  std::vector<uint64_t> write_ids;
+  write_ids.reserve(cases.size());
+  for (const auto& cs : cases) {
+    base::ConstArray<uint64_t> keys_array(cs.keys);
+    uint64_t write_id = client.EmbWriteAsync(keys_array, cs.values);
+    CHECK(write_id != 0);
+    write_ids.push_back(write_id);
+  }
+  for (uint64_t write_id : write_ids) {
+    client.WaitForWrite(write_id);
+  }
+
+  std::vector<uint64_t> prefetch_ids;
+  prefetch_ids.reserve(cases.size());
+  for (const auto& cs : cases) {
+    base::ConstArray<uint64_t> keys_array(cs.keys);
+    uint64_t prefetch_id = client.PrefetchParameter(keys_array);
+    CHECK(prefetch_id != 0);
+    prefetch_ids.push_back(prefetch_id);
+  }
+
+  for (size_t i = 0; i < cases.size(); ++i) {
+    client.WaitForPrefetch(prefetch_ids[i]);
+    std::vector<std::vector<float>> fetched_values;
+    CHECK(client.GetPrefetchResult(prefetch_ids[i], &fetched_values));
+    CHECK(check_eq_2d(fetched_values, cases[i].values));
+    CHECK(static_cast<int>(fetched_values.size()) == kRowsPerCase);
+    for (const auto& row : fetched_values) {
+      CHECK(static_cast<int>(row.size()) == kDim);
+    }
+  }
+
+  CHECK(client.ClearPS());
+}
+
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
   xmh::Reporter::StartReportThread(2000);
@@ -99,6 +166,7 @@ int main(int argc, char** argv) {
   recstore::test::ScopedPSServer server(launch_options, true);
 
   TestFactoryClient();
+  TestAsyncReadWriteConcurrency();
 
   std::cout << "\n=== Testing Original Implementation ===" << std::endl;
 

@@ -561,6 +561,10 @@ static void OnPrefetchDone(BrpcPrefetchBatch* batch) {
   batch->completed_count_++;
 }
 
+static void OnPrewriteDone(BrpcPrewriteBatch* batch) {
+  batch->completed_count_++;
+}
+
 uint64_t
 BRPCParameterClient::PrefetchParameter(const base::ConstArray<uint64_t>& keys) {
   uint64_t prefetch_id = next_prefetch_id_++;
@@ -1158,17 +1162,103 @@ int BRPCParameterClient::InitEmbeddingTable(
 
 uint64_t BRPCParameterClient::EmbWriteAsync(const base::RecTensor& keys,
                                             const base::RecTensor& values) {
-  LOG(ERROR) << "EmbWriteAsync not implemented!";
-  return 0;
+  if (keys.dtype() != base::DataType::UINT64 || keys.dim() != 1) {
+    LOG(ERROR) << "EmbWriteAsync expects keys as 1D UINT64 tensor, got dtype="
+               << base::DataTypeToString(keys.dtype())
+               << ", dim=" << keys.dim();
+    return 0;
+  }
+  if (values.dtype() != base::DataType::FLOAT32 || values.dim() != 2) {
+    LOG(ERROR)
+        << "EmbWriteAsync expects values as 2D FLOAT32 tensor, got dtype="
+        << base::DataTypeToString(values.dtype()) << ", dim=" << values.dim();
+    return 0;
+  }
+  if (values.shape(0) != keys.shape(0)) {
+    LOG(ERROR) << "EmbWriteAsync row mismatch: keys=" << keys.shape(0)
+               << ", values=" << values.shape(0);
+    return 0;
+  }
+  if (values.shape(1) <= 0) {
+    LOG(ERROR) << "EmbWriteAsync invalid embedding dim: " << values.shape(1);
+    return 0;
+  }
+
+  const uint64_t* key_data = keys.data_as<uint64_t>();
+  const float* value_data  = values.data_as<float>();
+  int64_t key_count        = keys.shape(0);
+  int64_t emb_dim          = values.shape(1);
+  if (key_count == 0) {
+    return 0;
+  }
+
+  uint64_t prewrite_id = next_prewrite_id_++;
+  int request_num =
+      (static_cast<int>(key_count) + MAX_PARAMETER_BATCH_BRPC - 1) /
+      MAX_PARAMETER_BATCH_BRPC;
+
+  auto it = prewrite_batches_.emplace(prewrite_id, request_num).first;
+  struct BrpcPrewriteBatch* pb = &it->second;
+
+  recstoreps_brpc::ParameterService_Stub stub(channel_.get());
+  for (int start = 0, index = 0; start < key_count;
+       start += MAX_PARAMETER_BATCH_BRPC, ++index) {
+    int key_size =
+        std::min(static_cast<int>(key_count - start), MAX_PARAMETER_BATCH_BRPC);
+    pb->key_sizes_[index]   = key_size;
+    pb->controllers_[index] = std::make_unique<brpc::Controller>();
+
+    ParameterCompressor compressor;
+    for (int i = 0; i < key_size; ++i) {
+      int64_t row = start + i;
+      ParameterPack parameter_pack;
+      parameter_pack.key      = key_data[row];
+      parameter_pack.dim      = emb_dim;
+      parameter_pack.emb_data = value_data + row * emb_dim;
+      compressor.AddItem(parameter_pack, nullptr);
+    }
+
+    compressor.AppendToIOBuf(&pb->controllers_[index]->request_attachment());
+    google::protobuf::Closure* done = brpc::NewCallback(OnPrewriteDone, pb);
+    stub.PutParameter(
+        pb->controllers_[index].get(),
+        &pb->requests_[index],
+        &pb->responses_[index],
+        done);
+  }
+
+  return prewrite_id;
 }
 
 bool BRPCParameterClient::IsWriteDone(uint64_t write_id) {
-  LOG(ERROR) << "IsWriteDone not implemented!";
-  return true;
+  auto it = prewrite_batches_.find(write_id);
+  if (it == prewrite_batches_.end()) {
+    LOG(ERROR) << "Invalid prewrite_id: " << write_id;
+    return false;
+  }
+  auto& pb = it->second;
+  return pb.completed_count_ == pb.batch_size_;
 }
 
 void BRPCParameterClient::WaitForWrite(uint64_t write_id) {
-  LOG(ERROR) << "WaitForWrite not implemented!";
+  auto it = prewrite_batches_.find(write_id);
+  if (it == prewrite_batches_.end()) {
+    LOG(ERROR) << "Invalid prewrite_id: " << write_id;
+    return;
+  }
+  auto& pb = it->second;
+  for (int i = 0; i < pb.batch_size_; ++i) {
+    if (!pb.controllers_[i]) {
+      continue;
+    }
+    brpc::Join(pb.controllers_[i]->call_id());
+    if (pb.controllers_[i]->Failed()) {
+      LOG(ERROR) << "Async PutParameter failed: "
+                 << pb.controllers_[i]->ErrorText();
+    }
+  }
+  pb.completed_count_ = pb.batch_size_;
+  prewrite_batches_.erase(it);
 }
 
 // 注册 BRPCParameterClient 到工厂
