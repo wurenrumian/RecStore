@@ -1,6 +1,7 @@
 #include "dist_brpc_ps_client.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <future>
 #include <thread>
@@ -622,28 +623,193 @@ int DistributedBRPCParameterClient::InitEmbeddingTable(
 // Prefetch 接口实现
 uint64_t DistributedBRPCParameterClient::PrefetchParameter(
     const base::ConstArray<uint64_t>& keys) {
-  // 对于分布式客户端，暂时不支持 Prefetch，直接返回 0 表示无效 ID
-  LOG(WARNING)
-      << "PrefetchParameter not fully implemented for distributed bRPC client";
-  return 0;
+  auto cleanup_state = [this](const DistPrefetchState& state) {
+    for (const auto& shard_state : state.shard_states) {
+      if (shard_state.client_index < 0 ||
+          shard_state.client_index >= static_cast<int>(clients_.size())) {
+        continue;
+      }
+      auto* client = clients_[shard_state.client_index].get();
+      for (uint64_t child_prefetch_id : shard_state.child_prefetch_ids) {
+        client->WaitForPrefetch(child_prefetch_id);
+        std::vector<std::vector<float>> tmp;
+        client->GetPrefetchResult(child_prefetch_id, &tmp);
+      }
+    }
+  };
+
+  if (keys.Size() == 0) {
+    std::lock_guard<std::mutex> lk(prefetch_mu_);
+    uint64_t prefetch_id = next_prefetch_id_++;
+    auto state           = std::make_shared<DistPrefetchState>();
+    state->total_keys    = 0;
+    prefetch_states_[prefetch_id] = state;
+    return prefetch_id;
+  }
+
+  std::vector<std::vector<uint64_t>> shard_keys(num_shards_);
+  std::vector<std::vector<size_t>> shard_indices(num_shards_);
+  for (size_t i = 0; i < keys.Size(); ++i) {
+    const int shard_id = GetShardId(keys[i]);
+    shard_keys[shard_id].push_back(keys[i]);
+    shard_indices[shard_id].push_back(i);
+  }
+
+  auto state        = std::make_shared<DistPrefetchState>();
+  state->total_keys = keys.Size();
+
+  for (int shard_id = 0; shard_id < num_shards_; ++shard_id) {
+    if (shard_keys[shard_id].empty()) {
+      continue;
+    }
+
+    auto it = shard_to_client_index_.find(shard_id);
+    if (it == shard_to_client_index_.end()) {
+      LOG(ERROR) << "No client found for shard " << shard_id;
+      cleanup_state(*state);
+      return 0;
+    }
+
+    DistPrefetchShardState shard_state;
+    shard_state.shard_id     = shard_id;
+    shard_state.client_index = it->second;
+    shard_state.original_indices = std::move(shard_indices[shard_id]);
+
+    const auto& skeys = shard_keys[shard_id];
+    for (size_t start = 0; start < skeys.size();
+         start += static_cast<size_t>(max_keys_per_request_)) {
+      size_t end =
+          std::min(start + static_cast<size_t>(max_keys_per_request_),
+                   skeys.size());
+      base::ConstArray<uint64_t> chunk(
+          skeys.data() + start, static_cast<int>(end - start));
+      uint64_t child_prefetch_id =
+          clients_[shard_state.client_index]->PrefetchParameter(chunk);
+      if (child_prefetch_id == 0) {
+        LOG(ERROR) << "PrefetchParameter failed for shard " << shard_id;
+        cleanup_state(*state);
+        return 0;
+      }
+      shard_state.child_prefetch_ids.push_back(child_prefetch_id);
+      shard_state.chunk_sizes.push_back(static_cast<int>(end - start));
+    }
+    state->shard_states.push_back(std::move(shard_state));
+  }
+
+  std::lock_guard<std::mutex> lk(prefetch_mu_);
+  uint64_t prefetch_id = next_prefetch_id_++;
+  prefetch_states_[prefetch_id] = std::move(state);
+  return prefetch_id;
 }
 
 bool DistributedBRPCParameterClient::IsPrefetchDone(uint64_t prefetch_id) {
-  // 暂时返回 true，表示总是完成
+  std::shared_ptr<DistPrefetchState> state;
+  {
+    std::lock_guard<std::mutex> lk(prefetch_mu_);
+    auto it = prefetch_states_.find(prefetch_id);
+    if (it == prefetch_states_.end()) {
+      LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
+      return false;
+    }
+    state = it->second;
+  }
+
+  for (const auto& shard_state : state->shard_states) {
+    auto* client = clients_[shard_state.client_index].get();
+    for (uint64_t child_prefetch_id : shard_state.child_prefetch_ids) {
+      if (!client->IsPrefetchDone(child_prefetch_id)) {
+        return false;
+      }
+    }
+  }
   return true;
 }
 
 void DistributedBRPCParameterClient::WaitForPrefetch(uint64_t prefetch_id) {
-  // 暂时空实现
-  return;
+  std::shared_ptr<DistPrefetchState> state;
+  {
+    std::lock_guard<std::mutex> lk(prefetch_mu_);
+    auto it = prefetch_states_.find(prefetch_id);
+    if (it == prefetch_states_.end()) {
+      LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
+      return;
+    }
+    state = it->second;
+  }
+
+  for (const auto& shard_state : state->shard_states) {
+    auto* client = clients_[shard_state.client_index].get();
+    for (uint64_t child_prefetch_id : shard_state.child_prefetch_ids) {
+      client->WaitForPrefetch(child_prefetch_id);
+    }
+  }
 }
 
 bool DistributedBRPCParameterClient::GetPrefetchResult(
     uint64_t prefetch_id, std::vector<std::vector<float>>* values) {
-  // 暂时返回 false，表示不支持
-  LOG(WARNING)
-      << "GetPrefetchResult not fully implemented for distributed bRPC client";
-  return false;
+  if (values == nullptr) {
+    LOG(ERROR) << "GetPrefetchResult output pointer is null";
+    return false;
+  }
+
+  std::shared_ptr<DistPrefetchState> state;
+  {
+    std::lock_guard<std::mutex> lk(prefetch_mu_);
+    auto it = prefetch_states_.find(prefetch_id);
+    if (it == prefetch_states_.end()) {
+      LOG(ERROR) << "Invalid prefetch_id: " << prefetch_id;
+      return false;
+    }
+    state = it->second;
+  }
+
+  // Ensure all child RPCs are completed before consuming payloads.
+  WaitForPrefetch(prefetch_id);
+
+  values->clear();
+  values->resize(state->total_keys);
+
+  bool ok_all = true;
+  for (const auto& shard_state : state->shard_states) {
+    auto* client = clients_[shard_state.client_index].get();
+    size_t shard_offset = 0;
+    for (size_t i = 0; i < shard_state.child_prefetch_ids.size(); ++i) {
+      std::vector<std::vector<float>> chunk_values;
+      if (!client->GetPrefetchResult(
+              shard_state.child_prefetch_ids[i], &chunk_values)) {
+        ok_all = false;
+        break;
+      }
+      const int expected =
+          (i < shard_state.chunk_sizes.size() ? shard_state.chunk_sizes[i] : -1);
+      if (expected >= 0 && static_cast<int>(chunk_values.size()) != expected) {
+        LOG(ERROR) << "Prefetch chunk size mismatch: got "
+                   << chunk_values.size() << ", expected " << expected;
+        ok_all = false;
+        break;
+      }
+      for (const auto& row : chunk_values) {
+        if (shard_offset >= shard_state.original_indices.size()) {
+          LOG(ERROR) << "Prefetch result overflow in shard " << shard_state.shard_id;
+          ok_all = false;
+          break;
+        }
+        (*values)[shard_state.original_indices[shard_offset++]] = row;
+      }
+      if (!ok_all) {
+        break;
+      }
+    }
+    if (!ok_all) {
+      break;
+    }
+  }
+
+  {
+    std::lock_guard<std::mutex> lk(prefetch_mu_);
+    prefetch_states_.erase(prefetch_id);
+  }
+  return ok_all;
 }
 
 bool DistributedBRPCParameterClient::GetPrefetchResultFlat(
@@ -651,9 +817,37 @@ bool DistributedBRPCParameterClient::GetPrefetchResultFlat(
     std::vector<float>* values,
     int64_t* num_rows,
     int64_t embedding_dim) {
-  LOG(WARNING) << "GetPrefetchResultFlat not fully implemented for distributed "
-                  "bRPC client";
-  return false;
+  if (values == nullptr || num_rows == nullptr) {
+    LOG(ERROR) << "GetPrefetchResultFlat output pointer is null";
+    return false;
+  }
+  if (embedding_dim <= 0) {
+    LOG(ERROR) << "GetPrefetchResultFlat invalid embedding_dim: "
+               << embedding_dim;
+    return false;
+  }
+
+  std::vector<std::vector<float>> merged_values;
+  if (!GetPrefetchResult(prefetch_id, &merged_values)) {
+    return false;
+  }
+
+  *num_rows = static_cast<int64_t>(merged_values.size());
+  values->assign(
+      static_cast<size_t>(*num_rows) * static_cast<size_t>(embedding_dim),
+      0.0f);
+  for (size_t i = 0; i < merged_values.size(); ++i) {
+    const auto& row = merged_values[i];
+    if (row.empty()) {
+      continue;
+    }
+    const int64_t copy_d =
+        std::min<int64_t>(embedding_dim, static_cast<int64_t>(row.size()));
+    std::memcpy(values->data() + i * static_cast<size_t>(embedding_dim),
+                row.data(),
+                static_cast<size_t>(copy_d) * sizeof(float));
+  }
+  return true;
 }
 
 } // namespace recstore
