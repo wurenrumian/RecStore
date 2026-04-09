@@ -1203,9 +1203,9 @@ uint64_t BRPCParameterClient::EmbWriteAsync(const base::RecTensor& keys,
   recstoreps_brpc::ParameterService_Stub stub(channel_.get());
   for (int start = 0, index = 0; start < key_count;
        start += MAX_PARAMETER_BATCH_BRPC, ++index) {
-    int key_size = std::min(
-        static_cast<int>(key_count - start), MAX_PARAMETER_BATCH_BRPC);
-    pb->key_sizes_[index] = key_size;
+    int key_size =
+        std::min(static_cast<int>(key_count - start), MAX_PARAMETER_BATCH_BRPC);
+    pb->key_sizes_[index]   = key_size;
     pb->controllers_[index] = std::make_unique<brpc::Controller>();
 
     ParameterCompressor compressor;
@@ -1220,10 +1220,11 @@ uint64_t BRPCParameterClient::EmbWriteAsync(const base::RecTensor& keys,
 
     compressor.AppendToIOBuf(&pb->controllers_[index]->request_attachment());
     google::protobuf::Closure* done = brpc::NewCallback(OnPrewriteDone, pb);
-    stub.PutParameter(pb->controllers_[index].get(),
-                      &pb->requests_[index],
-                      &pb->responses_[index],
-                      done);
+    stub.PutParameter(
+        pb->controllers_[index].get(),
+        &pb->requests_[index],
+        &pb->responses_[index],
+        done);
   }
 
   return prewrite_id;

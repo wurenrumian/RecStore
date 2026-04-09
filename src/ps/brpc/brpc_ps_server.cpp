@@ -56,9 +56,8 @@ namespace recstore {
 
 namespace {
 
-void AppendShardSuffixIfPresent(nlohmann::json& config_node,
-                                const char* key,
-                                int shard_id) {
+void AppendShardSuffixIfPresent(
+    nlohmann::json& config_node, const char* key, int shard_id) {
   if (!config_node.contains(key) || !config_node[key].is_string()) {
     return;
   }

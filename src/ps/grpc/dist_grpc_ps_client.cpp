@@ -619,9 +619,9 @@ uint64_t DistributedGRPCParameterClient::PrefetchParameter(
 
   if (keys.Size() == 0) {
     std::lock_guard<std::mutex> lk(prefetch_mu_);
-    uint64_t prefetch_id = next_prefetch_id_++;
-    auto state           = std::make_shared<DistPrefetchState>();
-    state->total_keys    = 0;
+    uint64_t prefetch_id          = next_prefetch_id_++;
+    auto state                    = std::make_shared<DistPrefetchState>();
+    state->total_keys             = 0;
     prefetch_states_[prefetch_id] = state;
     return prefetch_id;
   }
@@ -650,16 +650,15 @@ uint64_t DistributedGRPCParameterClient::PrefetchParameter(
     }
 
     DistPrefetchShardState shard_state;
-    shard_state.shard_id     = shard_id;
-    shard_state.client_index = it->second;
+    shard_state.shard_id         = shard_id;
+    shard_state.client_index     = it->second;
     shard_state.original_indices = std::move(shard_indices[shard_id]);
 
     const auto& skeys = shard_keys[shard_id];
     for (size_t start = 0; start < skeys.size();
          start += static_cast<size_t>(max_keys_per_request_)) {
-      size_t end =
-          std::min(start + static_cast<size_t>(max_keys_per_request_),
-                   skeys.size());
+      size_t end = std::min(
+          start + static_cast<size_t>(max_keys_per_request_), skeys.size());
       base::ConstArray<uint64_t> chunk(
           skeys.data() + start, static_cast<int>(end - start));
       uint64_t child_prefetch_id =
@@ -676,7 +675,7 @@ uint64_t DistributedGRPCParameterClient::PrefetchParameter(
   }
 
   std::lock_guard<std::mutex> lk(prefetch_mu_);
-  uint64_t prefetch_id = next_prefetch_id_++;
+  uint64_t prefetch_id          = next_prefetch_id_++;
   prefetch_states_[prefetch_id] = std::move(state);
   return prefetch_id;
 }
@@ -750,7 +749,7 @@ bool DistributedGRPCParameterClient::GetPrefetchResult(
 
   bool ok_all = true;
   for (const auto& shard_state : state->shard_states) {
-    auto* client = clients_[shard_state.client_index].get();
+    auto* client        = clients_[shard_state.client_index].get();
     size_t shard_offset = 0;
     for (size_t i = 0; i < shard_state.child_prefetch_ids.size(); ++i) {
       std::vector<std::vector<float>> chunk_values;
@@ -760,7 +759,9 @@ bool DistributedGRPCParameterClient::GetPrefetchResult(
         break;
       }
       const int expected =
-          (i < shard_state.chunk_sizes.size() ? shard_state.chunk_sizes[i] : -1);
+          (i < shard_state.chunk_sizes.size()
+               ? shard_state.chunk_sizes[i]
+               : -1);
       if (expected >= 0 && static_cast<int>(chunk_values.size()) != expected) {
         LOG(ERROR) << "Prefetch chunk size mismatch: got "
                    << chunk_values.size() << ", expected " << expected;
@@ -769,7 +770,8 @@ bool DistributedGRPCParameterClient::GetPrefetchResult(
       }
       for (const auto& row : chunk_values) {
         if (shard_offset >= shard_state.original_indices.size()) {
-          LOG(ERROR) << "Prefetch result overflow in shard " << shard_state.shard_id;
+          LOG(ERROR) << "Prefetch result overflow in shard "
+                     << shard_state.shard_id;
           ok_all = false;
           break;
         }

@@ -248,9 +248,14 @@ void TestPrefetch() {
 
   std::vector<uint64_t> keys = {100, 101, 102, 103, 104, 105, 106, 107};
   std::vector<std::vector<float>> values = {
-      {1.0f, 1.1f, 1.2f}, {2.0f, 2.1f, 2.2f}, {3.0f, 3.1f, 3.2f},
-      {4.0f, 4.1f, 4.2f}, {5.0f, 5.1f, 5.2f}, {6.0f, 6.1f, 6.2f},
-      {7.0f, 7.1f, 7.2f}, {8.0f, 8.1f, 8.2f}};
+      {1.0f, 1.1f, 1.2f},
+      {2.0f, 2.1f, 2.2f},
+      {3.0f, 3.1f, 3.2f},
+      {4.0f, 4.1f, 4.2f},
+      {5.0f, 5.1f, 5.2f},
+      {6.0f, 6.1f, 6.2f},
+      {7.0f, 7.1f, 7.2f},
+      {8.0f, 8.1f, 8.2f}};
   base::ConstArray<uint64_t> keys_array(keys);
 
   CHECK(client.PutParameter(keys_array, values) == 0);
@@ -270,8 +275,8 @@ void TestPrefetch() {
   CHECK(flat_prefetch_id != 0);
   std::vector<float> flat_values;
   int64_t num_rows = 0;
-  CHECK(
-      client.GetPrefetchResultFlat(flat_prefetch_id, &flat_values, &num_rows, 3));
+  CHECK(client.GetPrefetchResultFlat(
+      flat_prefetch_id, &flat_values, &num_rows, 3));
   CHECK(num_rows == static_cast<int64_t>(keys.size()));
   CHECK(flat_values.size() == keys.size() * 3);
   for (size_t i = 0; i < keys.size(); ++i) {
@@ -279,8 +284,8 @@ void TestPrefetch() {
       CHECK(std::abs(flat_values[i * 3 + d] - values[i][d]) < 1e-6);
     }
   }
-  CHECK(
-      !client.GetPrefetchResultFlat(flat_prefetch_id, &flat_values, &num_rows, 3));
+  CHECK(!client.GetPrefetchResultFlat(
+      flat_prefetch_id, &flat_values, &num_rows, 3));
   std::cout << "TestPrefetch done" << std::endl;
 }
 

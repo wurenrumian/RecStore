@@ -65,7 +65,6 @@ public:
                              int64_t* num_rows,
                              int64_t embedding_dim) override;
 
-
   // 扩展接口
   bool GetParameter(const base::ConstArray<uint64_t>& keys,
                     std::vector<std::vector<float>>* values);
