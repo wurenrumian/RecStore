@@ -279,6 +279,18 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         help="Ratio of data to use for training (rest for validation) in single day mode",
     )
     parser.add_argument(
+        "--random-dataset",
+        dest="random_dataset",
+        action="store_true",
+        help="Use generated random data instead of processed day_0 files.",
+    )
+    parser.add_argument(
+        "--dataset-size",
+        type=int,
+        default=4194304,
+        help="Synthetic dataset size used when --random-dataset is enabled.",
+    )
+    parser.add_argument(
         "--enable_prefetch",
         action="store_true",
         help="Enable async embedding prefetch to overlap I/O and compute",
@@ -355,7 +367,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     apply_launch_config(args, launch_config, explicit_config_keys)
 
     if args.single_day_mode:
-        if args.in_memory_binary_criteo_path is None:
+        if not args.random_dataset and args.in_memory_binary_criteo_path is None:
             raise ValueError("--in_memory_binary_criteo_path must be specified for single day mode")
         
         if args.num_embeddings_per_feature is None:
@@ -372,7 +384,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
             args.learning_rate = 0.005
             args.adagrad = True
         
-        print(f"Single day mode enabled. Training with day_0 data only.")
+        if args.random_dataset:
+            print(f"Single day mode enabled. Training with generated random data only.")
+            print(f"Synthetic dataset size: {args.dataset_size}")
+        else:
+            print(f"Single day mode enabled. Training with day_0 data only.")
         print(f"Training ratio: {args.train_ratio}")
         print(f"Validation ratio: {1 - args.train_ratio}")
     

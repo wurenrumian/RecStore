@@ -57,19 +57,93 @@ class CustomCriteoDataset(Dataset):
         
         return dense, sparse, label
 
+
+class RandomSingleDayDataset(Dataset):
+    def __init__(
+        self,
+        num_samples: int,
+        stage: str = "train",
+        train_ratio: float = 0.8,
+        num_embeddings_per_feature: List[int] | None = None,
+        seed: int | None = None,
+    ):
+        if num_samples <= 0:
+            raise ValueError("num_samples must be greater than 0")
+
+        self.num_samples = int(num_samples)
+        self.stage = stage
+        self.train_ratio = train_ratio
+        self.num_embeddings_per_feature = num_embeddings_per_feature or [100000] * 26
+        self.seed = 0 if seed is None else int(seed)
+
+        if stage == "train":
+            start_idx = 0
+            end_idx = int(self.num_samples * train_ratio)
+        else:
+            start_idx = int(self.num_samples * train_ratio)
+            end_idx = self.num_samples
+
+        self.start_idx = start_idx
+        self.end_idx = end_idx
+        self.actual_samples = end_idx - start_idx
+
+        print(f"Using random single-day dataset with {self.num_samples} samples")
+        print(f"{stage.capitalize()} set: samples {start_idx} to {end_idx} ({self.actual_samples} total)")
+
+    def __len__(self):
+        return self.actual_samples
+
+    def __getitem__(self, idx):
+        actual_idx = self.start_idx + idx
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + actual_idx)
+
+        dense = torch.rand(13, generator=generator, dtype=torch.float32)
+        sparse = torch.tensor(
+            [
+                torch.randint(
+                    0,
+                    max(int(vocab), 1),
+                    (1,),
+                    generator=generator,
+                    dtype=torch.int64,
+                ).item()
+                for vocab in self.num_embeddings_per_feature
+            ],
+            dtype=torch.int64,
+        )
+        label = torch.randint(
+            0,
+            2,
+            (1,),
+            generator=generator,
+            dtype=torch.int64,
+        ).to(torch.float32)
+        return dense, sparse, label
+
 def get_custom_dataloader(args: argparse.Namespace, backend: str, stage: str) -> DataLoader:
     if hasattr(args, 'single_day_mode') and args.single_day_mode:
         if getattr(args, 'num_embeddings_per_feature', None) is not None:
             nep = [int(x) for x in args.num_embeddings_per_feature.split(",")]
         else:
             nep = [int(args.num_embeddings)] * 26 if getattr(args, 'num_embeddings', None) is not None else None
-        
-        dataset = CustomCriteoDataset(
-            data_dir=args.in_memory_binary_criteo_path,
-            stage=stage,
-            train_ratio=args.train_ratio if hasattr(args, 'train_ratio') else 0.8,
-            num_embeddings_per_feature=nep,
-        )
+
+        train_ratio = args.train_ratio if hasattr(args, 'train_ratio') else 0.8
+        if getattr(args, "random_dataset", False):
+            dataset = RandomSingleDayDataset(
+                num_samples=int(getattr(args, "dataset_size", 4194304)),
+                stage=stage,
+                train_ratio=train_ratio,
+                num_embeddings_per_feature=nep,
+                seed=getattr(args, "seed", None),
+            )
+        else:
+            dataset = CustomCriteoDataset(
+                data_dir=args.in_memory_binary_criteo_path,
+                stage=stage,
+                train_ratio=train_ratio,
+                num_embeddings_per_feature=nep,
+            )
         
         if stage in ["val", "test"] and args.test_batch_size is not None:
             batch_size = args.test_batch_size

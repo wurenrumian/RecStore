@@ -12,9 +12,11 @@
 
 ## 2. 运行计算层模型
 
-DLRM 使用的数据集为 [Criteo Kaggle Display Advertising Challenge Dataset](https://ailab.criteo.com/ressources/)，项目切片了第 0 天的数据方便进行测试和分析，你可以在 [day_0.csv](https://github.com/user-attachments/files/23355355/day_0.csv) 下载前 4096 条的数据。需要把数据去掉后缀放到 `model_zoo/torchrec_dlrm/partial_data` 下，然后运行：
+DLRM 使用的数据集为 [Criteo Kaggle Display Advertising Challenge Dataset](https://ailab.criteo.com/ressources/)，项目切片了第 0 天的数据方便进行测试和分析，你可以在 [day_0.csv](https://github.com/user-attachments/files/23355355/day_0.csv) 下载前 4096 条的数据，然后使用脚本进行预处理：
 
 ```bash title="预处理./partial_data中的数据"
+cd model_zoo/torchrec_dlrm/
+mkdir -p partial_data && wget -O partial_data/day_0 https://github.com/user-attachments/files/23355355/day_0.csv
 bash scripts/process_single_day.sh ./partial_data ./processed_day_0_data > process.log 2>&1
 ```
 

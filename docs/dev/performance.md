@@ -24,7 +24,14 @@ cmake .. \
     export RECSTORE_REPORT_JSONL_PATH=/tmp/recstore_report_events.jsonl
     ```
 
-    启动参数服务器与模型训练（例如 DLRM）后，使用分析脚本：
+    接下来启动参数服务器与模型训练，可以使用随机数据集的DLRM：
+
+    ```bash title="运行 DLRM 模型（随机数据），自动拉起ps_server"
+    cd model_zoo/torchrec_dlrm/
+    bash ./run_single_day.sh --ps --random-dataset --dataset-size 256
+    ```
+    
+    使用分析脚本：
 
     ```bash title="分析模型层真实 update 数据"
     python3 src/test/scripts/analyze_embupdate_stages.py \
