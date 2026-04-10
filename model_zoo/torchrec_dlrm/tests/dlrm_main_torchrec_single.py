@@ -202,6 +202,18 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         default=0.8,
         help="Ratio of data to use for training in single day mode",
     )
+    parser.add_argument(
+        "--random-dataset",
+        dest="random_dataset",
+        action="store_true",
+        help="Use generated random data instead of processed day_0 files.",
+    )
+    parser.add_argument(
+        "--dataset-size",
+        type=int,
+        default=4194304,
+        help="Synthetic dataset size used when --random-dataset is enabled.",
+    )
     # Ignored args to maintain compatibility with run_single_day.sh calling convention
     parser.add_argument("--num_embeddings", type=int, default=None)
     parser.add_argument("--num_embeddings_per_feature", type=str, default=None)
@@ -248,7 +260,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     apply_launch_config(args, launch_config, explicit_config_keys)
 
     if args.single_day_mode:
-        if args.in_memory_binary_criteo_path is None:
+        if not args.random_dataset and args.in_memory_binary_criteo_path is None:
             raise ValueError("--in_memory_binary_criteo_path must be specified for single day mode")
         
         # Hardcoded embedding sizes for Day 0 (Criteo 1TB)
@@ -267,7 +279,11 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
             args.learning_rate = 0.005
             args.adagrad = True
         
-        print(f"Single day mode enabled. Training with day_0 data only.")
+        if args.random_dataset:
+            print(f"Single day mode enabled. Training with generated random data only.")
+            print(f"Synthetic dataset size: {args.dataset_size}")
+        else:
+            print(f"Single day mode enabled. Training with day_0 data only.")
     
     return args
 
