@@ -1,5 +1,5 @@
-
 #pragma once
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -7,6 +7,8 @@
 #include "base/factory.h"
 #include "base/log.h"
 #include "base_client.h"
+#include "rdma_protocol.h"
+#include "rdma_status.h"
 #include "third_party/Mayfly-main/include/DSM.h"
 
 namespace petps {
@@ -36,6 +38,8 @@ public:
                    bool isAsync,
                    int async_req_id = 0) override;
 
+  std::size_t ResponseBufferBytes(std::size_t key_count) const;
+
   void* GetReceiveBuffer(size_t size) override;
 
   inline int shard() const { return shard_; }
@@ -60,7 +64,7 @@ private:
   uint64_t rpcIDAcc_ = 0;
 
   std::vector<int> serverThreadIdsRoutedTo_;
-  std::unordered_map<uint64_t, int*> rpcId2PollMap_;
+  std::unordered_map<uint64_t, std::int32_t*> rpcId2PollMap_;
 };
 
 FACTORY_REGISTER(BaseParameterClient,
