@@ -3,17 +3,11 @@
 import argparse
 
 from petps_cluster_runner import PetPSClusterRunner
-
-DEFAULT_RDMA_SINGLE_SHARD_CONFIG = "./src/test/scripts/recstore_config.rdma_test.json"
-DEFAULT_RDMA_MULTI_SHARD_CONFIG = "./src/test/scripts/recstore_config.rdma_multishard_test.json"
-
-
-def resolve_config_path(server_count, config_path):
-    if config_path:
-        return config_path
-    if server_count > 1:
-        return DEFAULT_RDMA_MULTI_SHARD_CONFIG
-    return DEFAULT_RDMA_SINGLE_SHARD_CONFIG
+from ps_test_config import (
+    DEFAULT_RDMA_MULTI_SHARD_CONFIG,
+    DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
+    resolve_rdma_integration_config,
+)
 
 
 def main():
@@ -34,7 +28,7 @@ def main():
     parser.add_argument("--memcached-host", default="127.0.0.1")
     parser.add_argument("--memcached-port", type=int, default=21211)
     args = parser.parse_args()
-    config_path = resolve_config_path(args.server_count, args.config_path)
+    config_path = resolve_rdma_integration_config(args.server_count, args.config_path)
 
     runner = PetPSClusterRunner(
         config_path=config_path,

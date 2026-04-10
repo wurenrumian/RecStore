@@ -5,7 +5,11 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from run_petps_integration import DEFAULT_RDMA_SINGLE_SHARD_CONFIG
+from ps_test_config import (
+    DEFAULT_BRPC_BENCHMARK_CONFIG,
+    DEFAULT_GRPC_MAIN_CONFIG,
+    DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
+)
 from run_rdma_transport_benchmarks import build_rdma_runner, load_client_endpoint
 
 
@@ -23,12 +27,12 @@ class TestRunRDMATransportBenchmarks(unittest.TestCase):
         self.assertEqual(runner.config_path, expected)
 
     def test_load_client_endpoint_for_default_grpc_config(self):
-        host, port = load_client_endpoint("./recstore_config.json")
+        host, port = load_client_endpoint(DEFAULT_GRPC_MAIN_CONFIG)
         self.assertEqual(host, "127.0.0.1")
         self.assertEqual(port, 15000)
 
     def test_load_client_endpoint_for_brpc_config(self):
-        host, port = load_client_endpoint("./src/test/scripts/recstore_config.brpc.json")
+        host, port = load_client_endpoint(DEFAULT_BRPC_BENCHMARK_CONFIG)
         self.assertEqual(host, "127.0.0.1")
         self.assertEqual(port, 25000)
 
