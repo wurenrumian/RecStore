@@ -242,7 +242,7 @@ private:
 
           if (folly::Random::rand32(100) < args_.read_ratio_) {
             // read request
-            isPullRequest[req_i]   = true;
+            isPullRequest[req_i] = true;
             running_rpc_ids[req_i] =
                 client->GetParameter(keys.ToConstArray(), values, true, req_i);
             if (req_i == 0)
