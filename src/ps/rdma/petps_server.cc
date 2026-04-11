@@ -218,10 +218,17 @@ private:
     constexpr std::size_t kPerThreadRDMABufferSize = 1 * 1024 * 1024;
     if (response_bytes > kPerThreadRDMABufferSize) {
       LOG(ERROR) << "Response buffer size " << response_bytes
-                 << " exceeds per-thread RDMA buffer limit " << kPerThreadRDMABufferSize;
-      auto* status_word = reinterpret_cast<std::int32_t*>(dsm_->get_rdma_buffer());
-      *status_word = static_cast<std::int32_t>(petps::RpcStatus::kBatchTooLarge);
-      dsm_->write(reinterpret_cast<const char*>(status_word), recv->receive_gaddr, sizeof(std::int32_t), true, petps::WR_ID_GET);
+                 << " exceeds per-thread RDMA buffer limit "
+                 << kPerThreadRDMABufferSize;
+      auto* status_word =
+          reinterpret_cast<std::int32_t*>(dsm_->get_rdma_buffer());
+      *status_word =
+          static_cast<std::int32_t>(petps::RpcStatus::kBatchTooLarge);
+      dsm_->write(reinterpret_cast<const char*>(status_word),
+                  recv->receive_gaddr,
+                  sizeof(std::int32_t),
+                  true,
+                  petps::WR_ID_GET);
       epoch_manager_->UnProtect();
       return;
     }

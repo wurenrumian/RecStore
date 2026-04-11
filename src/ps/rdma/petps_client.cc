@@ -49,10 +49,11 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
   WaitRPCFinish(rpc_id);
 
   // Check status word at the end of the buffer
-  const std::int32_t status =
-      *reinterpret_cast<std::int32_t*>(flat.data() + keys.Size() * embedding_dim);
+  const std::int32_t status = *reinterpret_cast<std::int32_t*>(
+      flat.data() + keys.Size() * embedding_dim);
   if (status != static_cast<std::int32_t>(RpcStatus::kOk)) {
-    LOG(ERROR) << "GetParameter failed with status: " << RpcStatusToString(static_cast<RpcStatus>(status));
+    LOG(ERROR) << "GetParameter failed with status: "
+               << RpcStatusToString(static_cast<RpcStatus>(status));
     RevokeRPCResource(rpc_id);
     return -1;
   }
@@ -130,7 +131,8 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
   auto* poll = reinterpret_cast<std::atomic<int32_t>*>(
       reinterpret_cast<char*>(values) + keys.Size() * FLAGS_value_size);
   rpcId2PollMap_[rpcIDAcc_] = poll;
-  poll->store(static_cast<std::int32_t>(RpcStatus::kPending), std::memory_order_release);
+  poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
+              std::memory_order_release);
 
 #ifdef RPC_DEBUG
   for (auto each : keys) {
@@ -153,7 +155,8 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
 
 bool PetPSClient::QueryRPCFinished(int rpc_id) {
   auto* poll = rpcId2PollMap_[rpc_id];
-  return poll->load(std::memory_order_acquire) != static_cast<std::int32_t>(RpcStatus::kPending);
+  return poll->load(std::memory_order_acquire) !=
+         static_cast<std::int32_t>(RpcStatus::kPending);
 }
 
 void PetPSClient::WaitRPCFinish(int rpc_id) {
@@ -195,9 +198,10 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
   }
 
   std::string payload = EncodePutPayload(keys, values);
-  auto* ack =
-      reinterpret_cast<std::atomic<int32_t>*>(GetReceiveBuffer(sizeof(std::int32_t)));
-  ack->store(static_cast<std::int32_t>(RpcStatus::kPending), std::memory_order_release);
+  auto* ack           = reinterpret_cast<std::atomic<int32_t>*>(
+      GetReceiveBuffer(sizeof(std::int32_t)));
+  ack->store(static_cast<std::int32_t>(RpcStatus::kPending),
+             std::memory_order_release);
 
   thread_local auto m = RawMessage::get_new_msg();
   m->type             = RpcType::PUT;
@@ -222,9 +226,10 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   m->receive_gaddr    = gaddr;
 
   // LOG(INFO) << "send PS Put";
-  auto* poll = reinterpret_cast<std::atomic<int32_t>*>(values);
+  auto* poll                = reinterpret_cast<std::atomic<int32_t>*>(values);
   rpcId2PollMap_[rpcIDAcc_] = poll;
-  poll->store(static_cast<std::int32_t>(RpcStatus::kPending), std::memory_order_release);
+  poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
+              std::memory_order_release);
 
 #ifdef RPC_DEBUG
   for (auto each : keys) {

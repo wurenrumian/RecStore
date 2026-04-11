@@ -50,7 +50,8 @@ EncodePutPayload(const std::vector<std::uint64_t>& keys,
   // Validate all values have the same dimension
   for (std::size_t i = 0; i < values.size(); ++i) {
     if (values[i].size() != embedding_dim) {
-      LOG(ERROR) << "EncodePutPayload: values[" << i << "].size()=" << values[i].size()
+      LOG(ERROR) << "EncodePutPayload: values[" << i
+                 << "].size()=" << values[i].size()
                  << " != expected embedding_dim=" << embedding_dim;
       return {};
     }
