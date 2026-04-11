@@ -40,6 +40,7 @@ class TestTorchRecReport(unittest.TestCase):
                 line = next(csv.DictReader(f))
 
         self.assertEqual(line["collective_total_ms"], "0.0")
+        self.assertEqual(line["embed_transport_ms"], "0.0")
         self.assertEqual(line["collective_mode"], "not_measured_single_process")
         self.assertEqual(line["collective_measured"], "0")
         self.assertEqual(line["kv_local_only_ms"], "3.0")
