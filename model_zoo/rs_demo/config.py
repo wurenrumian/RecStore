@@ -39,6 +39,7 @@ class RunConfig:
     recstore_main_csv: str = ""
     recstore_main_agg_csv: str = ""
     library_path: str = ""
+    recstore_runtime_dir: str = ""
     server_log: str = ""
     data_dir: str = "model_zoo/torchrec_dlrm/processed_day_0_data"
     train_ratio: float = 0.8
@@ -56,6 +57,7 @@ class RunConfig:
     rdzv_id: str = ""
     ps_type: str = "BRPC"
     torchrec_profiler: bool = False
+    torchrec_dist_mode: str = "replicated"
     torchrec_profiler_warmup: int = 0
     torchrec_profiler_active: int = 2
     torchrec_profiler_repeat: int = 1
@@ -116,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--recstore-main-csv", type=str, default="")
     parser.add_argument("--recstore-main-agg-csv", type=str, default="")
     parser.add_argument("--library-path", type=str, default="")
+    parser.add_argument("--recstore-runtime-dir", type=str, default="")
     parser.add_argument("--server-log", type=str, default="")
     parser.add_argument(
         "--data-dir",
@@ -135,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="1024,1024,512,256,1",
     )
     parser.add_argument("--torchrec-profiler", action="store_true", default=False)
+    parser.add_argument(
+        "--torchrec-dist-mode",
+        type=str,
+        default="replicated",
+        choices=["replicated", "fair_remote"],
+    )
     parser.add_argument("--torchrec-profiler-warmup", type=int, default=0)
     parser.add_argument("--torchrec-profiler-active", type=int, default=2)
     parser.add_argument("--torchrec-profiler-repeat", type=int, default=1)
@@ -198,6 +207,10 @@ def validate_torchrec_config(cfg: RunConfig) -> None:
         raise RuntimeError(
             "TorchRec profiler sub-arguments require --torchrec-profiler."
         )
+    if cfg.torchrec_dist_mode == "fair_remote":
+        world_size = cfg.nnodes * cfg.nproc_per_node
+        if world_size <= 1:
+            raise RuntimeError("fair_remote requires world_size greater than 1.")
 
 
 def validate_recstore_config(cfg: RunConfig) -> None:
@@ -210,8 +223,10 @@ def validate_recstore_config(cfg: RunConfig) -> None:
         raise RuntimeError("--nproc-per-node must be greater than 0.")
     if cfg.node_rank < 0 or cfg.node_rank >= cfg.nnodes:
         raise RuntimeError("--node-rank must be within [0, nnodes).")
-    if cfg.nnodes > 1:
-        raise RuntimeError("RecStore multi-trainer currently supports only --nnodes=1.")
+    if cfg.nnodes > 1 and not cfg.recstore_runtime_dir:
+        raise RuntimeError(
+            "RecStore multi-node requires --recstore-runtime-dir pointing to a shared runtime directory."
+        )
 
 
 def ensure_run_id(cfg: RunConfig) -> None:
