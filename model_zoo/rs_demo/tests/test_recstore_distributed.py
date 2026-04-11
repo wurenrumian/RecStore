@@ -376,6 +376,102 @@ class TestShardedRecstoreClient(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             client.emb_wait_result(opaque_handle, 4)
 
+    def test_init_data_and_pull_routes_to_shards(self) -> None:
+        runtime_dir = self._make_runtime_dir(hash_method="simple_mod", distributed_num_shards=2)
+        fake_client = _FakeClient()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+
+        init_values = torch.arange(12, dtype=torch.float32).reshape(6, 2)
+        client.init_data(
+            name="fused",
+            shape=(6, 2),
+            dtype=torch.float32,
+            base_offset=100,
+            init_func=lambda shape, dtype: init_values,
+        )
+
+        ids = torch.arange(100, 106, dtype=torch.int64)
+        pulled = client.pull("fused", ids)
+        self.assertTrue(torch.allclose(pulled, init_values))
+
+        shard_to_keys = {20000: [], 20001: []}
+        for key in ids.tolist():
+            port = 20000 if key % 2 == 0 else 20001
+            shard_to_keys[port].append(int(key))
+        self.assertEqual(sorted(fake_client.writes[20000].keys()), sorted(shard_to_keys[20000]))
+        self.assertEqual(sorted(fake_client.writes[20001].keys()), sorted(shard_to_keys[20001]))
+
+    def test_prefetch_wait_and_get_handles_colliding_shard_ids(self) -> None:
+        runtime_dir = self._make_runtime_dir(hash_method="simple_mod", distributed_num_shards=2)
+        fake_client = _FakeClientCollidingPrefetchId()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+
+        keys = torch.tensor([5, 2, 7, 4], dtype=torch.int64)
+        values = torch.arange(16, dtype=torch.float32).reshape(4, 4)
+        client.emb_write(keys, values)
+
+        handle = client.prefetch(keys)
+        result = client.wait_and_get(handle, 4)
+        self.assertTrue(torch.allclose(result, values))
+        with self.assertRaises(RuntimeError):
+            client.wait_and_get(handle, 4)
+
+    def test_update_async_routes_updates_to_each_shard(self) -> None:
+        runtime_dir = self._make_runtime_dir(hash_method="simple_mod", distributed_num_shards=2)
+        fake_client = _FakeClient()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+
+        client.init_data(name="default", shape=(8, 2), dtype=torch.float32)
+
+        ids = torch.arange(8, dtype=torch.int64)
+        grads = torch.arange(16, dtype=torch.float32).reshape(8, 2)
+        handle = client.update_async("default", ids, grads)
+        client.wait(handle)
+
+        port_to_ids: dict[int, list[int]] = {}
+        for port, name, ids_list, _ in fake_client.updates:
+            self.assertEqual(name, "default")
+            port_to_ids.setdefault(port, []).extend(ids_list)
+
+        self.assertEqual(sorted(port_to_ids[20000]), [0, 2, 4, 6])
+        self.assertEqual(sorted(port_to_ids[20001]), [1, 3, 5, 7])
+
+    def test_register_tensor_meta_allows_non_initializer_to_pull_and_update(self) -> None:
+        runtime_dir = self._make_runtime_dir(hash_method="simple_mod", distributed_num_shards=2)
+        fake_client = _FakeClient()
+        initializer = ShardedRecstoreClient(fake_client, runtime_dir)
+        follower = ShardedRecstoreClient(fake_client, runtime_dir)
+
+        init_values = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+        initializer.init_data(
+            name="default",
+            shape=(4, 2),
+            dtype=torch.float32,
+            base_offset=50,
+            init_func=lambda shape, dtype: init_values,
+        )
+        self.assertEqual(len(fake_client.table_inits), 2)
+
+        follower.register_tensor_meta(
+            name="default",
+            shape=(4, 2),
+            dtype=torch.float32,
+            base_offset=50,
+        )
+        pulled = follower.pull("default", torch.arange(50, 54, dtype=torch.int64))
+        self.assertTrue(torch.allclose(pulled, init_values))
+
+        grads = torch.ones((4, 2), dtype=torch.float32)
+        handle = follower.update_async(
+            "default",
+            torch.arange(50, 54, dtype=torch.int64),
+            grads,
+        )
+        follower.wait(handle)
+
+        self.assertEqual(len(fake_client.table_inits), 2)
+        self.assertEqual(len(fake_client.updates), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
