@@ -7,9 +7,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 DEFAULT_GRPC_MAIN_CONFIG = "./recstore_config.json"
-DEFAULT_BRPC_BENCHMARK_CONFIG = "./src/test/scripts/recstore_config.brpc.json"
-DEFAULT_RDMA_SINGLE_SHARD_CONFIG = "./src/test/scripts/recstore_config.rdma_test.json"
-DEFAULT_RDMA_MULTI_SHARD_CONFIG = "./src/test/scripts/recstore_config.rdma_multishard_test.json"
+DEFAULT_BRPC_BENCHMARK_CONFIG = "./src/test/configs/recstore_config.brpc.json"
+DEFAULT_RDMA_SINGLE_SHARD_CONFIG = "./src/test/configs/recstore_config.rdma_test.json"
+DEFAULT_RDMA_MULTI_SHARD_CONFIG = "./src/test/configs/recstore_config.rdma_multishard_test.json"
 
 
 def resolve_repo_path(config_path):

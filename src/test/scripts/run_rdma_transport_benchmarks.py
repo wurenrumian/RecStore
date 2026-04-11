@@ -52,7 +52,7 @@ def main():
         rc = rdma_runner.run_client(
             [args.benchmark_binary, "--transport=rdma", "--num_shards=1", "--iterations=20"]
         )
-        print(rc.stdout, end="")
+        # Output is already streamed in run_client, no need to print again
         if rc.returncode != 0:
             return rc.returncode
 

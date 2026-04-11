@@ -2,7 +2,8 @@
 set -euxo pipefail
 cd "$(dirname "$0")"
 
-RECSTORE_PATH="/home/xieminhui/jkt/RecStore"
+# Use environment variable or default to current working directory
+RECSTORE_PATH="${RECSTORE_PATH:-$(pwd)}"
 Docker_RECSTORE_PATH="/app/RecStore"
 
 # Persistent volumes for dependency/cache reuse across container recreation
@@ -32,5 +33,6 @@ sudo docker run --cap-add=SYS_ADMIN --privileged --security-opt seccomp=unconfin
 -v ${VOLUME_OPENCODE_HOME}:/root/.opencode \
 -v /dev/shm:/dev/shm \
 -v /dev/hugepages:/dev/hugepages \
--v /dev:/dev -v /nas:/nas \
+-v /dev:/dev \
+${NAS_MOUNT:-} \
 -w ${Docker_RECSTORE_PATH} --rm -it --gpus all -d recstore
