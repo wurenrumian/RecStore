@@ -489,9 +489,11 @@ class RecStoreRunner(BenchmarkRunner):
                 sparse_optimizer.zero_grad()
                 embeddings = None
                 with stage_timer(row, "embed_lookup_local_ms"):
+                    sync_device(torch, device)
                     if cfg.read_before_update and cfg.read_mode == "prefetch":
                         embedding_module.issue_fused_prefetch(sparse_features)
                     embeddings = embedding_module(sparse_features)
+                    sync_device(torch, device)
                 if embeddings is None:
                     raise RuntimeError("recstore embedding module returned no embeddings")
                 if step >= cfg.warmup_steps:
@@ -503,6 +505,7 @@ class RecStoreRunner(BenchmarkRunner):
                         feature_names=default_cat_names,
                         torch=torch,
                     )
+                    sync_device(torch, device)
 
                 with stage_timer(row, "output_unpack_ms"):
                     dense_features, embedded_sparse, labels = prepare_hybrid_dlrm_input(
