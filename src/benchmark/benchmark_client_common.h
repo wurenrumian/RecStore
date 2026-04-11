@@ -4,7 +4,7 @@
 
 #include "base/factory.h"
 #include "base/timer.h"
-#include "ps/Postoffice.h"
+#include "ps/base/Postoffice.h"
 #include "ps/allshards_ps_client.h"
 #include "ps/base_client.h"
 #include "sample_reader.h"
