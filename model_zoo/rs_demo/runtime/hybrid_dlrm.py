@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Sequence
 
+import torch
+
 try:
     from ...torchrec_dlrm.dlrm import DenseArch, InteractionArch, OverArch
 except ImportError:
@@ -20,7 +22,7 @@ def parse_layer_sizes(raw: str) -> list[int]:
     return [int(part) for part in values]
 
 
-class HybridDenseArch:
+class HybridDenseArch(torch.nn.Module):
     def __init__(
         self,
         dense_in_features: int,
@@ -30,6 +32,7 @@ class HybridDenseArch:
         over_arch_layer_sizes: Sequence[int],
         device,
     ) -> None:
+        super().__init__()
         if not dense_arch_layer_sizes:
             raise ValueError("dense_arch_layer_sizes must not be empty")
         if dense_arch_layer_sizes[-1] != embedding_dim:
@@ -55,12 +58,7 @@ class HybridDenseArch:
         self.over_arch = self.over_arch.to(device)
         return self
 
-    def parameters(self):
-        yield from self.dense_arch.parameters()
-        yield from self.inter_arch.parameters()
-        yield from self.over_arch.parameters()
-
-    def __call__(self, dense_features, embedded_sparse):
+    def forward(self, dense_features, embedded_sparse):
         embedded_dense = self.dense_arch(dense_features)
         interacted = self.inter_arch(embedded_dense, embedded_sparse)
         return self.over_arch(interacted)
@@ -130,10 +128,13 @@ def prepare_hybrid_dlrm_input(
 def run_hybrid_backward(loss, embedded_sparse, dense_module, torch, device):
     sync_device(torch, device)
     dense_params = [param for param in dense_module.parameters() if param.requires_grad]
-    grads = torch.autograd.grad(loss, dense_params + [embedded_sparse], retain_graph=True)
-    for param, grad in zip(dense_params, grads[:-1]):
-        param.grad = None if grad is None else grad.detach()
-    embedded_sparse_grad = grads[-1]
+    for param in dense_params:
+        param.grad = None
+    if not embedded_sparse.is_leaf:
+        embedded_sparse.retain_grad()
+    embedded_sparse.grad = None
+    loss.backward()
+    embedded_sparse_grad = embedded_sparse.grad
     if embedded_sparse_grad is None:
         raise RuntimeError("missing embedded_sparse gradient after backward")
     sync_device(torch, device)

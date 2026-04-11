@@ -5,6 +5,7 @@ import json
 import struct
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import torch
 
@@ -106,6 +107,27 @@ class ShardedRecstoreClient:
         self._active_shard: int | None = None
         self._next_prefetch_id = 1
         self._prefetch_contexts: dict[int, tuple[int, list[tuple[int, torch.Tensor, torch.Tensor]]]] = {}
+        self._kv_prefetch_next_id = 1
+        self._kv_prefetch_contexts: dict[int, tuple[int, list[tuple[int, torch.Tensor, torch.Tensor]]]] = {}
+        self._tensor_meta: Dict[str, Dict[str, Any]] = {}
+        self._next_async_handle = 1
+        self._pending_async_ops: Dict[int, tuple[str, torch.Tensor, torch.Tensor]] = {}
+
+    def register_tensor_meta(
+        self,
+        name: str,
+        shape: tuple[int, int],
+        dtype: torch.dtype,
+        base_offset: int = 0,
+    ) -> None:
+        if name in self._tensor_meta:
+            return
+        num_embeddings, embedding_dim = shape
+        self._tensor_meta[name] = {
+            "shape": (int(num_embeddings), int(embedding_dim)),
+            "dtype": dtype,
+            "base_offset": int(base_offset),
+        }
 
     def _shard_for_key(self, key: int) -> int:
         if self._hash_method == "simple_mod":
@@ -135,6 +157,46 @@ class ShardedRecstoreClient:
             (shard, torch.tensor(indices, dtype=torch.long))
             for shard, indices in ((shard, shard_to_indices[shard]) for shard in shard_order)
         ]
+
+    def _normalize_ids(self, ids: torch.Tensor) -> torch.Tensor:
+        if not isinstance(ids, torch.Tensor):
+            raise TypeError("ids must be a torch.Tensor")
+        ids_cpu = ids.to(dtype=torch.int64)
+        if not ids_cpu.is_contiguous():
+            ids_cpu = ids_cpu.contiguous()
+        if ids_cpu.device.type != "cpu":
+            ids_cpu = ids_cpu.to("cpu")
+        return ids_cpu
+
+    def _normalize_grads(self, grads: torch.Tensor) -> torch.Tensor:
+        if not isinstance(grads, torch.Tensor):
+            raise TypeError("grads must be a torch.Tensor")
+        grads_cpu = grads.to(dtype=torch.float32)
+        if not grads_cpu.is_contiguous():
+            grads_cpu = grads_cpu.contiguous()
+        if grads_cpu.device.type != "cpu":
+            grads_cpu = grads_cpu.to("cpu")
+        return grads_cpu
+
+    def _group_ids_by_shard(self, keys: torch.Tensor) -> list[tuple[int, torch.Tensor, torch.Tensor]]:
+        ids_cpu = self._normalize_ids(keys)
+        shard_to_indices: dict[int, list[int]] = {}
+        shard_order: list[int] = []
+        for idx, key in enumerate(ids_cpu.tolist()):
+            shard = self._shard_for_key(int(key))
+            if shard not in shard_to_indices:
+                shard_to_indices[shard] = []
+                shard_order.append(shard)
+            shard_to_indices[shard].append(idx)
+        grouped: list[tuple[int, torch.Tensor, torch.Tensor]] = []
+        for shard in shard_order:
+            indices = shard_to_indices[shard]
+            index_tensor = torch.tensor(indices, dtype=torch.long)
+            shard_keys = ids_cpu.index_select(0, index_tensor)
+            if not shard_keys.is_contiguous():
+                shard_keys = shard_keys.contiguous()
+            grouped.append((shard, index_tensor, shard_keys))
+        return grouped
 
     def init_embedding_table(self, table_name: str, num_embeddings: int, embedding_dim: int) -> bool:
         ok = True
@@ -204,3 +266,105 @@ class ShardedRecstoreClient:
             shard_keys = keys.index_select(0, index_tensor).contiguous()
             shard_grads = grads.index_select(0, index_tensor).contiguous()
             self._client.emb_update_table(table_name, shard_keys, shard_grads)
+
+    def init_data(
+        self,
+        name: str,
+        shape: tuple[int, int],
+        dtype: torch.dtype,
+        part_policy: Any = None,
+        init_func: Any | None = None,
+        is_gdata: bool = True,
+        base_offset: int = 0,
+    ) -> None:
+        if name in self._tensor_meta:
+            return
+        num_embeddings, embedding_dim = shape
+        self.register_tensor_meta(name=name, shape=shape, dtype=dtype, base_offset=base_offset)
+        self.init_embedding_table(name, num_embeddings, embedding_dim)
+
+        if init_func:
+            initial_data = init_func(shape, dtype)
+        else:
+            initial_data = torch.zeros(shape, dtype=dtype)
+        if not isinstance(initial_data, torch.Tensor):
+            initial_data = torch.tensor(initial_data, dtype=dtype)
+        initial_data = initial_data.to(dtype=dtype)
+        if initial_data.device.type != "cpu":
+            initial_data = initial_data.to("cpu")
+        if not initial_data.is_contiguous():
+            initial_data = initial_data.contiguous()
+
+        keys = torch.arange(num_embeddings, dtype=torch.int64)
+        if base_offset != 0:
+            keys = keys + int(base_offset)
+
+        for shard, index_tensor, shard_keys in self._group_ids_by_shard(keys):
+            self._activate_shard(shard)
+            shard_values = initial_data.index_select(0, index_tensor).contiguous()
+            self._client.emb_write(shard_keys, shard_values)
+
+    def pull(self, name: str, ids: torch.Tensor) -> torch.Tensor:
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor {name} has not been initialized.")
+        embedding_dim = int(self._tensor_meta[name]["shape"][1])
+        return self.emb_read(ids, embedding_dim)
+
+    def prefetch(self, ids: torch.Tensor) -> int:
+        normalized_ids = self._normalize_ids(ids)
+        req_id = self._kv_prefetch_next_id
+        self._kv_prefetch_next_id += 1
+        if normalized_ids.numel() == 0:
+            self._kv_prefetch_contexts[req_id] = (0, [])
+            return req_id
+        shard_requests: list[tuple[int, torch.Tensor, torch.Tensor]] = []
+        for shard, index_tensor, shard_keys in self._group_ids_by_shard(normalized_ids):
+            shard_requests.append((shard, index_tensor, shard_keys))
+        self._kv_prefetch_contexts[req_id] = (int(normalized_ids.numel()), shard_requests)
+        return req_id
+
+    def wait_and_get(
+        self,
+        prefetch_id: int,
+        embedding_dim: int,
+        device: torch.device = torch.device("cpu"),
+    ) -> torch.Tensor:
+        context = self._kv_prefetch_contexts.pop(int(prefetch_id), None)
+        if context is None:
+            raise RuntimeError(f"unknown prefetch_id: {prefetch_id}")
+        total_rows, shard_requests = context
+        if total_rows == 0:
+            return torch.empty((0, embedding_dim), dtype=torch.float32, device=device)
+        out = torch.empty((total_rows, embedding_dim), dtype=torch.float32)
+        for shard, index_tensor, shard_keys in shard_requests:
+            self._activate_shard(shard)
+            shard_prefetch_id = int(self._client.emb_prefetch(shard_keys))
+            shard_values = self._client.emb_wait_result(shard_prefetch_id, embedding_dim)
+            out.index_copy_(0, index_tensor, shard_values)
+        if device.type == "cuda":
+            out = out.to(device)
+        return out
+
+    def update_async(self, name: str, ids: torch.Tensor, grads: torch.Tensor) -> int:
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor {name} has not been initialized.")
+        normalized_ids = self._normalize_ids(ids)
+        normalized_grads = self._normalize_grads(grads)
+        if normalized_ids.size(0) != normalized_grads.size(0):
+            raise RuntimeError("ids and grads must have the same number of rows for update_async")
+        handle = self._next_async_handle
+        self._next_async_handle += 1
+        self._pending_async_ops[handle] = (name, normalized_ids, normalized_grads)
+        return handle
+
+    def wait(self, handle: int) -> None:
+        pending = self._pending_async_ops.pop(int(handle), None)
+        if pending is None:
+            return
+        name, ids, grads = pending
+        if ids.numel() == 0:
+            return
+        for shard, index_tensor, shard_keys in self._group_ids_by_shard(ids):
+            shard_grads = grads.index_select(0, index_tensor).contiguous()
+            self._activate_shard(shard)
+            self._client.emb_update_table(name, shard_keys, shard_grads)
