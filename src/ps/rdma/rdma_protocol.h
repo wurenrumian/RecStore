@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "base/log.h"
+
 namespace petps {
 
 inline constexpr std::uint32_t kPutPayloadMagic = 0x50545053;
@@ -37,7 +39,23 @@ EncodePutPayload(const std::vector<std::uint64_t>& keys,
     return {};
   }
 
+  // Validate keys and values have the same count
+  if (keys.size() != values.size()) {
+    LOG(ERROR) << "EncodePutPayload: keys.size()=" << keys.size()
+               << " != values.size()=" << values.size();
+    return {};
+  }
+
   const std::size_t embedding_dim = values.front().size();
+  // Validate all values have the same dimension
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (values[i].size() != embedding_dim) {
+      LOG(ERROR) << "EncodePutPayload: values[" << i << "].size()=" << values[i].size()
+                 << " != expected embedding_dim=" << embedding_dim;
+      return {};
+    }
+  }
+
   PutPayloadHeader header{
       kPutPayloadMagic,
       kProtocolVersion,

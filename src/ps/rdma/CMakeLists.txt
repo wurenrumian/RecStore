@@ -1,5 +1,8 @@
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 option(ENABLE_RDMA_INTEGRATION_TESTS "Enable RDMA integration tests" OFF)
+
+if(ENABLE_RDMA_INTEGRATION_TESTS)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+endif()
 
 add_library(wq_ps_client petps_client.cc allshards_ps_client.cc)
                          

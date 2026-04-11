@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -64,7 +65,7 @@ private:
   uint64_t rpcIDAcc_ = 0;
 
   std::vector<int> serverThreadIdsRoutedTo_;
-  std::unordered_map<uint64_t, std::int32_t*> rpcId2PollMap_;
+  std::unordered_map<uint64_t, std::atomic<int32_t>*> rpcId2PollMap_;
 };
 
 FACTORY_REGISTER(BaseParameterClient,
