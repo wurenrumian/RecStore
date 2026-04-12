@@ -90,17 +90,21 @@ def main(argv: list[str] | None = None) -> int:
     runtime_dir = Path(cfg.output_root) / "runtime" / cfg.run_id
     runtime_cfg_path = runtime_dir / "recstore_config.json"
     if cfg.backend == "recstore":
-        runtime_dir, runtime_cfg_path = make_runtime_dir(
-            base_cfg=base_cfg,
-            host=cfg.server_host,
-            port0=cfg.server_port0,
-            port1=cfg.server_port1,
-            allocator=cfg.allocator,
-            output_root=cfg.output_root,
-            run_id=cfg.run_id,
-            ps_type=cfg.ps_type,
-            kv_capacity=estimate_recstore_kv_capacity(cfg.num_embeddings),
-        )
+        if cfg.recstore_runtime_dir:
+            runtime_dir = Path(cfg.recstore_runtime_dir)
+            runtime_cfg_path = runtime_dir / "recstore_config.json"
+        else:
+            runtime_dir, runtime_cfg_path = make_runtime_dir(
+                base_cfg=base_cfg,
+                host=cfg.server_host,
+                port0=cfg.server_port0,
+                port1=cfg.server_port1,
+                allocator=cfg.allocator,
+                output_root=cfg.output_root,
+                run_id=cfg.run_id,
+                ps_type=cfg.ps_type,
+                kv_capacity=estimate_recstore_kv_capacity(cfg.num_embeddings),
+            )
 
     proc = None
     try:

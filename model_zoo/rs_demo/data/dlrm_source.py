@@ -117,6 +117,11 @@ def build_train_dataloader(
     train_ratio: float,
     num_embeddings: int,
     batch_size: int,
+    *,
+    shuffle: bool = True,
+    seed: int | None = None,
+    rank: int | None = None,
+    world_size: int | None = None,
 ):
     from data.custom_dataloader import CustomCriteoDataset  # type: ignore
 
@@ -131,12 +136,34 @@ def build_train_dataloader(
         train_ratio=train_ratio,
         num_embeddings_per_feature=nep,
     )
+    generator = None
+    if seed is not None:
+        generator = torch.Generator()
+        generator.manual_seed(int(seed))
+
+    sampler = None
+    effective_shuffle = shuffle
+    if world_size is not None and int(world_size) > 1:
+        if rank is None:
+            raise ValueError("rank must be provided when world_size > 1")
+        sampler = torch.utils.data.DistributedSampler(
+            dataset,
+            num_replicas=int(world_size),
+            rank=int(rank),
+            shuffle=shuffle,
+            seed=0 if seed is None else int(seed),
+            drop_last=False,
+        )
+        effective_shuffle = False
+
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=effective_shuffle,
+        sampler=sampler,
         drop_last=False,
         pin_memory=False,
         num_workers=0,
+        generator=generator,
     )
     return dataset, dataloader
