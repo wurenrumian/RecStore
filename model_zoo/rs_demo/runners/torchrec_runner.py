@@ -457,36 +457,35 @@ def _run_single_or_dist_worker(
                     dense_batch, sparse_batch, labels_batch = next(data_iter)
                 _append_worker_debug(cfg, rank, f"after_batch_prepare step={step}")
 
+            _append_worker_debug(cfg, rank, f"before_input_pack step={step}")
             with stage_timer(row, "input_pack_ms"):
-                _append_worker_debug(cfg, rank, f"before_input_pack step={step}")
                 dense_batch, sparse_features = build_kjt_batch_from_dense_sparse_labels(
                     dense_batch,
                     sparse_batch,
                     labels_batch,
                 )
-                _append_worker_debug(cfg, rank, f"after_input_pack step={step}")
+                sparse_features = sparse_features.to(device)
+                sync_device(torch, device)
+            _append_worker_debug(cfg, rank, f"after_input_pack step={step}")
 
-            if use_dist and device.type == "cuda":
-                torch.cuda.synchronize(device)
+            _append_worker_debug(cfg, rank, f"before_embedding step={step}")
             collective_start = time.perf_counter()
             with stage_timer(row, "embed_lookup_local_ms"):
-                _append_worker_debug(cfg, rank, f"before_embedding step={step}")
-                embeddings = embedding_module(sparse_features.to(device))
-                _append_worker_debug(cfg, rank, f"after_embedding step={step}")
-            if use_dist and device.type == "cuda":
-                torch.cuda.synchronize(device)
+                sync_device(torch, device)
+                embeddings = embedding_module(sparse_features)
+                sync_device(torch, device)
             collective_elapsed_ms = (time.perf_counter() - collective_start) * 1e3
+            _append_worker_debug(cfg, rank, f"after_embedding step={step}")
 
+            _append_worker_debug(cfg, rank, f"before_pool step={step}")
             with stage_timer(row, "embed_pool_local_ms"):
-                _append_worker_debug(cfg, rank, f"before_pool step={step}")
                 embedded_sparse_source = reshape_torchrec_embeddings_for_dlrm(
                     embeddings=embeddings,
                     feature_names=DEFAULT_CAT_NAMES,
                     torch=torch,
                 )
-                if device.type == "cuda":
-                    torch.cuda.synchronize(device)
-                _append_worker_debug(cfg, rank, f"after_pool step={step}")
+                sync_device(torch, device)
+            _append_worker_debug(cfg, rank, f"after_pool step={step}")
 
             if use_dist:
                 row["collective_launch_ms"] = 0.0
@@ -495,8 +494,8 @@ def _run_single_or_dist_worker(
                 row["collective_launch_ms"] = 0.0
                 row["collective_wait_ms"] = 0.0
 
+            _append_worker_debug(cfg, rank, f"before_output_unpack step={step}")
             with stage_timer(row, "output_unpack_ms"):
-                _append_worker_debug(cfg, rank, f"before_output_unpack step={step}")
                 dense_features, embedded_sparse, labels = prepare_hybrid_dlrm_input(
                     dense_batch=dense_batch,
                     embedded_sparse_source=embedded_sparse_source,
@@ -505,7 +504,7 @@ def _run_single_or_dist_worker(
                     device=device,
                     detach_sparse=True,
                 )
-                _append_worker_debug(cfg, rank, f"after_output_unpack step={step}")
+            _append_worker_debug(cfg, rank, f"after_output_unpack step={step}")
 
             if is_trainer_rank:
                 _append_worker_debug(cfg, rank, f"before_dense_fwd step={step}")
