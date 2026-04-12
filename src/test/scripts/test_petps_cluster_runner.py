@@ -1,5 +1,6 @@
 import unittest
 from unittest import mock
+from io import StringIO
 
 from petps_cluster_runner import LOCAL_MEMCACHED_SERVER, PetPSClusterRunner
 
@@ -73,6 +74,46 @@ class TestPetPSClusterRunner(unittest.TestCase):
         mock_popen.side_effect = PermissionError("Operation not permitted")
         runner._start_memcached()
         self.assertIsNone(runner.memcached_process)
+
+    @mock.patch("petps_cluster_runner.socket.create_connection")
+    def test_reset_memcached_state_flushes_and_verifies_keys(self, mock_conn):
+        runner = PetPSClusterRunner(use_local_memcached="never")
+        conn = mock.MagicMock()
+        conn.recv.side_effect = [
+            (
+                b"OK\r\n"
+                b"STORED\r\nSTORED\r\nSTORED\r\n"
+                b"VALUE serverNum 0 1\r\n0\r\nEND\r\n"
+                b"VALUE clientNum 0 1\r\n0\r\nEND\r\n"
+                b"VALUE xmh-consistent-dsm 0 1\r\n1\r\nEND\r\n"
+            ),
+            b"",
+        ]
+        mock_conn.return_value.__enter__.return_value = conn
+
+        runner.reset_memcached_state()
+
+        sent = b"".join(call.args[0] for call in conn.sendall.call_args_list)
+        self.assertIn(b"flush_all\r\n", sent)
+        self.assertIn(b"get serverNum\r\n", sent)
+        self.assertIn(b"get clientNum\r\n", sent)
+        self.assertIn(b"get xmh-consistent-dsm\r\n", sent)
+
+    def test_emit_status_prints_ready_and_pid_info(self):
+        runner = PetPSClusterRunner(num_servers=2)
+        runner.ready.add(0)
+        fake_proc = mock.Mock()
+        fake_proc.pid = 1234
+        fake_proc.poll.return_value = None
+        runner.processes = [(fake_proc, mock.Mock())]
+
+        with mock.patch("sys.stdout", new_callable=StringIO) as fake_out:
+            runner.emit_status("startup-wait")
+
+        output = fake_out.getvalue()
+        self.assertIn("[petps-status]", output)
+        self.assertIn("ready=1/2", output)
+        self.assertIn("running_pids=1234", output)
 
 
 if __name__ == "__main__":

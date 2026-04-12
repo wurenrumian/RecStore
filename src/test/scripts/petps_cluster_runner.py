@@ -31,6 +31,7 @@ class PetPSClusterRunner:
         use_local_memcached="auto",
         memcached_check_timeout=2.0,
         memcached_check_retries=3,
+        status_refresh_interval=2.0,
     ):
         self.server_path = Path(server_path)
         if not self.server_path.is_absolute():
@@ -53,9 +54,24 @@ class PetPSClusterRunner:
         self.use_local_memcached = use_local_memcached
         self.memcached_check_timeout = memcached_check_timeout
         self.memcached_check_retries = memcached_check_retries
+        self.status_refresh_interval = status_refresh_interval
         self.processes = []
         self.memcached_process = None
         self.ready = set()
+
+    def emit_status(self, phase, extra=""):
+        running_pids = [
+            str(process.pid)
+            for process, _thread in self.processes
+            if process.poll() is None
+        ]
+        detail = (
+            f" phase={phase} ready={len(self.ready)}/{self.num_servers}"
+            f" running_pids={','.join(running_pids) if running_pids else 'none'}"
+        )
+        if extra:
+            detail += f" {extra}"
+        print(f"[petps-status]{detail}")
 
     def build_env(self):
         env = os.environ.copy()
@@ -139,7 +155,7 @@ class PetPSClusterRunner:
 
     def check_memcached_ready(self):
         last_error = None
-        for _ in range(self.memcached_check_retries):
+        for attempt in range(1, self.memcached_check_retries + 1):
             try:
                 with socket.create_connection(
                     (self.memcached_host, self.memcached_port),
@@ -149,12 +165,21 @@ class PetPSClusterRunner:
                     sock.sendall(b"get serverNum\r\n")
                     data = sock.recv(4096)
                     if b"END\r\n" in data or b"VALUE serverNum" in data:
+                        self.emit_status(
+                            "memcached-ready",
+                            f"attempt={attempt} host={self.memcached_host}:{self.memcached_port}",
+                        )
                         return
                     last_error = RuntimeError(
                         "memcached responded but without expected get reply"
                     )
             except OSError as exc:
                 last_error = exc
+            self.emit_status(
+                "memcached-wait",
+                f"attempt={attempt}/{self.memcached_check_retries} "
+                f"host={self.memcached_host}:{self.memcached_port}",
+            )
             time.sleep(0.2)
 
         raise RuntimeError(
@@ -166,9 +191,13 @@ class PetPSClusterRunner:
 
     def reset_memcached_state(self):
         payload = (
+            b"flush_all\r\n"
             b"set serverNum 0 0 1\r\n0\r\n"
             b"set clientNum 0 0 1\r\n0\r\n"
             b"set xmh-consistent-dsm 0 0 1\r\n1\r\n"
+            b"get serverNum\r\n"
+            b"get clientNum\r\n"
+            b"get xmh-consistent-dsm\r\n"
             b"quit\r\n"
         )
         with socket.create_connection(
@@ -186,11 +215,21 @@ class PetPSClusterRunner:
                 if not chunk:
                     break
                 response += chunk
-            if response.count(b"STORED") < 3:
+            if (
+                b"OK\r\n" not in response
+                or response.count(b"STORED\r\n") < 3
+                or b"VALUE serverNum 0 1\r\n0\r\n" not in response
+                or b"VALUE clientNum 0 1\r\n0\r\n" not in response
+                or b"VALUE xmh-consistent-dsm 0 1\r\n1\r\n" not in response
+            ):
                 raise RuntimeError(
                     "failed to initialize memcached state; "
                     f"response was: {response!r}"
                 )
+            self.emit_status(
+                "memcached-reset",
+                f"host={self.memcached_host}:{self.memcached_port}",
+            )
 
     def start(self):
         if not self.server_path.exists():
@@ -231,18 +270,30 @@ class PetPSClusterRunner:
                     self.ready.add(global_id)
 
         deadline = time.time() + self.timeout
+        next_refresh = time.time() + self.status_refresh_interval
         while len(self.ready) < self.num_servers:
             if time.time() > deadline:
+                self.emit_status("startup-timeout", f"timeout={self.timeout}s")
                 self.stop()
                 raise TimeoutError(
                     f"Timed out waiting for {self.num_servers} petps_server processes"
                 )
             for process, _thread in self.processes:
                 if process.poll() is not None:
+                    self.emit_status(
+                        "startup-crash",
+                        f"exit_code={process.returncode}",
+                    )
                     self.stop()
                     raise RuntimeError(
                         f"petps_server exited early with code {process.returncode}"
                     )
+            if (
+                self.status_refresh_interval > 0
+                and time.time() >= next_refresh
+            ):
+                self.emit_status("startup-wait")
+                next_refresh = time.time() + self.status_refresh_interval
             time.sleep(0.2)
 
     def run_client(self, argv, client_index=0, stream_output=True, timeout=None):

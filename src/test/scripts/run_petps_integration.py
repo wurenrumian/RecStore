@@ -9,6 +9,12 @@ from ps_test_config import (
     resolve_rdma_integration_config,
 )
 
+MAX_TIMEOUT_SECONDS = 15
+
+
+def normalize_timeout(timeout_seconds):
+    return min(timeout_seconds, MAX_TIMEOUT_SECONDS)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -19,7 +25,9 @@ def main():
     parser.add_argument("--value-size", type=int, default=16)
     parser.add_argument("--max-kv-num-per-request", type=int, default=64)
     parser.add_argument("--client-count", type=int, default=1)
-    parser.add_argument("--client-timeout", type=int, default=120)
+    parser.add_argument("--client-timeout", type=int, default=15)
+    parser.add_argument("--cluster-timeout", type=int, default=15)
+    parser.add_argument("--status-refresh-interval", type=float, default=2.0)
     parser.add_argument(
         "--use-local-memcached",
         choices=["always", "auto", "never"],
@@ -29,6 +37,8 @@ def main():
     parser.add_argument("--memcached-port", type=int, default=21211)
     args = parser.parse_args()
     config_path = resolve_rdma_integration_config(args.server_count, args.config_path)
+    client_timeout = normalize_timeout(args.client_timeout)
+    cluster_timeout = normalize_timeout(args.cluster_timeout)
 
     runner = PetPSClusterRunner(
         config_path=config_path,
@@ -40,12 +50,14 @@ def main():
         use_local_memcached=args.use_local_memcached,
         memcached_host=args.memcached_host,
         memcached_port=args.memcached_port,
+        timeout=cluster_timeout,
+        status_refresh_interval=args.status_refresh_interval,
     )
 
     with runner.run():
         completed = runner.run_client(
             [args.test_binary, f"--gtest_filter={args.gtest_filter}"],
-            timeout=args.client_timeout,
+            timeout=client_timeout,
         )
     return completed.returncode
 
