@@ -100,6 +100,7 @@ nav:
     - 免配置运行: dev/zero_config_run.md
     - 功能实现:
       - 添加算子: dev/feature/add_operator.md
+      - 分布式训练: dev/distributed.md
     - 测试文档:
       - 概览: dev/testing.md
       - 辅助工具: dev/tests/tools.md
