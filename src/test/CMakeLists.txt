@@ -119,8 +119,12 @@ target_link_libraries(test_index PUBLIC
 add_test(NAME test_index COMMAND test_index)
 
 add_executable(test_ps_client_factory test_ps_client_factory.cpp)
+target_sources(test_ps_client_factory PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/framework/rdma_ps_client_adapter.cc
+)
 target_link_libraries(test_ps_client_factory PUBLIC
     base
+    wq_ps_client
     grpc_ps_client
     brpc_ps_client
     gflags

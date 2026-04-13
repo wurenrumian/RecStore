@@ -5,18 +5,21 @@
 
 namespace recstore {
 
-TEST(PSClientFactoryTest, RejectsRdmaForFrameworkUsage) {
+TEST(PSClientFactoryTest, AllowsRdmaForFrameworkUsage) {
   json config = {
       {"cache_ps", {{"ps_type", "RDMA"}}},
       {"client", {{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}},
+      {"distributed_client",
+       {{"num_shards", 1},
+        {"hash_method", "city_hash"},
+        {"servers",
+         json::array({{{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}})}}},
   };
 
-  EXPECT_THROW(
-      {
-        const auto type = ResolveFrameworkPSType(config);
-        (void)type;
-      },
-      std::invalid_argument);
+  EXPECT_EQ(ResolveFrameworkPSType(config), "RDMA");
+
+  std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
+  ASSERT_NE(client, nullptr);
 }
 
 TEST(PSClientFactoryTest, RejectsUnknownType) {

@@ -3,6 +3,7 @@ find_package(Torch REQUIRED)
 add_library(recstore_torch_ops SHARED
     op_torch.cc
     ../op.cc
+    ../rdma_ps_client_adapter.cc
 )
 
 target_compile_definitions(recstore_torch_ops PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
@@ -28,6 +29,7 @@ endif()
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 target_link_libraries(recstore_torch_ops PRIVATE
+    wq_ps_client
     grpc_ps_client
     brpc_ps_client
     protobuf::libprotobuf
@@ -48,4 +50,3 @@ set_target_properties(recstore_torch_ops PROPERTIES
 set_target_properties(recstore_torch_ops PROPERTIES
     OUTPUT_NAME "_recstore_ops"
 )
-
