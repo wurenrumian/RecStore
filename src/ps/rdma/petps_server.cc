@@ -1,5 +1,6 @@
 #include <folly/init/Init.h>
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <future>
@@ -105,6 +106,9 @@ public:
 private:
   void RpcGetServerServingThreadIDs(RawMessage* recv) {
     CHECK_EQ(recv->type, GET_SERVER_THREADIDS);
+    std::cerr << "[RDMA-DBG] Server received GET_SERVER_THREADIDS from node="
+              << static_cast<int>(recv->node_id) << " tid="
+              << static_cast<int>(recv->t_id) << std::endl;
     static std::atomic_int serving_thread_id{0};
     auto m  = RawMessage::get_new_msg();
     m->type = RESP_GET_SERVER_THREADIDS;
@@ -118,6 +122,10 @@ private:
         recv->node_id,
         recv->t_id,
         Slice((char*)thread_ids.data(), thread_ids.size() * sizeof(int)));
+    std::cerr << "[RDMA-DBG] Server replied GET_SERVER_THREADIDS to node="
+              << static_cast<int>(recv->node_id) << " tid="
+              << static_cast<int>(recv->t_id) << " threads="
+              << thread_ids.size() << std::endl;
   }
 
   void RpcPsPut(RawMessage* recv, int thread_id) {
@@ -266,6 +274,17 @@ private:
   void PollingThread(int thread_id) {
     auto_bind_core(0);
     dsm_->registerThread();
+    std::cerr << "[RDMA-DBG] Server polling thread ready " << thread_id
+              << std::endl;
+    const int ready_threads =
+        registered_polling_threads_.fetch_add(1) + 1;
+    if (ready_threads == thread_count_) {
+      const std::string key = "petps-server-ready-" +
+                              std::to_string(XPostoffice::GetInstance()->ServerID());
+      XPostoffice::GetInstance()->MemCachedSet(key, "1");
+      std::cerr << "[RDMA-DBG] Server published ready key " << key
+                << std::endl;
+    }
     auto msg = RawMessage::get_new_msg();
 
     while (1) {
@@ -302,6 +321,7 @@ private:
   std::vector<std::thread> threads_;
   int thread_count_;
   DSM* dsm_;
+  std::atomic_int registered_polling_threads_{0};
   xmh::Timer get_parameter_timer_;
   xmh::Timer index_timer_;
   xmh::Timer value_timer_;

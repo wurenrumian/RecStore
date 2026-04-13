@@ -28,9 +28,25 @@ class TestPetPSClusterRunner(unittest.TestCase):
 
     def test_detects_ready_lines(self):
         runner = PetPSClusterRunner()
-        self.assertTrue(runner.is_ready_line("Starts PS polling thread 0"))
-        self.assertTrue(runner.is_ready_line("xmh: finish construct DSM"))
+        self.assertTrue(
+            runner.is_ready_line("[RDMA-DBG] Server polling thread ready 0")
+        )
+        self.assertFalse(runner.is_ready_line("Starts PS polling thread 0"))
+        self.assertFalse(runner.is_ready_line("xmh: finish construct DSM"))
         self.assertFalse(runner.is_ready_line("throughput 0.1234 Mkv/s"))
+
+    def test_monitor_requires_all_polling_threads_before_marking_ready(self):
+        runner = PetPSClusterRunner(num_servers=1, thread_num=2)
+        pipe = StringIO(
+            "xmh: finish construct DSM\n"
+            "[RDMA-DBG] Server polling thread ready 0\n"
+            "throughput 0.1234 Mkv/s\n"
+            "[RDMA-DBG] Server polling thread ready 1\n"
+        )
+
+        runner._monitor(0, pipe)
+
+        self.assertEqual(runner.ready, {0})
 
     def test_build_client_command_assigns_client_global_id(self):
         runner = PetPSClusterRunner(num_servers=2, num_clients=1)

@@ -24,6 +24,8 @@ public:
 
   std::string MemCachedGet(const std::string& key);
 
+  bool MemCachedTryGet(const std::string& key, std::string* value);
+
   void MemCachedSet(const std::string& key, const std::string& value);
 
 private:

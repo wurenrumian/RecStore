@@ -88,6 +88,21 @@ std::string XPostoffice::MemCachedGet(const std::string& key) {
   return ret;
 }
 
+bool XPostoffice::MemCachedTryGet(const std::string& key, std::string* value) {
+  size_t l;
+  uint32_t flags;
+  memcached_return rc;
+  char* res = memcached_get(memc_, key.c_str(), key.size(), &l, &flags, &rc);
+  if (rc != MEMCACHED_SUCCESS) {
+    return false;
+  }
+  if (value != nullptr) {
+    value->assign(res, l);
+  }
+  free(res);
+  return true;
+}
+
 void XPostoffice::MemCachedSet(const std::string& key,
                                const std::string& value) {
   memcached_return rc;

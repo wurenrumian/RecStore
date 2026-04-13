@@ -25,9 +25,17 @@ public:
   void Barrier(const std::string& ss, int k) override { dsm_->barrier(ss, k); }
 
   void InitThread() override {
+    std::cerr << "[RDMA-DBG] PetPSClient::InitThread begin shard=" << shard_
+              << std::endl;
     LOG(INFO) << "dsm_->registerThread()";
     dsm_->registerThread();
+    std::cerr << "[RDMA-DBG] PetPSClient::InitThread after registerThread shard="
+              << shard_ << std::endl;
+    WaitForServerReady();
     serverThreadIdsRoutedTo_ = GetServerThreadIDs();
+    std::cerr << "[RDMA-DBG] PetPSClient::InitThread after GetServerThreadIDs shard="
+              << shard_ << " routed_threads=" << serverThreadIdsRoutedTo_.size()
+              << std::endl;
   }
 
   int GetParameter(base::ConstArray<uint64_t> keys,
@@ -57,6 +65,7 @@ public:
   int FakePutParameter(base::ConstArray<uint64_t> keys, float* values) override;
 
 private:
+  void WaitForServerReady();
   std::vector<int> GetServerThreadIDs();
   int SelectServerThreadID() const;
   void Init();
