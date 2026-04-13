@@ -1,5 +1,10 @@
 #include "petps_client.h"
 
+#include <atomic>
+#include <cstring>
+#include <thread>
+#include <vector>
+
 #include "petps_magic.h"
 #include "ps/base/Postoffice.h"
 #include "ps/base/shard_manager.h"
@@ -33,6 +38,33 @@ void PetPSClient::Init() {
 
 int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
                               std::vector<std::vector<float>>* values) {
+  values->clear();
+  if (keys.Size() == 0) {
+    return 0;
+  }
+
+  const int embedding_dim = FLAGS_value_size / sizeof(float);
+  std::vector<float> flat(keys.Size() * embedding_dim + 1, 0.0f);
+  int rpc_id = GetParameter(keys, flat.data(), false, 0);
+  WaitRPCFinish(rpc_id);
+
+  // Check status word at the end of the buffer
+  const std::int32_t status = *reinterpret_cast<std::int32_t*>(
+      flat.data() + keys.Size() * embedding_dim);
+  if (status != static_cast<std::int32_t>(RpcStatus::kOk)) {
+    LOG(ERROR) << "GetParameter failed with status: "
+               << RpcStatusToString(static_cast<RpcStatus>(status));
+    RevokeRPCResource(rpc_id);
+    return -1;
+  }
+
+  values->reserve(keys.Size());
+  for (int i = 0; i < keys.Size(); ++i) {
+    std::vector<float> row(embedding_dim);
+    std::memcpy(row.data(), flat.data() + i * embedding_dim, FLAGS_value_size);
+    values->push_back(std::move(row));
+  }
+  RevokeRPCResource(rpc_id);
   return 0;
 }
 
@@ -74,6 +106,10 @@ int PetPSClient::SelectServerThreadID() const {
   return ret;
 }
 
+std::size_t PetPSClient::ResponseBufferBytes(std::size_t key_count) const {
+  return FixedSlotResponseBytes(key_count, FLAGS_value_size);
+}
+
 void* PetPSClient::GetReceiveBuffer(size_t size) {
   static std::atomic<uint64_t> client_memory_offset_acc{0};
   GlobalAddress gaddr;
@@ -92,11 +128,11 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
   m->type             = RpcType::GET;
   m->receive_gaddr    = gaddr;
 
-  std::atomic<int>* poll =
-      (std::atomic<int>*)((char*)values + keys.Size() * FLAGS_value_size -
-                          sizeof(int));
-  rpcId2PollMap_[rpcIDAcc_] = (int*)poll;
-  poll->store(FINISH_MAGIC);
+  auto* poll = reinterpret_cast<std::atomic<int32_t>*>(
+      reinterpret_cast<char*>(values) + keys.Size() * FLAGS_value_size);
+  rpcId2PollMap_[rpcIDAcc_] = poll;
+  poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
+              std::memory_order_release);
 
 #ifdef RPC_DEBUG
   for (auto each : keys) {
@@ -118,13 +154,15 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
 }
 
 bool PetPSClient::QueryRPCFinished(int rpc_id) {
-  auto* poll = (std::atomic<int>*)rpcId2PollMap_[rpc_id];
-  return poll->load(std::memory_order::memory_order_relaxed) != FINISH_MAGIC;
+  auto* poll = rpcId2PollMap_[rpc_id];
+  return poll->load(std::memory_order_acquire) !=
+         static_cast<std::int32_t>(RpcStatus::kPending);
 }
 
 void PetPSClient::WaitRPCFinish(int rpc_id) {
-  auto* poll = (std::atomic<int>*)rpcId2PollMap_[rpc_id];
-  while (poll->load(std::memory_order::memory_order_relaxed) == FINISH_MAGIC) {
+  auto* poll = rpcId2PollMap_[rpc_id];
+  while (poll->load(std::memory_order_acquire) ==
+         static_cast<std::int32_t>(RpcStatus::kPending)) {
 #ifdef RPC_DEBUG
     FB_LOG_EVERY_MS(INFO, 1000) << "poll = " << *poll << "\n";
     // << "values[0]=" << values[0] << "\n"
@@ -134,6 +172,7 @@ void PetPSClient::WaitRPCFinish(int rpc_id) {
     // << "values[4]=" << values[4] << "\n"
     // << "values[5]=" << values[5] << "\n";
 #endif
+    std::this_thread::yield();
   }
   return;
 }
@@ -144,8 +183,39 @@ void PetPSClient::RevokeRPCResource(int rpc_id) {
 
 int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
                               const std::vector<std::vector<float>>& values) {
-  LOG(FATAL) << "";
-  return 0;
+  CHECK_EQ(keys.size(), values.size());
+  if (keys.empty()) {
+    return 0;
+  }
+
+  const std::size_t embedding_dim = FLAGS_value_size / sizeof(float);
+  for (const auto& row : values) {
+    if (row.size() != embedding_dim) {
+      LOG(ERROR) << "PutParameter value size mismatch, expected dim="
+                 << embedding_dim << " got=" << row.size();
+      return -1;
+    }
+  }
+
+  std::string payload = EncodePutPayload(keys, values);
+  auto* ack           = reinterpret_cast<std::atomic<int32_t>*>(
+      GetReceiveBuffer(sizeof(std::int32_t)));
+  ack->store(static_cast<std::int32_t>(RpcStatus::kPending),
+             std::memory_order_release);
+
+  thread_local auto m = RawMessage::get_new_msg();
+  m->type             = RpcType::PUT;
+  m->receive_gaddr    = dsm_->gaddr(ack);
+
+  rpcId2PollMap_[rpcIDAcc_] = ack;
+  dsm_->rpc_call(
+      m, shard_, SelectServerThreadID(), Slice(payload.data(), payload.size()));
+
+  WaitRPCFinish(rpcIDAcc_);
+  const std::int32_t status = ack->load(std::memory_order_acquire);
+  rpcId2PollMap_.erase(rpcIDAcc_);
+  rpcIDAcc_++;
+  return status == static_cast<std::int32_t>(RpcStatus::kOk) ? 0 : -1;
 }
 
 int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
@@ -156,9 +226,10 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   m->receive_gaddr    = gaddr;
 
   // LOG(INFO) << "send PS Put";
-  std::atomic<int>* poll    = (std::atomic<int>*)((char*)values);
-  rpcId2PollMap_[rpcIDAcc_] = (int*)poll;
-  poll->store(FINISH_MAGIC);
+  auto* poll                = reinterpret_cast<std::atomic<int32_t>*>(values);
+  rpcId2PollMap_[rpcIDAcc_] = poll;
+  poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
+              std::memory_order_release);
 
 #ifdef RPC_DEBUG
   for (auto each : keys) {

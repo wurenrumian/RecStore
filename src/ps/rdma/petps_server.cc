@@ -17,6 +17,8 @@
 #include "mayfly_config.h"
 #include "memory/epoch_manager.h"
 #include "memory/shm_file.h"
+#include "ps/rdma/rdma_protocol.h"
+#include "ps/rdma/rdma_status.h"
 #include "petps_magic.h"
 #include "recstore_config.h"
 #include "third_party/Mayfly-main/include/DSM.h"
@@ -119,25 +121,37 @@ private:
   }
 
   void RpcPsPut(RawMessage* recv, int thread_id) {
-    thread_local base::PseudoRandom random_engine;
     Cursor cursor;
     Slice extra_data = recv->get_string(cursor);
-    int put_kv_count = extra_data.len / sizeof(uint64_t);
-    base::ConstArray<uint64_t> keys((uint64_t*)extra_data.s, put_kv_count);
 
-    // warning (now direct insert fake value)
-    for (int i = 0; i < keys.Size(); i++) {
-      cache_ps_->PutSingleParameter(
-          keys[i],
-          random_engine.GetString(FLAGS_value_size).c_str(),
-          FLAGS_value_size / sizeof(float),
-          thread_id);
+    petps::DecodedPutPayload decoded;
+    std::string error;
+    petps::RpcStatus status = petps::RpcStatus::kOk;
+
+    if (!petps::DecodePutPayload(
+            std::string_view(extra_data.s, extra_data.len), &decoded, &error)) {
+      LOG(ERROR) << "RpcPsPut decode error: " << error;
+      status = petps::RpcStatus::kInvalidPayload;
+    } else if (decoded.embedding_dim * sizeof(float) != FLAGS_value_size) {
+      LOG(ERROR) << "RpcPsPut value size mismatch, embedding_dim="
+                 << decoded.embedding_dim
+                 << " FLAGS_value_size=" << FLAGS_value_size;
+      status = petps::RpcStatus::kValueSizeMismatch;
+    } else {
+      for (std::size_t i = 0; i < decoded.keys.size(); ++i) {
+        cache_ps_->PutSingleParameter(
+            decoded.keys[i],
+            decoded.values.data() + i * decoded.embedding_dim,
+            decoded.embedding_dim,
+            thread_id);
+      }
     }
 
-    auto buf = dsm_->get_rdma_buffer();
-    memcpy(buf, "123", 4);
-    GlobalAddress gaddr = recv->receive_gaddr;
-    dsm_->write(buf, gaddr, 4, true, petps::WR_ID_PUT);
+    const std::int32_t code = static_cast<std::int32_t>(status);
+    auto* ack_buf           = dsm_->get_rdma_buffer();
+    std::memcpy(ack_buf, &code, sizeof(code));
+    dsm_->write(
+        ack_buf, recv->receive_gaddr, sizeof(code), true, petps::WR_ID_PUT);
   }
 
   void RpcPsGet(RawMessage* recv, int thread_id) {
@@ -195,43 +209,50 @@ private:
 #endif
     if (perf_condition)
       value_timer_.start();
-    if (FLAGS_use_sglist) {
-      // Note: Simplified implementation - PM address checking disabled for
-      // cache_ps
-      for (int i = 0; i < batch_get_kv_count; i++) {
-        if (parameter_packs[i].dim > 0) {
-          sourcelist[i].addr = (void*)parameter_packs[i].emb_data;
-          sourcelist[i].size = parameter_packs[i].dim * sizeof(float);
-        } else {
-          // Handle missing keys
-          sourcelist[i].addr = nullptr;
-          sourcelist[i].size = 0;
-        }
-      }
 
-      GlobalAddress gaddr = recv->receive_gaddr;
-      CHECK(dsm_->write_from_pm_vec(
-          sourcelist.data(),
-          batch_get_kv_count,
-          gaddr,
-          true,
-          30,
-          petps::WR_ID_SG_GET));
-    } else {
-      auto buf = dsm_->get_rdma_buffer();
-      int acc  = 0;
-      for (int i = 0; i < batch_get_kv_count; i++) {
-        if (parameter_packs[i].dim > 0) {
-          memcpy(buf + acc,
-                 parameter_packs[i].emb_data,
-                 parameter_packs[i].dim * sizeof(float));
-          acc += parameter_packs[i].dim * sizeof(float);
-        }
-      }
+    const int embedding_dim = FLAGS_value_size / sizeof(float);
+    const std::size_t response_bytes =
+        petps::FixedSlotResponseBytes(batch_get_kv_count, FLAGS_value_size);
+
+    // Validate response doesn't exceed per-thread RDMA buffer size (1MB)
+    constexpr std::size_t kPerThreadRDMABufferSize = 1 * 1024 * 1024;
+    if (response_bytes > kPerThreadRDMABufferSize) {
+      LOG(ERROR) << "Response buffer size " << response_bytes
+                 << " exceeds per-thread RDMA buffer limit "
+                 << kPerThreadRDMABufferSize;
+      auto* status_word =
+          reinterpret_cast<std::int32_t*>(dsm_->get_rdma_buffer());
+      *status_word =
+          static_cast<std::int32_t>(petps::RpcStatus::kBatchTooLarge);
+      dsm_->write(reinterpret_cast<const char*>(status_word),
+                  recv->receive_gaddr,
+                  sizeof(std::int32_t),
+                  true,
+                  petps::WR_ID_GET);
       epoch_manager_->UnProtect();
-      GlobalAddress gaddr = recv->receive_gaddr;
-      dsm_->write(buf, gaddr, acc, true, petps::WR_ID_GET);
+      return;
     }
+
+    auto* buf = dsm_->get_rdma_buffer();
+    std::memset(buf, 0, response_bytes);
+
+    for (int i = 0; i < batch_get_kv_count; i++) {
+      float* slot = reinterpret_cast<float*>(buf + i * FLAGS_value_size);
+      if (parameter_packs[i].dim == 0) {
+        std::fill(slot, slot + embedding_dim, 0.0f);
+        continue;
+      }
+      CHECK_EQ(parameter_packs[i].dim, embedding_dim);
+      std::memcpy(slot, parameter_packs[i].emb_data, FLAGS_value_size);
+    }
+
+    auto* status_word = reinterpret_cast<std::int32_t*>(
+        buf + batch_get_kv_count * FLAGS_value_size);
+    *status_word = static_cast<std::int32_t>(petps::RpcStatus::kOk);
+
+    epoch_manager_->UnProtect();
+    GlobalAddress gaddr = recv->receive_gaddr;
+    dsm_->write(buf, gaddr, response_bytes, true, petps::WR_ID_GET);
     if (perf_condition)
       value_timer_.end();
 

@@ -3,10 +3,12 @@
 #include "mayfly_config.h"
 #include "base/log.h"
 
+#include <cstdlib>
 #include <libmemcached/memcached.h>
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <utility>
 
 DEFINE_int32(num_server_processes, 1, "# of server processes");
 DEFINE_int32(num_client_processes, 1, "# of client processes");
@@ -19,6 +21,25 @@ static std::string trim(const std::string& s) {
     res.erase(res.find_last_not_of(" ") + 1);
   }
   return res;
+}
+
+static std::pair<std::string, std::string> ResolveMemcachedEndpoint() {
+  const char* env_host = std::getenv("RECSTORE_MEMCACHED_HOST");
+  const char* env_port = std::getenv("RECSTORE_MEMCACHED_PORT");
+  if (env_host != nullptr && env_port != nullptr) {
+    return {env_host, env_port};
+  }
+
+  std::ifstream conf(MAYFLY_PATH "/memcached.conf");
+  if (!conf) {
+    LOG(FATAL) << "can't open memcached.conf";
+  }
+
+  std::string addr;
+  std::string port;
+  std::getline(conf, addr);
+  std::getline(conf, port);
+  return {trim(addr), trim(port)};
 }
 
 XPostoffice::XPostoffice() {
@@ -89,18 +110,11 @@ void XPostoffice::MemCachedSet(const std::string& key,
 void XPostoffice::ConnectMemcached() {
   memcached_server_st* servers = NULL;
   memcached_return rc;
-  std::ifstream conf(MAYFLY_PATH "/memcached.conf");
-  if (!conf) {
-    LOG(FATAL) << "can't open memcached.conf";
-  }
-  std::string addr, port;
-  std::getline(conf, addr);
-  std::getline(conf, port);
-  std::cout << "use memcached in " << trim(addr) << ":" << trim(port)
-            << std::endl;
+  auto [addr, port] = ResolveMemcachedEndpoint();
+  std::cout << "use memcached in " << addr << ":" << port << std::endl;
 
-  memc_   = memcached_create(NULL);
-  servers = memcached_server_list_append(
-      servers, trim(addr).c_str(), std::stoi(trim(port)), &rc);
+  memc_ = memcached_create(NULL);
+  servers =
+      memcached_server_list_append(servers, addr.c_str(), std::stoi(port), &rc);
   rc = memcached_server_push(memc_, servers);
 }

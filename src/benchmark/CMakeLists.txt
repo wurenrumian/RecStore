@@ -15,3 +15,12 @@ target_link_libraries(dataset_renumber_id_helper PUBLIC TBB::tbb)
 add_executable(benchmark_client benchmark_client.cc)
 target_link_libraries(benchmark_client PUBLIC ${warp_wq_ps_client} base)
 target_link_libraries(benchmark_client PUBLIC OpenMP::OpenMP_CXX)
+
+add_executable(ps_transport_benchmark ps_transport_benchmark.cc)
+target_link_libraries(ps_transport_benchmark PUBLIC
+    base
+    grpc_ps_client
+    brpc_ps_client
+    ${warp_wq_ps_client}
+    OpenMP::OpenMP_CXX
+)
