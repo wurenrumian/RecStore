@@ -18,6 +18,26 @@ add_test(
 )
 
 add_test(
+    NAME pytorch_client_test_rdma_basic
+    COMMAND ${CMAKE_COMMAND} -E env
+            RECSTORE_CONFIG=${PROJECT_SOURCE_DIR}/src/test/configs/recstore_config.op_rdma.json
+            RECSTORE_CLIENT_TEST_PHASE=basic
+            ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client/client_test.py
+            "$<TARGET_FILE:recstore_torch_ops>"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client
+)
+
+add_test(
+    NAME pytorch_client_test_rdma
+    COMMAND ${CMAKE_COMMAND} -E env
+            RECSTORE_CONFIG=${PROJECT_SOURCE_DIR}/src/test/configs/recstore_config.op_rdma.json
+            RECSTORE_CLIENT_TEST_PHASE=full
+            ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client/client_test.py
+            "$<TARGET_FILE:recstore_torch_ops>"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client
+)
+
+add_test(
     NAME dist_emb_unittest
     COMMAND ${Python_EXECUTABLE} -m unittest recstore.unittest.test_dist_emb
 )

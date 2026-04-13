@@ -5,6 +5,41 @@ import sys
 import os
 
 _server_runner = None
+TEST_PHASE = os.environ.get("RECSTORE_CLIENT_TEST_PHASE", "full").lower()
+
+
+def maybe_reexec_for_rdma_flags():
+    """Re-exec the Python test process with the same RDMA gflags as standalone clients."""
+    if os.environ.get("RECSTORE_RDMA_BOOTSTRAPPED") == "1":
+        return
+
+    test_scripts_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), '../../../test/scripts')
+    )
+    if test_scripts_path not in sys.path:
+        sys.path.insert(0, test_scripts_path)
+
+    from ps_server_helpers import get_backend_type, get_rdma_runner_config
+
+    if get_backend_type() != "RDMA":
+        return
+
+    rdma_config = get_rdma_runner_config()
+    extra_flags = [
+        f"--global_id={rdma_config['num_servers']}",
+        f"--num_server_processes={rdma_config['num_servers']}",
+        "--num_client_processes=1",
+        f"--value_size={rdma_config['value_size']}",
+        f"--max_kv_num_per_request={rdma_config['max_kv_num_per_request']}",
+    ]
+
+    new_env = os.environ.copy()
+    new_env["RECSTORE_RDMA_BOOTSTRAPPED"] = "1"
+    os.execve(
+        sys.executable,
+        [sys.executable, os.path.abspath(__file__), *sys.argv[1:], *extra_flags],
+        new_env,
+    )
 
 
 def start_server_if_needed():
@@ -17,7 +52,34 @@ def start_server_if_needed():
     if test_scripts_path not in sys.path:
         sys.path.insert(0, test_scripts_path)
     
-    from ps_server_helpers import should_skip_server_start, get_server_config
+    from ps_server_helpers import (
+        get_backend_type,
+        get_rdma_runner_config,
+        get_server_config,
+        should_skip_server_start,
+    )
+
+    backend = get_backend_type()
+    if backend == "RDMA":
+        rdma_config = get_rdma_runner_config()
+        print(f"\n{'='*70}")
+        print("Starting PetPS Server for RDMA Client Tests")
+        print(f"Config path: {os.environ.get('RECSTORE_CONFIG')}")
+        print(f"{'='*70}\n")
+
+        from petps_cluster_runner import PetPSClusterRunner
+        _server_runner = PetPSClusterRunner(
+            config_path=os.environ["RECSTORE_CONFIG"],
+            num_servers=rdma_config["num_servers"],
+            num_clients=1,
+            thread_num=1,
+            value_size=rdma_config["value_size"],
+            max_kv_num_per_request=rdma_config["max_kv_num_per_request"],
+            timeout=15,
+            use_local_memcached="never",
+        )
+        _server_runner.start()
+        return
     
     skip_server, reason = should_skip_server_start()
     if skip_server:
@@ -57,7 +119,90 @@ def stop_server():
         _server_runner = None
 
 
+def run_basic_tests(client, embedding_dim):
+    print("\n--- Test 0: Init Embedding Table ---")
+    ok = client.init_embedding_table("default", 10000, embedding_dim)
+    assert ok, "init_embedding_table returned False"
+    print("Init embedding table succeeded.")
+
+    print("\n--- Test 1: Write and Read Verification ---")
+    keys_to_write = torch.tensor([1001, 1002, 1003], dtype=torch.int64)
+    values_to_write = torch.randn(3, embedding_dim, dtype=torch.float32)
+
+    print(f"Writing embeddings for keys: {keys_to_write.tolist()}")
+    client.emb_write(keys_to_write, values_to_write)
+    print("Write call successful.")
+
+    print(f"Reading embeddings for keys: {keys_to_write.tolist()}")
+    read_values = client.emb_read(keys_to_write, embedding_dim)
+
+    assert read_values.shape == values_to_write.shape, "Shape mismatch after read"
+    assert torch.allclose(read_values, values_to_write), "Value mismatch after read"
+    print("Read successful. Written values verified.")
+    return values_to_write
+
+
+def run_prefetch_tests(client, embedding_dim):
+    print("\n--- Test 2: Async Prefetch Read ---")
+    prefetch_keys = torch.tensor([2001, 2002, 2003, 2004], dtype=torch.int64)
+    prefetch_vals = torch.randn(4, embedding_dim, dtype=torch.float32)
+    client.emb_write(prefetch_keys, prefetch_vals)
+
+    pid = client.emb_prefetch(prefetch_keys)
+    print(f"Issued prefetch id: {pid}")
+    prefetched = client.emb_wait_result(pid, embedding_dim)
+
+    print(f"Prefetched embeddings for keys: {prefetch_keys.tolist()}")
+    print(f"Prefetch shape: {prefetched.shape}, expected shape: {(4, embedding_dim)}")
+    print(f"Prefetched values(first 3): {prefetched.tolist()[:3]}")
+    print(f"Expected values(first 3): {prefetch_vals.tolist()[:3]}")
+    assert prefetched.shape == (4, embedding_dim), "Prefetch result shape mismatch"
+    assert torch.allclose(prefetched, prefetch_vals), "Prefetch values mismatch"
+    print("Async prefetch successful and values verified.")
+
+
+def run_update_tests(client, embedding_dim, values_to_write):
+    print("\n--- Test 3: Table-aware Update (smoke) ---")
+    update_keys = torch.tensor([1001, 1002], dtype=torch.int64)
+    grads = torch.ones(2, embedding_dim, dtype=torch.float32)
+
+    print("Reading values before update...")
+    values_before_update = client.emb_read(update_keys, embedding_dim)
+    print(f"Values before update (first 5 dims): {values_before_update[:, :5].tolist()}")
+    print(f"Expected initial values (first 5 dims): {values_to_write[:2, :5].tolist()}")
+
+    if not torch.allclose(values_before_update, values_to_write[:2]):
+        print("WARNING: Values before update don't match values_to_write from Test 1!")
+        print(f"  Max diff: {(values_before_update - values_to_write[:2]).abs().max()}")
+
+    print(f"Updating embeddings for keys: {update_keys.tolist()}")
+    client.emb_update_table("default", update_keys, grads)
+    print("emb_update_table call succeeded.")
+
+    lr = 0.01
+    print(f"Reading updated values (backend lr={lr})...")
+    updated_values = client.emb_read(update_keys, embedding_dim)
+    expected_updated = values_to_write[:2] - (lr * grads)
+
+    print(f"Updated values (first 5 dims): {updated_values[:, :5].tolist()}")
+    print(f"Expected updated (first 5 dims): {expected_updated[:, :5].tolist()}")
+    print(f"Difference (first 5 dims): {(updated_values - expected_updated)[:, :5].tolist()}")
+    print(f"Max absolute difference: {(updated_values - expected_updated).abs().max():.6f}")
+    print(f"Max relative difference: {((updated_values - expected_updated).abs() / (expected_updated.abs() + 1e-8)).max():.6f}")
+
+    if torch.allclose(updated_values, expected_updated, rtol=1e-4, atol=1e-6):
+        print("✓ Table-aware update verified successfully (with relaxed tolerance).")
+    elif torch.allclose(updated_values, expected_updated):
+        print("✓ Table-aware update verified successfully.")
+    else:
+        print("✗ Table-aware update values mismatch!")
+        print(f"  Expected: param = param - {lr} * grad")
+        print(f"  Are all gradients 1.0? {torch.allclose(grads, torch.ones_like(grads))}")
+        raise AssertionError("Table-aware update values mismatch")
+
+
 if __name__ == "__main__":
+    maybe_reexec_for_rdma_flags()
     start_server_if_needed()
     
     try:
@@ -69,80 +214,13 @@ if __name__ == "__main__":
         client = RecstoreClient(library_path=library_path)
         embedding_dim = 128
 
-        print("\n--- Test 0: Init Embedding Table ---")
-        ok = client.init_embedding_table("default", 10000, embedding_dim)
-        assert ok, "init_embedding_table returned False"
-        print("Init embedding table succeeded.")
+        values_to_write = run_basic_tests(client, embedding_dim)
 
-        print("\n--- Test 1: Write and Read Verification ---")
-        keys_to_write = torch.tensor([1001, 1002, 1003], dtype=torch.int64)
-        values_to_write = torch.randn(3, embedding_dim, dtype=torch.float32)
+        if TEST_PHASE in ("prefetch", "full"):
+            run_prefetch_tests(client, embedding_dim)
 
-        print(f"Writing embeddings for keys: {keys_to_write.tolist()}")
-        client.emb_write(keys_to_write, values_to_write)
-        print("Write call successful.")
-
-        print(f"Reading embeddings for keys: {keys_to_write.tolist()}")
-        read_values = client.emb_read(keys_to_write, embedding_dim)
-
-        assert read_values.shape == values_to_write.shape, "Shape mismatch after read"
-        assert torch.allclose(read_values, values_to_write), "Value mismatch after read"
-        print("Read successful. Written values verified.")
-
-        print("\n--- Test 2: Async Prefetch Read ---")
-        prefetch_keys = torch.tensor([2001, 2002, 2003, 2004], dtype=torch.int64)
-        prefetch_vals = torch.randn(4, embedding_dim, dtype=torch.float32)
-        client.emb_write(prefetch_keys, prefetch_vals)
-
-        pid = client.emb_prefetch(prefetch_keys)
-        print(f"Issued prefetch id: {pid}")
-        prefetched = client.emb_wait_result(pid, embedding_dim)
-
-        print(f"Prefetched embeddings for keys: {prefetch_keys.tolist()}")
-        print(f"Prefetch shape: {prefetched.shape}, expected shape: {(4, embedding_dim)}")
-        print(f"Prefetched values(first 3): {prefetched.tolist()[:3]}")
-        print(f"Expected values(first 3): {prefetch_vals.tolist()[:3]}")
-        assert prefetched.shape == (4, embedding_dim), "Prefetch result shape mismatch"
-        assert torch.allclose(prefetched, prefetch_vals), "Prefetch values mismatch"
-        print("Async prefetch successful and values verified.")
-
-        print("\n--- Test 3: Table-aware Update (smoke) ---")
-        update_keys = torch.tensor([1001, 1002], dtype=torch.int64)
-        grads = torch.ones(2, embedding_dim, dtype=torch.float32)
-
-        print("Reading values before update...")
-        values_before_update = client.emb_read(update_keys, embedding_dim)
-        print(f"Values before update (first 5 dims): {values_before_update[:, :5].tolist()}")
-        print(f"Expected initial values (first 5 dims): {values_to_write[:2, :5].tolist()}")
-
-        if not torch.allclose(values_before_update, values_to_write[:2]):
-            print("WARNING: Values before update don't match values_to_write from Test 1!")
-            print(f"  Max diff: {(values_before_update - values_to_write[:2]).abs().max()}")
-
-        print(f"Updating embeddings for keys: {update_keys.tolist()}")
-        client.emb_update_table("default", update_keys, grads)
-        print("emb_update_table call succeeded.")
-
-        lr = 0.01
-        print(f"Reading updated values (backend lr={lr})...")
-        updated_values = client.emb_read(update_keys, embedding_dim)
-        expected_updated = values_to_write[:2] - (lr * grads)
-
-        print(f"Updated values (first 5 dims): {updated_values[:, :5].tolist()}")
-        print(f"Expected updated (first 5 dims): {expected_updated[:, :5].tolist()}")
-        print(f"Difference (first 5 dims): {(updated_values - expected_updated)[:, :5].tolist()}")
-        print(f"Max absolute difference: {(updated_values - expected_updated).abs().max():.6f}")
-        print(f"Max relative difference: {((updated_values - expected_updated).abs() / (expected_updated.abs() + 1e-8)).max():.6f}")
-
-        if torch.allclose(updated_values, expected_updated, rtol=1e-4, atol=1e-6):
-            print("✓ Table-aware update verified successfully (with relaxed tolerance).")
-        elif torch.allclose(updated_values, expected_updated):
-            print("✓ Table-aware update verified successfully.")
-        else:
-            print("✗ Table-aware update values mismatch!")
-            print(f"  Expected: param = param - {lr} * grad")
-            print(f"  Are all gradients 1.0? {torch.allclose(grads, torch.ones_like(grads))}")
-            raise AssertionError("Table-aware update values mismatch")
+        if TEST_PHASE in ("basic", "full"):
+            run_update_tests(client, embedding_dim, values_to_write)
 
         print("\n✓ All tests passed!")
 
