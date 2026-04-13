@@ -200,6 +200,19 @@ python3 src/test/scripts/run_rdma_transport_benchmarks.py \
 ctest --test-dir ./build -R "petps_single_shard_test|petps_multi_shard_test" -VV
 ```
 
+### Op-layer 验证
+
+当 `cache_ps.ps_type` 设置为 `RDMA` 时，framework op layer 会通过
+`RDMAPSClientAdapter` 复用 PetPS/RDMA 数据面。可使用现有 PyTorch client
+测试验证该配置切换路径：
+
+```bash
+ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
+```
+
+该测试使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
+init、write、read、update 与 prefetch 正确性。
+
 ## 稳定性机制（当前默认行为）
 
 `run_petps_integration.py` / `PetPSClusterRunner` 已内置以下稳定性机制：
