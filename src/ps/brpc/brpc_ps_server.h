@@ -64,8 +64,8 @@ private:
   std::chrono::steady_clock::time_point start_time_;
 };
 
-std::vector<nlohmann::json> SelectBRPCShardConfigs(
-    const nlohmann::json& cache_ps_config,
-    const std::optional<int>& local_shard_id);
+std::vector<nlohmann::json>
+SelectBRPCShardConfigs(const nlohmann::json& cache_ps_config,
+                       const std::optional<int>& local_shard_id);
 
 } // namespace recstore

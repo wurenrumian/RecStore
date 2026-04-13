@@ -92,9 +92,9 @@ bool ExtractPayloadBytes(
   return false;
 }
 
-std::vector<nlohmann::json> SelectShardConfigsInternal(
-    const nlohmann::json& cache_ps_config,
-    const std::optional<int>& local_shard_id) {
+std::vector<nlohmann::json>
+SelectShardConfigsInternal(const nlohmann::json& cache_ps_config,
+                           const std::optional<int>& local_shard_id) {
   std::vector<nlohmann::json> selected;
   if (!cache_ps_config.contains("servers") ||
       !cache_ps_config["servers"].is_array()) {
@@ -119,9 +119,9 @@ std::vector<nlohmann::json> SelectShardConfigsInternal(
 
 } // namespace
 
-std::vector<nlohmann::json> SelectBRPCShardConfigs(
-    const nlohmann::json& cache_ps_config,
-    const std::optional<int>& local_shard_id) {
+std::vector<nlohmann::json>
+SelectBRPCShardConfigs(const nlohmann::json& cache_ps_config,
+                       const std::optional<int>& local_shard_id) {
   return SelectShardConfigsInternal(cache_ps_config, local_shard_id);
 }
 
@@ -671,8 +671,9 @@ public:
       num_shards = config_["cache_ps"]["num_shards"];
     }
     const std::optional<int> local_shard_id =
-        FLAGS_local_shard_id >= 0 ? std::make_optional(FLAGS_local_shard_id)
-                                  : std::nullopt;
+        FLAGS_local_shard_id >= 0
+            ? std::make_optional(FLAGS_local_shard_id)
+            : std::nullopt;
 
     if (num_shards > 1) {
       // 多服务器启动逻辑
@@ -686,7 +687,7 @@ public:
       }
 
       const auto& cache_ps_config = config_["cache_ps"];
-      auto servers                =
+      auto servers =
           SelectShardConfigsInternal(cache_ps_config, local_shard_id);
       const auto configured_servers = cache_ps_config["servers"];
       if (configured_servers.size() != num_shards) {
@@ -699,7 +700,8 @@ public:
                    << " is not present in cache_ps.servers";
         return;
       }
-      if (!local_shard_id.has_value() && servers.size() != configured_servers.size()) {
+      if (!local_shard_id.has_value() &&
+          servers.size() != configured_servers.size()) {
         LOG(FATAL) << "Selected shard count (" << servers.size()
                    << ") does not match configured server count ("
                    << configured_servers.size() << ")";
@@ -717,8 +719,8 @@ public:
           std::string server_address = host + ":" + std::to_string(port);
 
           nlohmann::json shard_config = config_["cache_ps"];
-          shard_config["num_shards"] = 1;
-          shard_config["servers"]    = nlohmann::json::array({server_config});
+          shard_config["num_shards"]  = 1;
+          shard_config["servers"]     = nlohmann::json::array({server_config});
           if (shard_config.contains("base_kv_config") &&
               shard_config["base_kv_config"].is_object()) {
             auto& base_kv_config = shard_config["base_kv_config"];
