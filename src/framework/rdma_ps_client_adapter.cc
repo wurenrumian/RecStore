@@ -45,7 +45,7 @@ std::vector<std::string> ReadProcessArgv() {
   }
   return argv;
 }
-}
+} // namespace
 
 void InitializeRdmaProcessRuntime() {
   static std::once_flag init_once;
@@ -62,7 +62,7 @@ void InitializeRdmaProcessRuntime() {
     }
     argv_storage.push_back(nullptr);
 
-    int argc = static_cast<int>(argv_strings.size());
+    int argc    = static_cast<int>(argv_strings.size());
     char** argv = argv_storage.data();
     folly::init(&argc, &argv);
   });
@@ -81,19 +81,20 @@ void RDMAPSClientAdapter::EnsureClientInitialized() {
       config_.contains("cache_ps") ? config_["cache_ps"] : json::object();
   const json client_cfg =
       config_.contains("client") ? config_["client"] : json::object();
-  const json dist_cfg = config_.contains("distributed_client")
-                            ? config_["distributed_client"]
-                            : json::object();
+  const json dist_cfg =
+      config_.contains("distributed_client")
+          ? config_["distributed_client"]
+          : json::object();
 
-  const int num_shards = dist_cfg.value(
-      "num_shards", cache_ps_cfg.value("num_shards", 1));
+  const int num_shards =
+      dist_cfg.value("num_shards", cache_ps_cfg.value("num_shards", 1));
   FLAGS_num_server_processes = num_shards;
   FLAGS_num_client_processes = 1;
   FLAGS_global_id            = num_shards;
-  FLAGS_value_size = cache_ps_cfg.contains("base_kv_config")
-                         ? cache_ps_cfg["base_kv_config"].value("value_size",
-                                                                 FLAGS_value_size)
-                         : FLAGS_value_size;
+  FLAGS_value_size =
+      cache_ps_cfg.contains("base_kv_config")
+          ? cache_ps_cfg["base_kv_config"].value("value_size", FLAGS_value_size)
+          : FLAGS_value_size;
   FLAGS_max_kv_num_per_request =
       dist_cfg.value("max_keys_per_request", FLAGS_max_kv_num_per_request);
 
@@ -175,8 +176,8 @@ RDMAPSClientAdapter::GetPrefetchState(uint64_t prefetch_id) {
   std::lock_guard<std::mutex> guard(state_mu_);
   const auto it = prefetches_.find(prefetch_id);
   if (it == prefetches_.end()) {
-    throw std::runtime_error("Unknown RDMA prefetch id: " +
-                             std::to_string(prefetch_id));
+    throw std::runtime_error(
+        "Unknown RDMA prefetch id: " + std::to_string(prefetch_id));
   }
   return it->second;
 }
@@ -258,22 +259,27 @@ int RDMAPSClientAdapter::UpdateParameter(
     flat.insert(flat.end(), row.begin(), row.end());
   }
   return UpdateParameterFlat(
-      table_name, keys, flat.data(), static_cast<int64_t>(grads->size()),
+      table_name,
+      keys,
+      flat.data(),
+      static_cast<int64_t>(grads->size()),
       embedding_dim);
 }
 
-int RDMAPSClientAdapter::UpdateParameterFlat(const std::string& table_name,
-                                             const base::ConstArray<uint64_t>& keys,
-                                             const float* grads,
-                                             int64_t num_rows,
-                                             int64_t embedding_dim) {
+int RDMAPSClientAdapter::UpdateParameterFlat(
+    const std::string& table_name,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim) {
   EnsureTableReady(table_name, embedding_dim);
   if (num_rows == 0) {
     return 0;
   }
 
   std::vector<float> current(
-      static_cast<std::size_t>(num_rows) * static_cast<std::size_t>(embedding_dim),
+      static_cast<std::size_t>(num_rows) *
+          static_cast<std::size_t>(embedding_dim),
       0.0f);
   if (GetParameter(keys, current.data()) != 0) {
     return -1;
@@ -295,11 +301,10 @@ int RDMAPSClientAdapter::UpdateParameterFlat(const std::string& table_name,
   return PutParameter(keys, updated);
 }
 
-int RDMAPSClientAdapter::InitEmbeddingTable(const std::string& table_name,
-                                            const EmbeddingTableConfig& config) {
+int RDMAPSClientAdapter::InitEmbeddingTable(
+    const std::string& table_name, const EmbeddingTableConfig& config) {
   std::lock_guard<std::mutex> guard(state_mu_);
-  const auto [it, inserted] =
-      tables_.emplace(table_name, TableState{config});
+  const auto [it, inserted] = tables_.emplace(table_name, TableState{config});
   if (!inserted) {
     if (it->second.config.embedding_dim != config.embedding_dim ||
         it->second.config.num_embeddings != config.num_embeddings) {
@@ -311,7 +316,8 @@ int RDMAPSClientAdapter::InitEmbeddingTable(const std::string& table_name,
 
 int RDMAPSClientAdapter::AsyncGetParameter(const base::ConstArray<uint64_t>&,
                                            float*) {
-  throw std::runtime_error("RDMA adapter AsyncGetParameter not implemented yet");
+  throw std::runtime_error(
+      "RDMA adapter AsyncGetParameter not implemented yet");
 }
 
 void RDMAPSClientAdapter::Command(PSCommand) {
@@ -393,10 +399,11 @@ bool RDMAPSClientAdapter::GetPrefetchResult(
   return true;
 }
 
-bool RDMAPSClientAdapter::GetPrefetchResultFlat(uint64_t prefetch_id,
-                                                std::vector<float>* values,
-                                                int64_t* num_rows,
-                                                int64_t embedding_dim) {
+bool RDMAPSClientAdapter::GetPrefetchResultFlat(
+    uint64_t prefetch_id,
+    std::vector<float>* values,
+    int64_t* num_rows,
+    int64_t embedding_dim) {
   if (values == nullptr || num_rows == nullptr) {
     return false;
   }

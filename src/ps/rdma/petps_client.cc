@@ -72,8 +72,8 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
 
 void PetPSClient::WaitForServerReady() {
   const std::string key = "petps-server-ready-" + std::to_string(shard_);
-  const auto deadline = std::chrono::steady_clock::now() +
-                        std::chrono::seconds(30);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(30);
   std::string value;
   while (std::chrono::steady_clock::now() < deadline) {
     if (XPostoffice::GetInstance()->MemCachedTryGet(key, &value) &&
@@ -82,8 +82,8 @@ void PetPSClient::WaitForServerReady() {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  throw std::runtime_error("Timed out waiting for RDMA server ready key: " +
-                           key);
+  throw std::runtime_error(
+      "Timed out waiting for RDMA server ready key: " + key);
 }
 
 std::vector<int> PetPSClient::GetServerThreadIDs() {

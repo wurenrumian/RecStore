@@ -142,9 +142,8 @@ json GetGlobalConfig() {
         std::cerr << "[Config] Using config file from RECSTORE_CONFIG: "
                   << config_path.string() << std::endl;
       } else {
-        throw std::runtime_error(
-            "RECSTORE_CONFIG points to a missing file: " +
-            config_path.string());
+        throw std::runtime_error("RECSTORE_CONFIG points to a missing file: " +
+                                 config_path.string());
       }
     }
 
@@ -206,7 +205,7 @@ void ConfigureLogging(bool initialize_google_logging) {
 KVClientOp::KVClientOp() {
   if (!ps_client_) {
     try {
-      json config = GetGlobalConfig();
+      json config   = GetGlobalConfig();
       bool use_rdma = false;
       try {
         use_rdma = ResolveFrameworkPSType(config) == "RDMA";
@@ -225,7 +224,7 @@ KVClientOp::KVClientOp() {
       } else {
         ConfigureLogging();
       }
-      ps_client_  = create_ps_client_from_config(config);
+      ps_client_ = create_ps_client_from_config(config);
 
       LOG(INFO) << "PS client initialized successfully.";
     } catch (const std::exception& e) {

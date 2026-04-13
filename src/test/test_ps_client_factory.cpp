@@ -13,7 +13,8 @@ TEST(PSClientFactoryTest, AllowsRdmaForFrameworkUsage) {
        {{"num_shards", 1},
         {"hash_method", "city_hash"},
         {"servers",
-         json::array({{{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}})}}},
+         json::array(
+             {{{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}})}}},
   };
 
   EXPECT_EQ(ResolveFrameworkPSType(config), "RDMA");
