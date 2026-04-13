@@ -44,8 +44,8 @@ inline json ResolveFrameworkClientConfig(const json& config) {
 }
 
 inline BasePSClient* CreateFrameworkPSClient(const json& config) {
-  const std::string ps_type  = ResolveFrameworkPSType(config);
-  const json client_config   = ResolveFrameworkClientConfig(config);
+  const std::string ps_type = ResolveFrameworkPSType(config);
+  const json client_config  = ResolveFrameworkClientConfig(config);
 
   if (ps_type == "RDMA") {
     return new RDMAPSClientAdapter(config);

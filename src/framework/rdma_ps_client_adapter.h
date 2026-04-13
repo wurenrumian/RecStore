@@ -20,7 +20,8 @@ public:
   explicit RDMAPSClientAdapter(json config);
   ~RDMAPSClientAdapter() override = default;
 
-  int GetParameter(const base::ConstArray<uint64_t>& keys, float* values) override;
+  int GetParameter(const base::ConstArray<uint64_t>& keys,
+                   float* values) override;
   int PutParameter(const base::ConstArray<uint64_t>& keys,
                    const std::vector<std::vector<float>>& values) override;
   int UpdateParameter(const std::string& table_name,
@@ -33,7 +34,8 @@ public:
                           int64_t embedding_dim) override;
   int InitEmbeddingTable(const std::string& table_name,
                          const EmbeddingTableConfig& config) override;
-  int AsyncGetParameter(const base::ConstArray<uint64_t>& keys, float* values) override;
+  int AsyncGetParameter(const base::ConstArray<uint64_t>& keys,
+                        float* values) override;
   void Command(PSCommand command) override;
   uint64_t PrefetchParameter(const base::ConstArray<uint64_t>& keys) override;
   bool IsPrefetchDone(uint64_t prefetch_id) override;
@@ -52,9 +54,9 @@ private:
 
   struct PrefetchState {
     std::vector<uint64_t> keys;
-    float* buffer = nullptr;
-    int rpc_id = -1;
-    int64_t key_count = 0;
+    float* buffer         = nullptr;
+    int rpc_id            = -1;
+    int64_t key_count     = 0;
     int64_t embedding_dim = 0;
   };
 
@@ -68,7 +70,7 @@ private:
   json config_;
   std::mutex init_mu_;
   std::mutex state_mu_;
-  bool initialized_ = false;
+  bool initialized_        = false;
   bool thread_initialized_ = false;
   std::vector<std::unique_ptr<petps::PetPSClient>> shard_clients_;
   std::unique_ptr<AllShardsParameterClientWrapper> multi_client_;

@@ -29,13 +29,15 @@ public:
               << std::endl;
     LOG(INFO) << "dsm_->registerThread()";
     dsm_->registerThread();
-    std::cerr << "[RDMA-DBG] PetPSClient::InitThread after registerThread shard="
-              << shard_ << std::endl;
+    std::cerr
+        << "[RDMA-DBG] PetPSClient::InitThread after registerThread shard="
+        << shard_ << std::endl;
     WaitForServerReady();
     serverThreadIdsRoutedTo_ = GetServerThreadIDs();
-    std::cerr << "[RDMA-DBG] PetPSClient::InitThread after GetServerThreadIDs shard="
-              << shard_ << " routed_threads=" << serverThreadIdsRoutedTo_.size()
-              << std::endl;
+    std::cerr
+        << "[RDMA-DBG] PetPSClient::InitThread after GetServerThreadIDs shard="
+        << shard_ << " routed_threads=" << serverThreadIdsRoutedTo_.size()
+        << std::endl;
   }
 
   int GetParameter(base::ConstArray<uint64_t> keys,
