@@ -37,6 +37,14 @@ add_test(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client
 )
 
+set_tests_properties(
+    pytorch_client_test_rdma_basic
+    pytorch_client_test_rdma
+    PROPERTIES
+        TIMEOUT 90
+        LABELS "rdma_integration"
+)
+
 add_test(
     NAME dist_emb_unittest
     COMMAND ${Python_EXECUTABLE} -m unittest recstore.unittest.test_dist_emb
