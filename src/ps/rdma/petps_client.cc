@@ -1,7 +1,9 @@
 #include "petps_client.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -68,19 +70,44 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
   return 0;
 }
 
+void PetPSClient::WaitForServerReady() {
+  const std::string key = "petps-server-ready-" + std::to_string(shard_);
+  const auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::seconds(30);
+  std::string value;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (XPostoffice::GetInstance()->MemCachedTryGet(key, &value) &&
+        value == "1") {
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  throw std::runtime_error("Timed out waiting for RDMA server ready key: " +
+                           key);
+}
+
 std::vector<int> PetPSClient::GetServerThreadIDs() {
+  std::cerr << "[RDMA-DBG] GetServerThreadIDs begin shard=" << shard_
+            << std::endl;
   auto m     = RawMessage::get_new_msg();
   m->node_id = dsm_->getMyNodeID();
   m->t_id    = dsm_->getMyThreadID();
   m->type    = GET_SERVER_THREADIDS;
   // RPC to the server ID <shard_>
+  std::cerr << "[RDMA-DBG] GetServerThreadIDs before rpc_call shard=" << shard_
+            << " node_id=" << static_cast<int>(m->node_id)
+            << " thread_id=" << static_cast<int>(m->t_id) << std::endl;
   dsm_->rpc_call(m, shard_, 0);
+  std::cerr << "[RDMA-DBG] GetServerThreadIDs after rpc_call shard=" << shard_
+            << std::endl;
   uint64_t wr_id;
   while (1) {
     auto recv = dsm_->rpc_fast_wait(&wr_id);
     // FB_LOG_EVERY_MS(WARNING, 5000)
     //     << "client wait the result of GetServerThreadIDs";
     if (recv) {
+      std::cerr << "[RDMA-DBG] GetServerThreadIDs received response shard="
+                << shard_ << " wr_id=" << wr_id << std::endl;
       CHECK_EQ(recv->type, RESP_GET_SERVER_THREADIDS);
       Cursor cursor;
       Slice extra_data = recv->get_string(cursor);

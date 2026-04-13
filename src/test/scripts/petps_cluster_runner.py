@@ -58,6 +58,7 @@ class PetPSClusterRunner:
         self.processes = []
         self.memcached_process = None
         self.ready = set()
+        self.ready_threads = {}
 
     def emit_status(self, phase, extra=""):
         running_pids = [
@@ -113,7 +114,7 @@ class PetPSClusterRunner:
         ]
 
     def is_ready_line(self, line):
-        return "Starts PS polling thread" in line or "xmh: finish construct DSM" in line
+        return "[RDMA-DBG] Server polling thread ready" in line
 
     def _monitor(self, global_id, pipe):
         for raw_line in iter(pipe.readline, ""):
@@ -121,7 +122,10 @@ class PetPSClusterRunner:
             if self.verbose:
                 print(f"[petps_server:{global_id}] {line}")
             if self.is_ready_line(line):
-                self.ready.add(global_id)
+                ready = self.ready_threads.setdefault(global_id, set())
+                ready.add(line.rsplit(" ", 1)[-1])
+                if len(ready) >= self.thread_num:
+                    self.ready.add(global_id)
 
     def _start_memcached(self):
         try:
@@ -264,6 +268,10 @@ class PetPSClusterRunner:
         if self.startup_delay > 0:
             time.sleep(self.startup_delay)
 
+        # PetPS servers cannot reach polling-ready until the client joins the
+        # DSM-init barrier. If no post-barrier ready line appears yet, let the
+        # client proceed as long as the server process is still alive; the RDMA
+        # client waits on a memcached server-ready key before sending RPCs.
         if not self.ready:
             for global_id, (process, _thread) in enumerate(self.processes):
                 if process.poll() is None:
