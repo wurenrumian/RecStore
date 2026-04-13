@@ -1,4 +1,5 @@
 find_package(folly REQUIRED)
+find_package(ZLIB REQUIRED)
 
 add_subdirectory(small_tests)
 add_subdirectory(server_mgr)
@@ -135,6 +136,38 @@ target_link_libraries(test_ps_client_factory PUBLIC
 )
 target_link_options(test_ps_client_factory PUBLIC -Wl,--no-as-needed)
 add_test(NAME test_ps_client_factory COMMAND test_ps_client_factory)
+
+add_executable(brpc_ps_server_unit_test
+    test_brpc_ps_server.cpp
+    ${PROJECT_SOURCE_DIR}/src/ps/brpc/brpc_ps_server.cpp
+)
+target_include_directories(brpc_ps_server_unit_test PUBLIC ${BRPC_INCLUDE_PATH})
+target_include_directories(brpc_ps_server_unit_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/ps/brpc
+)
+target_compile_definitions(brpc_ps_server_unit_test PRIVATE RECSTORE_NO_SERVER_MAIN)
+target_link_libraries(brpc_ps_server_unit_test PUBLIC
+    base
+    ps_base
+    ps_proto
+    ${BRPC_LIB}
+    ${CUSTOM_PROTOBUF_LIB}
+    ${SYSTEM_OPENSSL_SSL_LIB}
+    ${SYSTEM_OPENSSL_CRYPTO_LIB}
+    ZLIB::ZLIB
+    Threads::Threads
+    dl
+    stdc++fs
+    kv_engine
+    sparse_tensor
+    gflags
+    leveldb
+    TBB::tbb
+    gtest
+    gtest_main
+)
+add_test(NAME brpc_ps_server_unit_test COMMAND brpc_ps_server_unit_test)
+set_tests_properties(brpc_ps_server_unit_test PROPERTIES LABELS "ps_unit")
 
 add_executable(test_rdma_protocol test_rdma_protocol.cpp)
 target_link_libraries(test_rdma_protocol PUBLIC
