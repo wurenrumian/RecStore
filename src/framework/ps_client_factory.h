@@ -7,6 +7,7 @@
 
 #include "base/factory.h"
 #include "base/json.h"
+#include "framework/rdma_ps_client_adapter.h"
 #include "ps/base/base_client.h"
 #include "ps/brpc/brpc_ps_client.h"
 #include "ps/grpc/grpc_ps_client.h"
@@ -28,13 +29,8 @@ inline std::string ResolveFrameworkPSType(const json& config) {
   }
 
   const std::string normalized = NormalizePSType(ps_type);
-  if (normalized == "GRPC" || normalized == "BRPC") {
+  if (normalized == "GRPC" || normalized == "BRPC" || normalized == "RDMA") {
     return normalized;
-  }
-  if (normalized == "RDMA") {
-    throw std::invalid_argument(
-        "KVClientOp does not support RDMA directly. Use src/ps/rdma clients "
-        "or add a dedicated BasePSClient adapter.");
   }
 
   throw std::invalid_argument("Unknown ps_type for KVClientOp: " + ps_type);
@@ -50,6 +46,11 @@ inline json ResolveFrameworkClientConfig(const json& config) {
 inline BasePSClient* CreateFrameworkPSClient(const json& config) {
   const std::string ps_type  = ResolveFrameworkPSType(config);
   const json client_config   = ResolveFrameworkClientConfig(config);
+
+  if (ps_type == "RDMA") {
+    return new RDMAPSClientAdapter(config);
+  }
+
   const std::string type_key = (ps_type == "BRPC") ? "brpc" : "grpc";
 
   BasePSClient* client =
