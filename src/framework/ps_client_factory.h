@@ -7,7 +7,7 @@
 
 #include "base/factory.h"
 #include "base/json.h"
-#include "framework/rdma_ps_client_adapter.h"
+#include "ps/rdma/rdma_ps_client_adapter.h"
 #include "ps/base/base_client.h"
 #include "ps/brpc/brpc_ps_client.h"
 #include "ps/grpc/grpc_ps_client.h"

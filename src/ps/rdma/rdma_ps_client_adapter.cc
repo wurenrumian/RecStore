@@ -1,4 +1,4 @@
-#include "framework/rdma_ps_client_adapter.h"
+#include "ps/rdma/rdma_ps_client_adapter.h"
 
 #include <cstdint>
 #include <cstring>
@@ -9,7 +9,6 @@
 #include <folly/portability/GFlags.h>
 #include <folly/init/Init.h>
 
-#include "ps/base/Postoffice.h"
 #include "ps/base/config.h"
 
 DECLARE_int32(global_id);
@@ -133,19 +132,14 @@ void RDMAPSClientAdapter::EnsureClientInitialized() {
 void RDMAPSClientAdapter::EnsureThreadInitialized() {
   EnsureClientInitialized();
   if (thread_initialized_) {
-    std::cerr << "[RDMA-DBG] Thread already initialized" << std::endl;
     return;
   }
 
-  std::cerr << "[RDMA-DBG] Begin EnsureThreadInitialized" << std::endl;
   if (multi_client_ != nullptr) {
-    std::cerr << "[RDMA-DBG] InitThread on multi_client_" << std::endl;
     multi_client_->InitThread();
   } else if (client_ != nullptr) {
-    std::cerr << "[RDMA-DBG] InitThread on single client" << std::endl;
     client_->InitThread();
   }
-  std::cerr << "[RDMA-DBG] End EnsureThreadInitialized" << std::endl;
 
   thread_initialized_ = true;
 }
@@ -227,18 +221,11 @@ int RDMAPSClientAdapter::GetParameter(const base::ConstArray<uint64_t>& keys,
 int RDMAPSClientAdapter::PutParameter(
     const base::ConstArray<uint64_t>& keys,
     const std::vector<std::vector<float>>& values) {
-  std::cerr << "[RDMA-DBG] PutParameter enter keys=" << keys.Size()
-            << " rows=" << values.size() << std::endl;
   EnsureThreadInitialized();
-  std::cerr << "[RDMA-DBG] PutParameter after EnsureThreadInitialized"
-            << std::endl;
   if (client_ == nullptr) {
-    std::cerr << "[RDMA-DBG] PutParameter client_ is null" << std::endl;
     return -1;
   }
-  int rc = client_->PutParameter(keys.ToVector(), values);
-  std::cerr << "[RDMA-DBG] PutParameter rc=" << rc << std::endl;
-  return rc;
+  return client_->PutParameter(keys.ToVector(), values);
 }
 
 int RDMAPSClientAdapter::UpdateParameter(
@@ -347,7 +334,6 @@ RDMAPSClientAdapter::PrefetchParameter(const base::ConstArray<uint64_t>& keys) {
   prefetches_.emplace(
       prefetch_id,
       PrefetchState{
-          keys.ToVector(),
           buffer,
           rpc_id,
           static_cast<int64_t>(keys.Size()),
