@@ -53,10 +53,9 @@ private:
   };
 
   struct PrefetchState {
-    std::vector<uint64_t> keys;
-    float* buffer         = nullptr;
-    int rpc_id            = -1;
-    int64_t key_count     = 0;
+    float* buffer = nullptr;
+    int rpc_id = -1;
+    int64_t key_count = 0;
     int64_t embedding_dim = 0;
   };
 

@@ -3,7 +3,7 @@ find_package(Torch REQUIRED)
 add_library(recstore_torch_ops SHARED
     op_torch.cc
     ../op.cc
-    ../rdma_ps_client_adapter.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
 )
 
 target_compile_definitions(recstore_torch_ops PRIVATE _GLIBCXX_USE_CXX11_ABI=1)

@@ -157,6 +157,12 @@ RDMA 专项配置位于：
 
 ## 测试入口
 
+### 启动 memcached
+
+```bash
+memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
+```
+
 ### 单分片 integration
 
 ```bash
@@ -285,6 +291,7 @@ printf 'flush_all\r\nset serverNum 0 0 1\r\n0\r\nset clientNum 0 0 1\r\n0\r\nset
 | `src/ps/rdma/base_client.h` | 抽象基类定义 |
 | `src/ps/rdma/petps_client.h` / `.cc` | 单分片客户端实现 |
 | `src/ps/rdma/allshards_ps_client.h` / `.cc` | 多分片路由封装 |
+| `src/ps/rdma/rdma_ps_client_adapter.h` / `.cc` | framework op-layer 的 RDMA 适配器 |
 | `src/ps/rdma/petps_server.cc` | 服务器实现 |
 | `src/ps/rdma/rdma_protocol.h` | 协议编解码 |
 | `src/ps/rdma/rdma_status.h` | 状态码定义 |
