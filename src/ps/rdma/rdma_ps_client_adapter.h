@@ -53,9 +53,9 @@ private:
   };
 
   struct PrefetchState {
-    float* buffer = nullptr;
-    int rpc_id = -1;
-    int64_t key_count = 0;
+    float* buffer         = nullptr;
+    int rpc_id            = -1;
+    int64_t key_count     = 0;
     int64_t embedding_dim = 0;
   };
 
