@@ -163,6 +163,18 @@ RDMA 专项配置位于：
 memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
 ```
 
+`run_petps_integration.py` 的 `--use-local-memcached` 参数控制 memcached
+来源：
+
+| 参数值 | 行为 |
+|--------|------|
+| `never` | 只使用已在 `127.0.0.1:21211` 启动的外部 memcached，推荐用于稳定复现 |
+| `auto` | 先尝试外部 memcached；如果不可用或 reset 失败，则启动系统 `memcached` 二进制 |
+| `always` | 直接启动系统 `memcached` 二进制 |
+
+!!! note
+    `auto` / `always` 依赖机器上已安装真实 `memcached` 命令，不再使用 Python fake memcached。
+
 ### 单分片 integration
 
 ```bash
@@ -213,11 +225,32 @@ ctest --test-dir ./build -R "petps_single_shard_test|petps_multi_shard_test" -VV
 测试验证该配置切换路径：
 
 ```bash
+# 推荐主路径：依赖外部 127.0.0.1:21211 memcached
+ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
+
+# 便利路径：优先复用外部 memcached，失败时自动拉起本地 memcached 二进制
+ctest --test-dir ./build -R "^pytorch_client_test_rdma_auto$" -VV
+```
+
+两个测试均使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
+init、write、read、update 与 prefetch 正确性。
+
+如需手工切换 memcached 策略，也可在运行前设置环境变量：
+
+```bash
+export RECSTORE_USE_LOCAL_MEMCACHED=auto   # 或 always / never
 ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
 ```
 
-该测试使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
-init、write、read、update 与 prefetch 正确性。
+其中：
+
+- `never`：只使用外部 `127.0.0.1:21211` 的 memcached
+- `auto`：优先尝试外部 memcached，失败时自动拉起本地 `memcached` 二进制
+- `always`：直接拉起本地 `memcached` 二进制
+
+!!! note
+    如需最稳定、最可复现的结果，优先使用外部 memcached 配合 `never`。
+    `auto` 更适合作为本地便利模式，而不是主验证路径。
 
 ## 稳定性机制（当前默认行为）
 

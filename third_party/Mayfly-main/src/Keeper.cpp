@@ -1,5 +1,6 @@
 #include "Keeper.h"
 #include "mayfly_config.h"
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <random>
@@ -17,6 +18,30 @@ std::string trim(const std::string &s) {
 
 const char *Keeper::SERVER_NUM_KEY = "serverNum";
 
+static std::pair<std::string, std::string> resolveMemcachedEndpoint() {
+  const char *env_host = std::getenv("RECSTORE_MEMCACHED_HOST");
+  const char *env_port = std::getenv("RECSTORE_MEMCACHED_PORT");
+  if (env_host != nullptr && env_port != nullptr) {
+    std::cout << "[memcached-endpoint] source=env host=" << env_host
+              << " port=" << env_port << std::endl;
+    return {trim(env_host), trim(env_port)};
+  }
+
+  std::ifstream conf(MAYFLY_PATH "/memcached.conf");
+  if (!conf) {
+    fprintf(stderr, "can't open memcached.conf\n");
+    return {"", ""};
+  }
+
+  std::string addr;
+  std::string port;
+  std::getline(conf, addr);
+  std::getline(conf, port);
+  std::cout << "[memcached-endpoint] source=config host=" << trim(addr)
+            << " port=" << trim(port) << std::endl;
+  return {trim(addr), trim(port)};
+}
+
 Keeper::Keeper(uint32_t maxServer)
     : maxServer(maxServer), curServer(0), memc(NULL) {}
 
@@ -30,12 +55,6 @@ bool Keeper::connectMemcached() {
   memcached_server_st *servers = NULL;
   memcached_return rc;
 
-  std::ifstream conf(MAYFLY_PATH "/memcached.conf");
-
-  if (!conf) {
-    fprintf(stderr, "can't open memcached.conf\n");
-    return false;
-  }
   const char *env_p = std::getenv("LC_DEBUG_XMH");
   std::string addr, port;
   if (env_p != nullptr && strcmp(env_p, "LC_DEBUG_XMH") == 0) {
@@ -43,15 +62,16 @@ bool Keeper::connectMemcached() {
     addr = "10.0.2.130";
     port = "21111";
   } else {
-    std::getline(conf, addr);
-    std::getline(conf, port);
-    std::cout << "use memcached in " << trim(addr) << ":" << trim(port)
-              << std::endl;
+    std::tie(addr, port) = resolveMemcachedEndpoint();
+    if (addr.empty() || port.empty()) {
+      return false;
+    }
+    std::cout << "use memcached in " << addr << ":" << port << std::endl;
   }
 
   memc = memcached_create(NULL);
-  servers = memcached_server_list_append(servers, trim(addr).c_str(),
-                                         std::stoi(trim(port)), &rc);
+  servers = memcached_server_list_append(
+      servers, addr.c_str(), std::stoi(port), &rc);
   rc = memcached_server_push(memc, servers);
 
   if (rc != MEMCACHED_SUCCESS) {

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -9,7 +10,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-LOCAL_MEMCACHED_SERVER = REPO_ROOT / "src/test/scripts/local_memcached_server.py"
 
 
 class PetPSClusterRunner:
@@ -60,6 +60,11 @@ class PetPSClusterRunner:
         self.ready = set()
         self.ready_threads = {}
 
+    def _allocate_local_memcached_port(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((self.memcached_host, 0))
+            return sock.getsockname()[1]
+
     def emit_status(self, phase, extra=""):
         running_pids = [
             str(process.pid)
@@ -82,13 +87,23 @@ class PetPSClusterRunner:
         return env
 
     def build_memcached_cmd(self):
+        memcached_bin = shutil.which("memcached")
+        if memcached_bin is None:
+            raise RuntimeError(
+                "memcached binary not found in PATH; install memcached or use "
+                "--use-local-memcached=never with an external memcached "
+                "instance"
+            )
         return [
-            "python3",
-            str(LOCAL_MEMCACHED_SERVER),
-            "--host",
+            memcached_bin,
+            "-u",
+            "root",
+            "-l",
             self.memcached_host,
-            "--port",
+            "-p",
             str(self.memcached_port),
+            "-c",
+            "10000",
         ]
 
     def build_server_cmd(self, global_id):
@@ -128,20 +143,19 @@ class PetPSClusterRunner:
                     self.ready.add(global_id)
 
     def _start_memcached(self):
-        try:
-            self.memcached_process = subprocess.Popen(
-                self.build_memcached_cmd(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=str(REPO_ROOT),
-            )
-        except Exception as exc:
-            if self.use_local_memcached == "always":
-                raise RuntimeError(f"failed to launch local memcached helper: {exc}") from exc
-            self.memcached_process = None
-            return
+        cmd = self.build_memcached_cmd()
+        self.memcached_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=str(REPO_ROOT),
+        )
+        print(
+            f"[petps-memcached] started with pid={self.memcached_process.pid} "
+            f"host={self.memcached_host} port={self.memcached_port}"
+        )
 
         time.sleep(0.2)
         if self.memcached_process.poll() is not None:
@@ -149,13 +163,11 @@ class PetPSClusterRunner:
             if self.memcached_process.stdout is not None:
                 log = self.memcached_process.stdout.read()
             err = (
-                f"local memcached helper exited early with code {self.memcached_process.returncode}"
+                f"memcached exited early with code {self.memcached_process.returncode}"
             )
             if log:
-                err += f"\nhelper output:\n{log}"
-            if self.use_local_memcached == "always":
-                raise RuntimeError(err)
-            self.memcached_process = None
+                err += f"\nmemcached output:\n{log}"
+            raise RuntimeError(err)
 
     def check_memcached_ready(self):
         last_error = None
@@ -235,19 +247,46 @@ class PetPSClusterRunner:
                 f"host={self.memcached_host}:{self.memcached_port}",
             )
 
-    def start(self):
-        if not self.server_path.exists():
-            raise FileNotFoundError(f"Server binary not found: {self.server_path}")
-
+    def _prepare_memcached(self):
         if self.use_local_memcached not in {"always", "auto", "never"}:
             raise ValueError(
                 "use_local_memcached must be one of: always, auto, never"
             )
-        if self.use_local_memcached in {"always", "auto"}:
+
+        if self.use_local_memcached == "always":
             self._start_memcached()
+            self.check_memcached_ready()
+            self.reset_memcached_state()
+            return
+
+        try:
+            self.check_memcached_ready()
+            self.reset_memcached_state()
+            return
+        except RuntimeError:
+            if self.use_local_memcached != "auto":
+                raise
+
+        # Existing memcached may be unreachable or incompatible with the reset
+        # sequence we require. Fall back to a dedicated local memcached
+        # instance on a fresh port.
+        self.memcached_host = "127.0.0.1"
+        self.memcached_port = self._allocate_local_memcached_port()
+        self._start_memcached()
         self.check_memcached_ready()
         self.reset_memcached_state()
+
+    def start(self):
+        if not self.server_path.exists():
+            raise FileNotFoundError(f"Server binary not found: {self.server_path}")
+
+        self._prepare_memcached()
         env = self.build_env()
+        print(
+            "[petps-memcached] server env "
+            f"host={env['RECSTORE_MEMCACHED_HOST']} "
+            f"port={env['RECSTORE_MEMCACHED_PORT']}"
+        )
 
         for global_id in range(self.num_servers):
             process = subprocess.Popen(
@@ -306,6 +345,13 @@ class PetPSClusterRunner:
 
     def run_client(self, argv, client_index=0, stream_output=True, timeout=None):
         cmd = self.build_client_cmd(argv, client_index=client_index)
+        env = self.build_env()
+        print(
+            "[petps-memcached] client env "
+            f"host={env['RECSTORE_MEMCACHED_HOST']} "
+            f"port={env['RECSTORE_MEMCACHED_PORT']} "
+            f"client_index={client_index}"
+        )
         if not stream_output:
             completed = subprocess.run(
                 cmd,
@@ -313,7 +359,7 @@ class PetPSClusterRunner:
                 text=True,
                 capture_output=True,
                 check=False,
-                env=self.build_env(),
+                env=env,
                 timeout=timeout,
             )
             if self.verbose:
@@ -328,7 +374,7 @@ class PetPSClusterRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
-            env=self.build_env(),
+            env=env,
         )
 
         output_lines = []
