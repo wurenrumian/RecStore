@@ -55,7 +55,7 @@ bool CanUseSpdkBackend(std::string* reason) {
 }
 
 bool CanUseIoUring(std::string* reason) {
-  io_uring ring {};
+  io_uring ring{};
   const int ret = io_uring_queue_init(2, &ring, 0);
   if (ret == 0) {
     io_uring_queue_exit(&ring);
@@ -63,14 +63,14 @@ bool CanUseIoUring(std::string* reason) {
   }
   if (reason != nullptr) {
     const int err = -ret;
-    *reason = "io_uring unavailable: " + std::string(std::strerror(err)) +
+    *reason       = "io_uring unavailable: " + std::string(std::strerror(err)) +
               " (errno=" + std::to_string(err) + ")";
   }
   return false;
 }
 
 bool HasRegisteredBackend(const std::string& backend, std::string* reason) {
-  using IOF = base::Factory<IOBackend, const BaseKVConfig&>;
+  using IOF            = base::Factory<IOBackend, const BaseKVConfig&>;
   const auto& creators = IOF::creators();
   if (creators.find(backend) != creators.end())
     return true;
@@ -143,7 +143,7 @@ protected:
     file_path_ = "/tmp/test_io_backend_" + std::to_string(ts) + ".db";
 
     BaseKVConfig config = MakeConfig(backend_, file_path_);
-    using IOF = base::Factory<IOBackend, const BaseKVConfig&>;
+    using IOF           = base::Factory<IOBackend, const BaseKVConfig&>;
     backend_impl_.reset(IOF::NewInstance(backend_, config));
     ASSERT_NE(backend_impl_, nullptr);
     backend_impl_->init();
