@@ -2,7 +2,7 @@ import unittest
 from unittest import mock
 from io import StringIO
 
-from petps_cluster_runner import LOCAL_MEMCACHED_SERVER, PetPSClusterRunner
+from petps_cluster_runner import PetPSClusterRunner
 
 
 class TestPetPSClusterRunner(unittest.TestCase):
@@ -62,34 +62,19 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertEqual(env["RECSTORE_MEMCACHED_PORT"], "12345")
         self.assertEqual(env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"], "1")
 
-    def test_build_memcached_cmd_uses_local_helper(self):
+    @mock.patch("petps_cluster_runner.shutil.which", return_value="/usr/bin/memcached")
+    def test_build_memcached_cmd_uses_system_memcached(self, _mock_which):
         runner = PetPSClusterRunner(memcached_port=12345)
         cmd = runner.build_memcached_cmd()
-        self.assertEqual(cmd[0], "python3")
-        self.assertEqual(cmd[1], str(LOCAL_MEMCACHED_SERVER))
-        self.assertIn("--port", cmd)
+        self.assertEqual(cmd[0], "/usr/bin/memcached")
+        self.assertEqual(cmd[1:5], ["-u", "root", "-l", "127.0.0.1"])
+        self.assertIn("12345", cmd)
 
-    @mock.patch("petps_cluster_runner.socket.create_connection")
-    def test_memcached_preflight_success(self, mock_conn):
-        runner = PetPSClusterRunner(use_local_memcached="never")
-        conn = mock.MagicMock()
-        conn.recv.return_value = b"END\r\n"
-        mock_conn.return_value.__enter__.return_value = conn
-        runner.check_memcached_ready()
-
-    @mock.patch("petps_cluster_runner.socket.create_connection")
-    def test_memcached_preflight_failure_raises(self, mock_conn):
-        runner = PetPSClusterRunner(use_local_memcached="never")
-        mock_conn.side_effect = OSError("refused")
+    @mock.patch("petps_cluster_runner.shutil.which", return_value=None)
+    def test_build_memcached_cmd_requires_system_binary(self, _mock_which):
+        runner = PetPSClusterRunner(memcached_port=12345)
         with self.assertRaises(RuntimeError):
-            runner.check_memcached_ready()
-
-    @mock.patch("petps_cluster_runner.subprocess.Popen")
-    def test_memcached_helper_fallback_to_external(self, mock_popen):
-        runner = PetPSClusterRunner(use_local_memcached="auto")
-        mock_popen.side_effect = PermissionError("Operation not permitted")
-        runner._start_memcached()
-        self.assertIsNone(runner.memcached_process)
+            runner.build_memcached_cmd()
 
     @mock.patch("petps_cluster_runner.socket.create_connection")
     def test_reset_memcached_state_flushes_and_verifies_keys(self, mock_conn):
@@ -114,6 +99,59 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn(b"get serverNum\r\n", sent)
         self.assertIn(b"get clientNum\r\n", sent)
         self.assertIn(b"get xmh-consistent-dsm\r\n", sent)
+
+    def test_auto_memcached_falls_back_to_system_memcached_when_reset_fails(self):
+        runner = PetPSClusterRunner(use_local_memcached="auto")
+        runner.server_path = mock.Mock()
+        runner.server_path.exists.return_value = True
+        runner.startup_delay = 0
+        runner.timeout = 0
+        runner.status_refresh_interval = 0
+
+        fake_proc = mock.Mock()
+        fake_proc.poll.return_value = None
+        fake_proc.pid = 4321
+        fake_thread = mock.Mock()
+
+        with mock.patch.object(runner, "_start_memcached") as mock_start_memcached, \
+             mock.patch.object(runner, "check_memcached_ready"), \
+             mock.patch.object(
+                 runner,
+                 "reset_memcached_state",
+                 side_effect=[RuntimeError("bad reset"), None],
+             ) as mock_reset, \
+             mock.patch.object(
+                 runner, "_allocate_local_memcached_port", return_value=31337
+             ), \
+             mock.patch("petps_cluster_runner.subprocess.Popen", return_value=fake_proc), \
+             mock.patch("petps_cluster_runner.threading.Thread", return_value=fake_thread), \
+             mock.patch.object(runner, "stop"):
+
+            def start_memcached():
+                runner.memcached_process = mock.Mock()
+                runner.memcached_process.poll.return_value = None
+
+            mock_start_memcached.side_effect = start_memcached
+            runner.start()
+
+        self.assertEqual(mock_reset.call_count, 2)
+        self.assertEqual(runner.memcached_port, 31337)
+        self.assertEqual(mock_start_memcached.call_count, 1)
+
+    @mock.patch("petps_cluster_runner.socket.create_connection")
+    def test_memcached_preflight_success(self, mock_conn):
+        runner = PetPSClusterRunner(use_local_memcached="never")
+        conn = mock.MagicMock()
+        conn.recv.return_value = b"END\r\n"
+        mock_conn.return_value.__enter__.return_value = conn
+        runner.check_memcached_ready()
+
+    @mock.patch("petps_cluster_runner.socket.create_connection")
+    def test_memcached_preflight_failure_raises(self, mock_conn):
+        runner = PetPSClusterRunner(use_local_memcached="never")
+        mock_conn.side_effect = OSError("refused")
+        with self.assertRaises(RuntimeError):
+            runner.check_memcached_ready()
 
     def test_emit_status_prints_ready_and_pid_info(self):
         runner = PetPSClusterRunner(num_servers=2)

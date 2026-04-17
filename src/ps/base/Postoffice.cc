@@ -27,6 +27,8 @@ static std::pair<std::string, std::string> ResolveMemcachedEndpoint() {
   const char* env_host = std::getenv("RECSTORE_MEMCACHED_HOST");
   const char* env_port = std::getenv("RECSTORE_MEMCACHED_PORT");
   if (env_host != nullptr && env_port != nullptr) {
+    std::cout << "[memcached-endpoint] source=env host=" << env_host
+              << " port=" << env_port << std::endl;
     return {env_host, env_port};
   }
 
@@ -39,6 +41,8 @@ static std::pair<std::string, std::string> ResolveMemcachedEndpoint() {
   std::string port;
   std::getline(conf, addr);
   std::getline(conf, port);
+  std::cout << "[memcached-endpoint] source=config host=" << trim(addr)
+            << " port=" << trim(port) << std::endl;
   return {trim(addr), trim(port)};
 }
 

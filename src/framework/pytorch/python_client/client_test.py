@@ -6,11 +6,17 @@ import os
 
 _server_runner = None
 TEST_PHASE = os.environ.get("RECSTORE_CLIENT_TEST_PHASE", "full").lower()
+RDMA_MEMCACHED_MODE = os.environ.get("RECSTORE_USE_LOCAL_MEMCACHED", "never").lower()
+
+
+def log(message):
+    print(message, flush=True)
 
 
 def maybe_reexec_for_rdma_flags():
     """Re-exec the Python test process with the same RDMA gflags as standalone clients."""
     if os.environ.get("RECSTORE_RDMA_BOOTSTRAPPED") == "1":
+        log("[op-rdma] RDMA bootstrap already applied")
         return
 
     test_scripts_path = os.path.abspath(
@@ -35,6 +41,7 @@ def maybe_reexec_for_rdma_flags():
 
     new_env = os.environ.copy()
     new_env["RECSTORE_RDMA_BOOTSTRAPPED"] = "1"
+    log(f"[op-rdma] reexec with flags: {' '.join(extra_flags)}")
     os.execve(
         sys.executable,
         [sys.executable, os.path.abspath(__file__), *sys.argv[1:], *extra_flags],
@@ -61,11 +68,17 @@ def start_server_if_needed():
 
     backend = get_backend_type()
     if backend == "RDMA":
+        if RDMA_MEMCACHED_MODE not in ("always", "auto", "never"):
+            raise RuntimeError(
+                "RECSTORE_USE_LOCAL_MEMCACHED must be one of: "
+                "always, auto, never"
+            )
         rdma_config = get_rdma_runner_config()
-        print(f"\n{'='*70}")
-        print("Starting PetPS Server for RDMA Client Tests")
-        print(f"Config path: {os.environ.get('RECSTORE_CONFIG')}")
-        print(f"{'='*70}\n")
+        log(f"\n{'='*70}")
+        log("Starting PetPS Server for RDMA Client Tests")
+        log(f"Config path: {os.environ.get('RECSTORE_CONFIG')}")
+        log(f"Memcached mode: {RDMA_MEMCACHED_MODE}")
+        log(f"{'='*70}\n")
 
         from petps_cluster_runner import PetPSClusterRunner
         _server_runner = PetPSClusterRunner(
@@ -76,9 +89,16 @@ def start_server_if_needed():
             value_size=rdma_config["value_size"],
             max_kv_num_per_request=rdma_config["max_kv_num_per_request"],
             timeout=15,
-            use_local_memcached="never",
+            use_local_memcached=RDMA_MEMCACHED_MODE,
         )
         _server_runner.start()
+        os.environ["RECSTORE_MEMCACHED_HOST"] = _server_runner.memcached_host
+        os.environ["RECSTORE_MEMCACHED_PORT"] = str(_server_runner.memcached_port)
+        os.environ["RECSTORE_MEMCACHED_TEXT_PROTOCOL"] = "1"
+        log(
+            "[op-rdma] effective memcached endpoint "
+            f"{_server_runner.memcached_host}:{_server_runner.memcached_port}"
+        )
         return
     
     skip_server, reason = should_skip_server_start()
@@ -202,16 +222,24 @@ def run_update_tests(client, embedding_dim, values_to_write):
 
 
 if __name__ == "__main__":
+    log(
+        f"[op-rdma] main start phase={TEST_PHASE} "
+        f"memcached_mode={RDMA_MEMCACHED_MODE} argv={sys.argv}"
+    )
     maybe_reexec_for_rdma_flags()
+    log("[op-rdma] before start_server_if_needed()")
     start_server_if_needed()
+    log("[op-rdma] after start_server_if_needed()")
     
     try:
         if len(sys.argv) < 2:
             raise RuntimeError("This script requires the path to the compiled C++ library as an argument.")
         library_path = sys.argv[1]
-        print(f"--- Loading C++ library from: {library_path} ---")
+        log(f"--- Loading C++ library from: {library_path} ---")
 
+        log("[op-rdma] before RecstoreClient(...)")
         client = RecstoreClient(library_path=library_path)
+        log("[op-rdma] after RecstoreClient(...)")
         embedding_dim = 128
 
         values_to_write = run_basic_tests(client, embedding_dim)
