@@ -2,16 +2,19 @@ import unittest
 import os
 import sys
 import argparse
+import json
 import torch
 import importlib.util
 import subprocess
 from importlib.util import find_spec
 
-RECSTORE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..'))
-if RECSTORE_PATH not in sys.path:
-    sys.path.insert(0, RECSTORE_PATH)
+SRC_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..'))
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../../'))
 
-TEST_SCRIPTS_PATH = os.path.join(RECSTORE_PATH, 'test/scripts')
+if SRC_ROOT not in sys.path:
+    sys.path.insert(0, SRC_ROOT)
+
+TEST_SCRIPTS_PATH = os.path.join(SRC_ROOT, 'test/scripts')
 if TEST_SCRIPTS_PATH not in sys.path:
     sys.path.insert(0, TEST_SCRIPTS_PATH)
 
@@ -23,6 +26,43 @@ MP_TEST_MODULE_PATH = os.path.join(os.path.dirname(__file__), 'test_ebc_precisio
 
 _server_runner = None
 _test_result = None
+
+
+def _resolve_repo_config_path():
+    config_path = os.path.join(REPO_ROOT, 'recstore_config.json')
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"recstore_config.json not found at {config_path}")
+    return config_path
+
+
+def _resolve_ps_endpoint(config_path=None):
+    if config_path is None:
+        config_path = _resolve_repo_config_path()
+
+    host = "127.0.0.1"
+    port = 15000
+    with open(config_path, 'r') as f:
+        cdata = json.load(f)
+
+    found = False
+    if "client" in cdata:
+        if "port" in cdata["client"]:
+            port = cdata["client"]["port"]
+            found = True
+        if "host" in cdata["client"]:
+            host = cdata["client"]["host"]
+
+    if not found and "cache_ps" in cdata and "servers" in cdata["cache_ps"]:
+        servers = cdata["cache_ps"]["servers"]
+        if isinstance(servers, list) and len(servers) > 0:
+            p = servers[0].get("port")
+            h = servers[0].get("host")
+            if p is not None:
+                port = p
+            if h is not None:
+                host = h
+
+    return host, port
 
 
 def _has_torchrec():
@@ -241,39 +281,11 @@ class TestEBCPrecision(unittest.TestCase):
         ]
 
         try:
-            port = 15000
-            host = "127.0.0.1"
-            
-            # Determine config file path
-            # Priority: 1. _server_runner used config (if started/managed here)
-            #           2. recstore_config.json in RECSTORE_PATH
-            config_path = os.path.join(RECSTORE_PATH, 'recstore_config.json')
-            
+            config_path = _resolve_repo_config_path()
             if _server_runner and _server_runner.config_path:
-                 config_path = _server_runner.config_path
-            
-            if os.path.exists(config_path):
-                import json
-                with open(config_path, 'r') as f:
-                    cdata = json.load(f)
-                    
-                    # Logic to find port
-                    found = False
-                    if "client" in cdata:
-                        if "port" in cdata["client"]:
-                            port = cdata["client"]["port"]
-                            found = True
-                        if "host" in cdata["client"]:
-                            host = cdata["client"]["host"]
-                    
-                    if not found and "cache_ps" in cdata and "servers" in cdata["cache_ps"]:
-                        servers = cdata["cache_ps"]["servers"]
-                        if isinstance(servers, list) and len(servers) > 0:
-                            p = servers[0].get("port")
-                            h = servers[0].get("host")
-                            if p is not None: port = p
-                            if h is not None: host = h
-            
+                config_path = str(_server_runner.config_path)
+
+            host, port = _resolve_ps_endpoint(config_path)
             cmd.extend(["--ps-host", str(host), "--ps-port", str(port)])
             print(f"  Passed PS Config: {host}:{port}")
 
