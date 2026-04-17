@@ -1,6 +1,8 @@
 #include <condition_variable>
+#include <cstring>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <liburing.h>
 #include <mutex>
 #include <string>
 
@@ -15,11 +17,30 @@ std::string GetDirectIOTestDir() {
       ("test_kv_engine_cceh_" + std::to_string(getpid()));
   return dir.string();
 }
+
+bool CanUseIoUring(std::string* reason) {
+  io_uring ring {};
+  const int ret = io_uring_queue_init(2, &ring, 0);
+  if (ret == 0) {
+    io_uring_queue_exit(&ring);
+    return true;
+  }
+  if (reason != nullptr) {
+    const int err = -ret;
+    *reason = "io_uring unavailable: " + std::string(std::strerror(err)) +
+              " (errno=" + std::to_string(err) + ")";
+  }
+  return false;
+}
 } // namespace
 
 class KVEngineCCEHTest : public ::testing::Test {
 protected:
   void SetUp() override {
+    std::string reason;
+    if (!CanUseIoUring(&reason))
+      GTEST_SKIP() << reason;
+
     test_dir_ = GetDirectIOTestDir();
     std::filesystem::create_directories(test_dir_);
     base::PMMmapRegisterCenter::GetConfig().use_dram = true;

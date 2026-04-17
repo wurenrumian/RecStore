@@ -5,6 +5,7 @@ import argparse
 import torch
 import importlib.util
 import subprocess
+from importlib.util import find_spec
 
 RECSTORE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..'))
 if RECSTORE_PATH not in sys.path:
@@ -22,6 +23,15 @@ MP_TEST_MODULE_PATH = os.path.join(os.path.dirname(__file__), 'test_ebc_precisio
 
 _server_runner = None
 _test_result = None
+
+
+def _has_torchrec():
+    return find_spec("torchrec") is not None
+
+
+def _require_torchrec(testcase):
+    if not _has_torchrec():
+        testcase.skipTest("torchrec is not installed in this test environment")
 
 def _lazy_import_test_module():
     """Lazy import test_ebc_precision to avoid module-level torchrec imports"""
@@ -115,6 +125,7 @@ def tearDownModule():
 
 class TestEBCPrecision(unittest.TestCase):
     def test_basic_precision_cpu(self):
+        _require_torchrec(self)
         print("\n" + "="*70)
         print("Running Basic EBC Precision Test (CPU)")
         print("="*70)
@@ -150,6 +161,7 @@ class TestEBCPrecision(unittest.TestCase):
             traceback.print_exc()
     
     def test_small_batch_precision(self):
+        _require_torchrec(self)
         print("\n" + "="*70)
         print("Running Small Batch EBC Precision Test (CPU)")
         print("="*70)
@@ -179,6 +191,7 @@ class TestEBCPrecision(unittest.TestCase):
     
     @unittest.skipIf(not torch.cuda.is_available(), "CUDA not available")
     def test_cuda_precision(self):
+        _require_torchrec(self)
         print("\n" + "="*70)
         print("Running CUDA EBC Precision Test")
         print("="*70)
@@ -209,6 +222,7 @@ class TestEBCPrecision(unittest.TestCase):
             self.fail(f"CUDA precision test raised unexpected exception: {type(e).__name__}: {e}")
 
     def test_multiprocess_precision(self):
+        _require_torchrec(self)
         print("\n" + "="*70)
         print("Running Multiprocess EBC Precision Test (Subprocess)")
         print("="*70)

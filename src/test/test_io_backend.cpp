@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <liburing.h>
 #include <memory>
 #include <string>
 #include <sstream>
@@ -53,6 +54,31 @@ bool CanUseSpdkBackend(std::string* reason) {
   return true;
 }
 
+bool CanUseIoUring(std::string* reason) {
+  io_uring ring {};
+  const int ret = io_uring_queue_init(2, &ring, 0);
+  if (ret == 0) {
+    io_uring_queue_exit(&ring);
+    return true;
+  }
+  if (reason != nullptr) {
+    const int err = -ret;
+    *reason = "io_uring unavailable: " + std::string(std::strerror(err)) +
+              " (errno=" + std::to_string(err) + ")";
+  }
+  return false;
+}
+
+bool HasRegisteredBackend(const std::string& backend, std::string* reason) {
+  using IOF = base::Factory<IOBackend, const BaseKVConfig&>;
+  const auto& creators = IOF::creators();
+  if (creators.find(backend) != creators.end())
+    return true;
+  if (reason != nullptr)
+    *reason = "backend factory is not registered for " + backend;
+  return false;
+}
+
 std::string ResolveBackendFromEnv() {
   const char* raw_backend = std::getenv("RECSTORE_IO_BACKEND");
   if (raw_backend == nullptr || std::string(raw_backend).empty())
@@ -100,6 +126,16 @@ protected:
       }
     }
 
+    if (backend_ == "IOURING") {
+      std::string io_uring_unavailable_reason;
+      if (!CanUseIoUring(&io_uring_unavailable_reason))
+        GTEST_SKIP() << io_uring_unavailable_reason;
+    }
+
+    std::string backend_registration_reason;
+    if (!HasRegisteredBackend(backend_, &backend_registration_reason))
+      GTEST_SKIP() << backend_registration_reason;
+
     const auto ts =
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch())
@@ -107,7 +143,7 @@ protected:
     file_path_ = "/tmp/test_io_backend_" + std::to_string(ts) + ".db";
 
     BaseKVConfig config = MakeConfig(backend_, file_path_);
-    using IOF           = base::Factory<IOBackend, const BaseKVConfig&>;
+    using IOF = base::Factory<IOBackend, const BaseKVConfig&>;
     backend_impl_.reset(IOF::NewInstance(backend_, config));
     ASSERT_NE(backend_impl_, nullptr);
     backend_impl_->init();
