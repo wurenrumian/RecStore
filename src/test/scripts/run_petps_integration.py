@@ -10,10 +10,27 @@ from ps_test_config import (
 )
 
 MAX_TIMEOUT_SECONDS = 15
+MEMCACHED_NOISE_PATTERNS = (
+    "[petps-memcached]",
+    "[petps-status] phase=memcached",
+    "[memcached-endpoint]",
+    "use memcached in ",
+)
 
 
 def normalize_timeout(timeout_seconds):
     return min(timeout_seconds, MAX_TIMEOUT_SECONDS)
+
+
+def is_memcached_noise_line(line):
+    return any(pattern in line for pattern in MEMCACHED_NOISE_PATTERNS)
+
+
+def print_filtered_output(text, show_runner_logs):
+    for line in text.splitlines():
+        if not show_runner_logs and is_memcached_noise_line(line):
+            continue
+        print(line)
 
 
 def main():
@@ -35,6 +52,11 @@ def main():
     )
     parser.add_argument("--memcached-host", default="127.0.0.1")
     parser.add_argument("--memcached-port", type=int, default=21211)
+    parser.add_argument(
+        "--show-runner-logs",
+        action="store_true",
+        help="show memcached/status logs from runner and integration binary",
+    )
     args = parser.parse_args()
     config_path = resolve_rdma_integration_config(args.server_count, args.config_path)
     client_timeout = normalize_timeout(args.client_timeout)
@@ -52,13 +74,18 @@ def main():
         memcached_port=args.memcached_port,
         timeout=cluster_timeout,
         status_refresh_interval=args.status_refresh_interval,
+        show_status_logs=args.show_runner_logs,
+        show_memcached_logs=args.show_runner_logs,
     )
 
     with runner.run():
         completed = runner.run_client(
             [args.test_binary, f"--gtest_filter={args.gtest_filter}"],
             timeout=client_timeout,
+            stream_output=False,
         )
+        print_filtered_output(completed.stdout, args.show_runner_logs)
+        print_filtered_output(completed.stderr, args.show_runner_logs)
     return completed.returncode
 
 

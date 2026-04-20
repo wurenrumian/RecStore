@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+from petps_cluster_runner import PetPSClusterRunner
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def resolve_repo_path(path):
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = (REPO_ROOT / resolved).resolve()
+    return resolved
+
+
+def infer_server_count(config_path):
+    with resolve_repo_path(config_path).open() as fh:
+        config = json.load(fh)
+    distributed = config.get("distributed_client", {})
+    cache_ps = config.get("cache_ps", {})
+    return (
+        distributed.get("num_shards")
+        or cache_ps.get("num_shards")
+        or len(distributed.get("servers", []))
+        or len(cache_ps.get("servers", []))
+        or 1
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run RDMA petps_server cluster with integrated memcached lifecycle. "
+            "Designed to align with ps_server-style config_path startup."
+        )
+    )
+    parser.add_argument("--config-path", required=True)
+    parser.add_argument("--server-count", type=int)
+    parser.add_argument("--client-count", type=int, default=1)
+    parser.add_argument("--thread-num", type=int, default=1)
+    parser.add_argument("--value-size", type=int, default=16)
+    parser.add_argument("--max-kv-num-per-request", type=int, default=64)
+    parser.add_argument(
+        "--use-local-memcached",
+        choices=["always", "auto", "never"],
+        default="auto",
+    )
+    parser.add_argument("--memcached-host", default="127.0.0.1")
+    parser.add_argument("--memcached-port", type=int, default=21211)
+    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument(
+        "--show-runner-logs",
+        action="store_true",
+        help="show memcached/status logs from PetPSClusterRunner",
+    )
+    args = parser.parse_args()
+
+    server_count = args.server_count or infer_server_count(args.config_path)
+    runner = PetPSClusterRunner(
+        config_path=args.config_path,
+        num_servers=server_count,
+        num_clients=args.client_count,
+        thread_num=args.thread_num,
+        value_size=args.value_size,
+        max_kv_num_per_request=args.max_kv_num_per_request,
+        use_local_memcached=args.use_local_memcached,
+        memcached_host=args.memcached_host,
+        memcached_port=args.memcached_port,
+        timeout=args.timeout,
+        show_status_logs=args.show_runner_logs,
+        show_memcached_logs=args.show_runner_logs,
+    )
+
+    print(
+        f"[petps-launch] config={args.config_path} servers={server_count} "
+        f"clients={args.client_count} memcached_mode={args.use_local_memcached}"
+    )
+    runner.start()
+    print("[petps-launch] petps server cluster is running. Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n[petps-launch] stopping petps server cluster...")
+    finally:
+        runner.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

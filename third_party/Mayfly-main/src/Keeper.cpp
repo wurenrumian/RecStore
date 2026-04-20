@@ -43,7 +43,12 @@ static std::pair<std::string, std::string> resolveMemcachedEndpoint() {
 }
 
 Keeper::Keeper(uint32_t maxServer)
-    : maxServer(maxServer), curServer(0), memc(NULL) {}
+    : maxServer(maxServer), curServer(0), memc(NULL) {
+  const char *env_namespace = std::getenv("RECSTORE_MEMCACHED_NAMESPACE");
+  if (env_namespace != nullptr) {
+    memcached_namespace = trim(env_namespace);
+  }
+}
 
 Keeper::~Keeper() {
   //   listener.detach();
@@ -95,10 +100,11 @@ bool Keeper::disconnectMemcached() {
 void Keeper::serverEnter(int globalID) {
   memcached_return rc;
   uint64_t serverNum;
+  const std::string server_num_key = NamespacedKey(SERVER_NUM_KEY);
   if (globalID == -1) {
     while (true) {
-      rc = memcached_increment(memc, SERVER_NUM_KEY, strlen(SERVER_NUM_KEY), 1,
-                               &serverNum);
+      rc = memcached_increment(
+          memc, server_num_key.c_str(), server_num_key.size(), 1, &serverNum);
       if (rc == MEMCACHED_SUCCESS) {
 
         myNodeID = serverNum - 1;
@@ -121,8 +127,8 @@ void Keeper::serverEnter(int globalID) {
         break;
     }
     while (true) {
-      rc = memcached_increment(memc, SERVER_NUM_KEY, strlen(SERVER_NUM_KEY), 1,
-                               &serverNum);
+      rc = memcached_increment(
+          memc, server_num_key.c_str(), server_num_key.size(), 1, &serverNum);
       if (rc == MEMCACHED_SUCCESS) {
 
         myNodeID = serverNum - 1;
@@ -146,11 +152,16 @@ void Keeper::serverConnect() {
   size_t l;
   uint32_t flags;
   memcached_return rc;
+  const std::string server_num_key = NamespacedKey(SERVER_NUM_KEY);
 
   while (curServer < maxServer) {
     // std::cout << "poll in server connect";
-    char *serverNumStr = memcached_get(memc, SERVER_NUM_KEY,
-                                       strlen(SERVER_NUM_KEY), &l, &flags, &rc);
+    char *serverNumStr = memcached_get(memc,
+                                       server_num_key.c_str(),
+                                       server_num_key.size(),
+                                       &l,
+                                       &flags,
+                                       &rc);
     if (rc != MEMCACHED_SUCCESS) {
       fprintf(stderr, "Server %d Counld't get serverNum: %s, retry\n", myNodeID,
               memcached_strerror(memc, rc));
@@ -172,10 +183,17 @@ void Keeper::serverConnect() {
 
 void Keeper::memSet(const char *key, uint32_t klen, const char *val,
                     uint32_t vlen) {
+  const std::string namespaced_key = NamespacedKey(std::string(key, klen));
 
   memcached_return rc;
   while (true) {
-    rc = memcached_set(memc, key, klen, val, vlen, (time_t)0, (uint32_t)0);
+    rc = memcached_set(memc,
+                       namespaced_key.c_str(),
+                       namespaced_key.size(),
+                       val,
+                       vlen,
+                       (time_t)0,
+                       (uint32_t)0);
     if (rc == MEMCACHED_SUCCESS) {
       break;
     }
@@ -184,6 +202,7 @@ void Keeper::memSet(const char *key, uint32_t klen, const char *val,
 }
 
 char *Keeper::memGet(const char *key, uint32_t klen, size_t *v_size) {
+  const std::string namespaced_key = NamespacedKey(std::string(key, klen));
 
   size_t l;
   char *res;
@@ -192,7 +211,12 @@ char *Keeper::memGet(const char *key, uint32_t klen, size_t *v_size) {
 
   while (true) {
 
-    res = memcached_get(memc, key, klen, &l, &flags, &rc);
+    res = memcached_get(memc,
+                        namespaced_key.c_str(),
+                        namespaced_key.size(),
+                        &l,
+                        &flags,
+                        &rc);
     if (rc == MEMCACHED_SUCCESS) {
       break;
     }
@@ -207,12 +231,21 @@ char *Keeper::memGet(const char *key, uint32_t klen, size_t *v_size) {
 }
 
 uint64_t Keeper::memFetchAndAdd(const char *key, uint32_t klen) {
+  const std::string namespaced_key = NamespacedKey(std::string(key, klen));
   uint64_t res;
   while (true) {
-    memcached_return rc = memcached_increment(memc, key, klen, 1, &res);
+    memcached_return rc = memcached_increment(
+        memc, namespaced_key.c_str(), namespaced_key.size(), 1, &res);
     if (rc == MEMCACHED_SUCCESS) {
       return res;
     }
     // usleep(10000);
   }
+}
+
+std::string Keeper::NamespacedKey(const std::string &key) const {
+  if (memcached_namespace.empty()) {
+    return key;
+  }
+  return memcached_namespace + ":" + key;
 }

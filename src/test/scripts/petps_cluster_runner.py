@@ -32,6 +32,9 @@ class PetPSClusterRunner:
         memcached_check_timeout=2.0,
         memcached_check_retries=3,
         status_refresh_interval=2.0,
+        show_status_logs=True,
+        show_memcached_logs=True,
+        memcached_namespace="auto",
     ):
         self.server_path = Path(server_path)
         if not self.server_path.is_absolute():
@@ -55,6 +58,11 @@ class PetPSClusterRunner:
         self.memcached_check_timeout = memcached_check_timeout
         self.memcached_check_retries = memcached_check_retries
         self.status_refresh_interval = status_refresh_interval
+        self.show_status_logs = show_status_logs
+        self.show_memcached_logs = show_memcached_logs
+        if memcached_namespace == "auto":
+            memcached_namespace = f"recstore-{os.getpid()}-{time.time_ns()}"
+        self.memcached_namespace = memcached_namespace
         self.processes = []
         self.memcached_process = None
         self.ready = set()
@@ -66,6 +74,8 @@ class PetPSClusterRunner:
             return sock.getsockname()[1]
 
     def emit_status(self, phase, extra=""):
+        if not self.show_status_logs:
+            return
         running_pids = [
             str(process.pid)
             for process, _thread in self.processes
@@ -84,6 +94,8 @@ class PetPSClusterRunner:
         env["RECSTORE_MEMCACHED_HOST"] = self.memcached_host
         env["RECSTORE_MEMCACHED_PORT"] = str(self.memcached_port)
         env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"] = "1"
+        if self.memcached_namespace:
+            env["RECSTORE_MEMCACHED_NAMESPACE"] = self.memcached_namespace
         return env
 
     def build_memcached_cmd(self):
@@ -152,10 +164,11 @@ class PetPSClusterRunner:
             bufsize=1,
             cwd=str(REPO_ROOT),
         )
-        print(
-            f"[petps-memcached] started with pid={self.memcached_process.pid} "
-            f"host={self.memcached_host} port={self.memcached_port}"
-        )
+        if self.show_memcached_logs:
+            print(
+                f"[petps-memcached] started with pid={self.memcached_process.pid} "
+                f"host={self.memcached_host} port={self.memcached_port}"
+            )
 
         time.sleep(0.2)
         if self.memcached_process.poll() is not None:
@@ -206,16 +219,34 @@ class PetPSClusterRunner:
         ) from last_error
 
     def reset_memcached_state(self):
-        payload = (
-            b"flush_all\r\n"
-            b"set serverNum 0 0 1\r\n0\r\n"
-            b"set clientNum 0 0 1\r\n0\r\n"
-            b"set xmh-consistent-dsm 0 0 1\r\n1\r\n"
-            b"get serverNum\r\n"
-            b"get clientNum\r\n"
-            b"get xmh-consistent-dsm\r\n"
-            b"quit\r\n"
+        def key(name):
+            if self.memcached_namespace:
+                return f"{self.memcached_namespace}:{name}"
+            return name
+
+        server_num_key = key("serverNum")
+        client_num_key = key("clientNum")
+        dsm_key = key("xmh-consistent-dsm")
+
+        payload_lines = []
+        # Namespace mode isolates keys per run, so no global flush_all is needed.
+        if not self.memcached_namespace:
+            payload_lines.append("flush_all")
+        payload_lines.extend(
+            [
+                f"set {server_num_key} 0 0 1",
+                "0",
+                f"set {client_num_key} 0 0 1",
+                "0",
+                f"set {dsm_key} 0 0 1",
+                "1",
+                f"get {server_num_key}",
+                f"get {client_num_key}",
+                f"get {dsm_key}",
+                "quit",
+            ]
         )
+        payload = ("\r\n".join(payload_lines) + "\r\n").encode("ascii")
         with socket.create_connection(
             (self.memcached_host, self.memcached_port),
             timeout=self.memcached_check_timeout,
@@ -232,11 +263,14 @@ class PetPSClusterRunner:
                     break
                 response += chunk
             if (
-                b"OK\r\n" not in response
+                (not self.memcached_namespace and b"OK\r\n" not in response)
                 or response.count(b"STORED\r\n") < 3
-                or b"VALUE serverNum 0 1\r\n0\r\n" not in response
-                or b"VALUE clientNum 0 1\r\n0\r\n" not in response
-                or b"VALUE xmh-consistent-dsm 0 1\r\n1\r\n" not in response
+                or f"VALUE {server_num_key} 0 1\r\n0\r\n".encode("ascii")
+                not in response
+                or f"VALUE {client_num_key} 0 1\r\n0\r\n".encode("ascii")
+                not in response
+                or f"VALUE {dsm_key} 0 1\r\n1\r\n".encode("ascii")
+                not in response
             ):
                 raise RuntimeError(
                     "failed to initialize memcached state; "
@@ -268,11 +302,23 @@ class PetPSClusterRunner:
                 raise
 
         # Existing memcached may be unreachable or incompatible with the reset
-        # sequence we require. Fall back to a dedicated local memcached
-        # instance on a fresh port.
+        # sequence we require. In auto mode, prefer starting local memcached on
+        # the requested endpoint (typically 127.0.0.1:21211) so legacy code
+        # paths that still read memcached.conf continue to work.
         self.memcached_host = "127.0.0.1"
-        self.memcached_port = self._allocate_local_memcached_port()
-        self._start_memcached()
+        requested_port = self.memcached_port
+        try:
+            self._start_memcached()
+        except RuntimeError:
+            self.memcached_port = self._allocate_local_memcached_port()
+            self.emit_status(
+                "memcached-auto-port-fallback",
+                (
+                    f"requested={self.memcached_host}:{requested_port} "
+                    f"fallback={self.memcached_host}:{self.memcached_port}"
+                ),
+            )
+            self._start_memcached()
         self.check_memcached_ready()
         self.reset_memcached_state()
 
@@ -282,11 +328,12 @@ class PetPSClusterRunner:
 
         self._prepare_memcached()
         env = self.build_env()
-        print(
-            "[petps-memcached] server env "
-            f"host={env['RECSTORE_MEMCACHED_HOST']} "
-            f"port={env['RECSTORE_MEMCACHED_PORT']}"
-        )
+        if self.show_memcached_logs:
+            print(
+                "[petps-memcached] server env "
+                f"host={env['RECSTORE_MEMCACHED_HOST']} "
+                f"port={env['RECSTORE_MEMCACHED_PORT']}"
+            )
 
         for global_id in range(self.num_servers):
             process = subprocess.Popen(
@@ -346,12 +393,13 @@ class PetPSClusterRunner:
     def run_client(self, argv, client_index=0, stream_output=True, timeout=None):
         cmd = self.build_client_cmd(argv, client_index=client_index)
         env = self.build_env()
-        print(
-            "[petps-memcached] client env "
-            f"host={env['RECSTORE_MEMCACHED_HOST']} "
-            f"port={env['RECSTORE_MEMCACHED_PORT']} "
-            f"client_index={client_index}"
-        )
+        if self.show_memcached_logs:
+            print(
+                "[petps-memcached] client env "
+                f"host={env['RECSTORE_MEMCACHED_HOST']} "
+                f"port={env['RECSTORE_MEMCACHED_PORT']} "
+                f"client_index={client_index}"
+            )
         if not stream_output:
             completed = subprocess.run(
                 cmd,

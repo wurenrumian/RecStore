@@ -157,6 +157,11 @@ RDMA 专项配置位于：
 
 ## 测试入口
 
+!!! note
+    本节命令默认在仓库根目录执行（`/app/RecStore`）。
+    如果当前目录是 `build/`，请将脚本路径改为 `../src/test/scripts/...`，
+    并将二进制路径改为 `./bin/...`。
+
 ### 启动 memcached
 
 ```bash
@@ -174,6 +179,28 @@ memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
 
 !!! note
     `auto` / `always` 依赖机器上已安装真实 `memcached` 命令，不再使用 Python fake memcached。
+    `run_petps_integration.py` 与 `run_rdma_transport_benchmarks.py` 默认会隐藏
+    memcached 相关噪音日志；如需查看完整 runner 日志可追加
+    `--show-runner-logs`。
+    实际使用中建议优先使用 `--use-local-memcached=auto`，让脚本统一管理
+    memcached 生命周期并减少环境差异。
+
+### RDMA Server 启动（推荐）
+
+为降低 `petps_server` 直接启动时的参数复杂度（`global_id` /
+`num_server_processes` / `num_client_processes` 等），推荐使用：
+
+```bash
+python3 src/test/scripts/run_petps_server.py \
+  --config-path ./src/test/configs/recstore_config.rdma_test.json \
+  --use-local-memcached=auto
+```
+
+该入口会：
+
+- 根据配置推断 `server-count`（也可显式传 `--server-count`）
+- 自动注入 RDMA 所需运行参数
+- 统一处理 memcached（`auto/always/never`）
 
 ### 单分片 integration
 
@@ -184,7 +211,7 @@ python3 src/test/scripts/run_petps_integration.py \
   --test-binary ./build/bin/petps_integration_test \
   --gtest-filter=PetPSIntegrationTest.PutGetRoundTripSingleShard:PetPSIntegrationTest.MissingKeysReturnZeroSlots \
   --client-timeout 15 \
-  --use-local-memcached=never
+  --use-local-memcached=auto
 ```
 
 ### 多分片 integration
@@ -195,8 +222,8 @@ python3 src/test/scripts/run_petps_integration.py \
   --config-path ./src/test/configs/recstore_config.rdma_multishard_test.json \
   --test-binary ./build/bin/petps_integration_test \
   --gtest-filter=PetPSIntegrationTest.PutGetRoundTripMultiShard \
-  --client-timeout 15 \
-  --use-local-memcached=never
+  --client-timeout 20 \
+  --use-local-memcached=auto
 ```
 
 ### transport benchmark
@@ -204,6 +231,9 @@ python3 src/test/scripts/run_petps_integration.py \
 ```bash
 python3 src/test/scripts/run_rdma_transport_benchmarks.py \
   --benchmark-binary ./build/bin/ps_transport_benchmark \
+  --iterations 20 \
+  --rounds 50 \
+  --rdma-warmup-rounds 5 \
   --use-local-memcached=auto
 ```
 
@@ -225,10 +255,6 @@ ctest --test-dir ./build -R "petps_single_shard_test|petps_multi_shard_test" -VV
 测试验证该配置切换路径：
 
 ```bash
-# 推荐主路径：依赖外部 127.0.0.1:21211 memcached
-ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
-
-# 便利路径：优先复用外部 memcached，失败时自动拉起本地 memcached 二进制
 ctest --test-dir ./build -R "^pytorch_client_test_rdma_auto$" -VV
 ```
 

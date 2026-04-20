@@ -58,6 +58,10 @@ XPostoffice::XPostoffice() {
 
   CHECK(init_ == false);
   init_ = true;
+  const char* namespace_env = std::getenv("RECSTORE_MEMCACHED_NAMESPACE");
+  if (namespace_env != nullptr) {
+    memcached_namespace_ = trim(namespace_env);
+  }
 
   global_id_ = g_id;
   if (0 <= g_id && g_id < num_servers_) {
@@ -76,12 +80,14 @@ XPostoffice::XPostoffice() {
 }
 
 std::string XPostoffice::MemCachedGet(const std::string& key) {
+  const std::string namespaced = NamespacedKey(key);
   size_t l;
   uint32_t flags;
   memcached_return rc;
   char* res;
   while (true) {
-    res = memcached_get(memc_, key.c_str(), key.size(), &l, &flags, &rc);
+    res = memcached_get(
+        memc_, namespaced.c_str(), namespaced.size(), &l, &flags, &rc);
     if (rc == MEMCACHED_SUCCESS) {
       break;
     }
@@ -93,10 +99,12 @@ std::string XPostoffice::MemCachedGet(const std::string& key) {
 }
 
 bool XPostoffice::MemCachedTryGet(const std::string& key, std::string* value) {
+  const std::string namespaced = NamespacedKey(key);
   size_t l;
   uint32_t flags;
   memcached_return rc;
-  char* res = memcached_get(memc_, key.c_str(), key.size(), &l, &flags, &rc);
+  char* res = memcached_get(
+      memc_, namespaced.c_str(), namespaced.size(), &l, &flags, &rc);
   if (rc != MEMCACHED_SUCCESS) {
     return false;
   }
@@ -109,12 +117,13 @@ bool XPostoffice::MemCachedTryGet(const std::string& key, std::string* value) {
 
 void XPostoffice::MemCachedSet(const std::string& key,
                                const std::string& value) {
+  const std::string namespaced = NamespacedKey(key);
   memcached_return rc;
   while (true) {
     rc = memcached_set(
         memc_,
-        key.c_str(),
-        key.size(),
+        namespaced.c_str(),
+        namespaced.size(),
         value.c_str(),
         value.size(),
         (time_t)0,
@@ -124,6 +133,13 @@ void XPostoffice::MemCachedSet(const std::string& key,
     }
     usleep(400);
   }
+}
+
+std::string XPostoffice::NamespacedKey(const std::string& key) const {
+  if (memcached_namespace_.empty()) {
+    return key;
+  }
+  return memcached_namespace_ + ":" + key;
 }
 
 void XPostoffice::ConnectMemcached() {

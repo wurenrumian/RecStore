@@ -19,6 +19,7 @@ class TestRunRDMATransportBenchmarks(unittest.TestCase):
             use_local_memcached="never",
             memcached_host="127.0.0.1",
             memcached_port=21211,
+            show_runner_logs=False,
         )
 
         runner = build_rdma_runner(args)

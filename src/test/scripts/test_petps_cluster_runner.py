@@ -1,6 +1,10 @@
 import unittest
 from unittest import mock
 from io import StringIO
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from petps_cluster_runner import PetPSClusterRunner
 
@@ -56,11 +60,17 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn("--num_client_processes=1", cmd)
 
     def test_build_env_includes_local_memcached_override(self):
-        runner = PetPSClusterRunner(num_servers=2, num_clients=1, memcached_port=12345)
+        runner = PetPSClusterRunner(
+            num_servers=2,
+            num_clients=1,
+            memcached_port=12345,
+            memcached_namespace="test-namespace",
+        )
         env = runner.build_env()
         self.assertEqual(env["RECSTORE_MEMCACHED_HOST"], "127.0.0.1")
         self.assertEqual(env["RECSTORE_MEMCACHED_PORT"], "12345")
         self.assertEqual(env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"], "1")
+        self.assertEqual(env["RECSTORE_MEMCACHED_NAMESPACE"], "test-namespace")
 
     @mock.patch("petps_cluster_runner.shutil.which", return_value="/usr/bin/memcached")
     def test_build_memcached_cmd_uses_system_memcached(self, _mock_which):
@@ -78,7 +88,7 @@ class TestPetPSClusterRunner(unittest.TestCase):
 
     @mock.patch("petps_cluster_runner.socket.create_connection")
     def test_reset_memcached_state_flushes_and_verifies_keys(self, mock_conn):
-        runner = PetPSClusterRunner(use_local_memcached="never")
+        runner = PetPSClusterRunner(use_local_memcached="never", memcached_namespace="")
         conn = mock.MagicMock()
         conn.recv.side_effect = [
             (
@@ -100,7 +110,33 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn(b"get clientNum\r\n", sent)
         self.assertIn(b"get xmh-consistent-dsm\r\n", sent)
 
-    def test_auto_memcached_falls_back_to_system_memcached_when_reset_fails(self):
+    @mock.patch("petps_cluster_runner.socket.create_connection")
+    def test_reset_memcached_state_uses_namespaced_keys_without_global_flush(self, mock_conn):
+        runner = PetPSClusterRunner(
+            use_local_memcached="never",
+            memcached_namespace="bench-1",
+        )
+        conn = mock.MagicMock()
+        conn.recv.side_effect = [
+            (
+                b"STORED\r\nSTORED\r\nSTORED\r\n"
+                b"VALUE bench-1:serverNum 0 1\r\n0\r\nEND\r\n"
+                b"VALUE bench-1:clientNum 0 1\r\n0\r\nEND\r\n"
+                b"VALUE bench-1:xmh-consistent-dsm 0 1\r\n1\r\nEND\r\n"
+            ),
+            b"",
+        ]
+        mock_conn.return_value.__enter__.return_value = conn
+
+        runner.reset_memcached_state()
+
+        sent = b"".join(call.args[0] for call in conn.sendall.call_args_list)
+        self.assertNotIn(b"flush_all\r\n", sent)
+        self.assertIn(b"set bench-1:serverNum 0 0 1\r\n0\r\n", sent)
+        self.assertIn(b"set bench-1:clientNum 0 0 1\r\n0\r\n", sent)
+        self.assertIn(b"set bench-1:xmh-consistent-dsm 0 0 1\r\n1\r\n", sent)
+
+    def test_auto_memcached_reuses_requested_port_when_reset_fails(self):
         runner = PetPSClusterRunner(use_local_memcached="auto")
         runner.server_path = mock.Mock()
         runner.server_path.exists.return_value = True
@@ -120,9 +156,6 @@ class TestPetPSClusterRunner(unittest.TestCase):
                  "reset_memcached_state",
                  side_effect=[RuntimeError("bad reset"), None],
              ) as mock_reset, \
-             mock.patch.object(
-                 runner, "_allocate_local_memcached_port", return_value=31337
-             ), \
              mock.patch("petps_cluster_runner.subprocess.Popen", return_value=fake_proc), \
              mock.patch("petps_cluster_runner.threading.Thread", return_value=fake_thread), \
              mock.patch.object(runner, "stop"):
@@ -135,8 +168,55 @@ class TestPetPSClusterRunner(unittest.TestCase):
             runner.start()
 
         self.assertEqual(mock_reset.call_count, 2)
-        self.assertEqual(runner.memcached_port, 31337)
+        self.assertEqual(runner.memcached_port, 21211)
         self.assertEqual(mock_start_memcached.call_count, 1)
+
+    def test_auto_memcached_falls_back_to_fresh_port_when_requested_port_busy(self):
+        runner = PetPSClusterRunner(use_local_memcached="auto")
+        runner.server_path = mock.Mock()
+        runner.server_path.exists.return_value = True
+        runner.startup_delay = 0
+        runner.timeout = 0
+        runner.status_refresh_interval = 0
+
+        fake_proc = mock.Mock()
+        fake_proc.poll.return_value = None
+        fake_proc.pid = 4321
+        fake_thread = mock.Mock()
+
+        with mock.patch.object(runner, "check_memcached_ready"), \
+             mock.patch.object(
+                 runner,
+                 "reset_memcached_state",
+                 side_effect=[RuntimeError("bad reset"), None],
+             ) as mock_reset, \
+             mock.patch.object(
+                 runner, "_allocate_local_memcached_port", return_value=31337
+             ), \
+             mock.patch("petps_cluster_runner.subprocess.Popen", return_value=fake_proc), \
+             mock.patch("petps_cluster_runner.threading.Thread", return_value=fake_thread), \
+             mock.patch.object(runner, "stop"), \
+             mock.patch.object(runner, "emit_status") as mock_emit_status:
+
+            start_attempts = {"count": 0}
+
+            def start_memcached():
+                start_attempts["count"] += 1
+                if start_attempts["count"] == 1:
+                    raise RuntimeError("port already in use")
+                runner.memcached_process = mock.Mock()
+                runner.memcached_process.poll.return_value = None
+
+            with mock.patch.object(runner, "_start_memcached", side_effect=start_memcached):
+                runner.start()
+
+        self.assertEqual(mock_reset.call_count, 2)
+        self.assertEqual(runner.memcached_port, 31337)
+        self.assertEqual(start_attempts["count"], 2)
+        mock_emit_status.assert_any_call(
+            "memcached-auto-port-fallback",
+            "requested=127.0.0.1:21211 fallback=127.0.0.1:31337",
+        )
 
     @mock.patch("petps_cluster_runner.socket.create_connection")
     def test_memcached_preflight_success(self, mock_conn):

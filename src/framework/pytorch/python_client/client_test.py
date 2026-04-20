@@ -95,6 +95,10 @@ def start_server_if_needed():
         os.environ["RECSTORE_MEMCACHED_HOST"] = _server_runner.memcached_host
         os.environ["RECSTORE_MEMCACHED_PORT"] = str(_server_runner.memcached_port)
         os.environ["RECSTORE_MEMCACHED_TEXT_PROTOCOL"] = "1"
+        if getattr(_server_runner, "memcached_namespace", ""):
+            os.environ["RECSTORE_MEMCACHED_NAMESPACE"] = (
+                _server_runner.memcached_namespace
+            )
         log(
             "[op-rdma] effective memcached endpoint "
             f"{_server_runner.memcached_host}:{_server_runner.memcached_port}"
