@@ -173,8 +173,8 @@ memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
 
 | 参数值 | 行为 |
 |--------|------|
-| `never` | 只使用已在 `127.0.0.1:21211` 启动的外部 memcached，推荐用于稳定复现 |
-| `auto` | 先尝试外部 memcached；如果不可用或 reset 失败，则启动系统 `memcached` 二进制 |
+| `auto` | 先尝试外部 memcached；如果不可用或 reset 失败，则启动系统 `memcached` 二进制（推荐默认模式） |
+| `never` | 只使用已在 `127.0.0.1:21211` 启动的外部 memcached，适用于你需要严格绑定外部 memcached 的场景 |
 | `always` | 直接启动系统 `memcached` 二进制 |
 
 !!! note
@@ -270,13 +270,10 @@ ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
 
 其中：
 
-- `never`：只使用外部 `127.0.0.1:21211` 的 memcached
 - `auto`：优先尝试外部 memcached，失败时自动拉起本地 `memcached` 二进制
+- `never`：只使用外部 `127.0.0.1:21211` 的 memcached
 - `always`：直接拉起本地 `memcached` 二进制
 
-!!! note
-    如需最稳定、最可复现的结果，优先使用外部 memcached 配合 `never`。
-    `auto` 更适合作为本地便利模式，而不是主验证路径。
 
 ## 稳定性机制（当前默认行为）
 
