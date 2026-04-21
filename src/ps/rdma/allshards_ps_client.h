@@ -42,8 +42,8 @@ private:
   };
 
   struct BatchRequest {
-    float* user_buffer = nullptr;
-    bool assembled     = false;
+    float* user_buffer          = nullptr;
+    bool assembled              = false;
     std::size_t total_key_count = 0;
     std::int32_t status_code =
         static_cast<std::int32_t>(petps::RpcStatus::kPending);

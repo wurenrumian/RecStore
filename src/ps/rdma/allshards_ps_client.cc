@@ -54,9 +54,11 @@ AllShardsParameterClientWrapper::BuildChunks(
   return chunks;
 }
 
-bool AllShardsParameterClientWrapper::FinalizeBatchIfNeeded(BatchRequest* batch) {
+bool AllShardsParameterClientWrapper::FinalizeBatchIfNeeded(
+    BatchRequest* batch) {
   if (batch->assembled) {
-    return batch->status_code == static_cast<std::int32_t>(petps::RpcStatus::kOk);
+    return batch->status_code ==
+           static_cast<std::int32_t>(petps::RpcStatus::kOk);
   }
 
   batch->status_code = static_cast<std::int32_t>(petps::RpcStatus::kOk);
@@ -73,7 +75,8 @@ bool AllShardsParameterClientWrapper::FinalizeBatchIfNeeded(BatchRequest* batch)
   const int embedding_dim = FLAGS_value_size / sizeof(float);
   if (batch->status_code == static_cast<std::int32_t>(petps::RpcStatus::kOk)) {
     for (const auto& pending : batch->shard_rpcs) {
-      const float* shard_values = static_cast<const float*>(pending.recv_buffer);
+      const float* shard_values =
+          static_cast<const float*>(pending.recv_buffer);
       for (std::size_t i = 0; i < pending.original_positions.size(); ++i) {
         std::memcpy(
             batch->user_buffer + pending.original_positions[i] * embedding_dim,
@@ -87,7 +90,7 @@ bool AllShardsParameterClientWrapper::FinalizeBatchIfNeeded(BatchRequest* batch)
       reinterpret_cast<char*>(batch->user_buffer) +
       batch->total_key_count * static_cast<std::size_t>(FLAGS_value_size));
   *batch_status_word = batch->status_code;
-  batch->assembled = true;
+  batch->assembled   = true;
   return batch->status_code == static_cast<std::int32_t>(petps::RpcStatus::kOk);
 }
 
@@ -126,8 +129,8 @@ int AllShardsParameterClientWrapper::GetParameter(
     bool isAsync,
     int async_req_id) {
   BatchRequest batch;
-  batch.user_buffer    = values;
-  batch.total_key_count = keys.Size();
+  batch.user_buffer       = values;
+  batch.total_key_count   = keys.Size();
   auto* batch_status_word = reinterpret_cast<std::int32_t*>(
       reinterpret_cast<char*>(values) +
       keys.Size() * static_cast<std::size_t>(FLAGS_value_size));

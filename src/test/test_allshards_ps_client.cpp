@@ -82,7 +82,8 @@ public:
 
 private:
   int next_rpc_id_ = 1;
-  std::int32_t forced_status_ = static_cast<std::int32_t>(petps::RpcStatus::kOk);
+  std::int32_t forced_status_ =
+      static_cast<std::int32_t>(petps::RpcStatus::kOk);
   std::vector<int> request_sizes_;
   std::vector<std::vector<char>> buffers_;
 };
@@ -176,17 +177,18 @@ TEST(AllShardsClientTest, PropagatesShardFailureStatus) {
   FakeShardClient shard1(1);
   shard1.set_forced_status(petps::RpcStatus::kBatchTooLarge);
 
-  auto shard0_keys = SelectKeysForShard(0, 1, 2);
-  auto shard1_keys = SelectKeysForShard(1, 1, 2);
+  auto shard0_keys                = SelectKeysForShard(0, 1, 2);
+  auto shard1_keys                = SelectKeysForShard(1, 1, 2);
   shard0.storage_[shard0_keys[0]] = {10, 0, 0, 0};
   shard1.storage_[shard1_keys[0]] = {20, 0, 0, 0};
 
-  std::vector<uint64_t> keys = {shard0_keys[0], shard1_keys[0]};
+  std::vector<uint64_t> keys                = {shard0_keys[0], shard1_keys[0]};
   std::vector<BaseParameterClient*> clients = {&shard0, &shard1};
   AllShardsParameterClientWrapper wrapper(clients, 2);
 
   std::vector<std::vector<float>> values;
-  EXPECT_EQ(wrapper.GetParameter(base::ConstArray<uint64_t>(keys), &values), -1);
+  EXPECT_EQ(wrapper.GetParameter(base::ConstArray<uint64_t>(keys), &values),
+            -1);
 }
 
 } // namespace

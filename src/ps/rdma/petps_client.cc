@@ -15,26 +15,22 @@
 DECLARE_int32(value_size);
 DECLARE_int32(max_kv_num_per_request);
 DEFINE_int32(numa_id, 0, "");
-DEFINE_int32(
-    rdma_server_ready_timeout_sec,
-    30,
-    "Timeout in seconds waiting for petps server ready key");
-DEFINE_int32(
-    rdma_server_ready_poll_ms,
-    10,
-    "Polling interval in milliseconds for petps server ready key");
+DEFINE_int32(rdma_server_ready_timeout_sec,
+             30,
+             "Timeout in seconds waiting for petps server ready key");
+DEFINE_int32(rdma_server_ready_poll_ms,
+             10,
+             "Polling interval in milliseconds for petps server ready key");
 DEFINE_uint64(
     rdma_client_receive_arena_bytes,
     256 * 1024 * 1024,
     "Per-process max bytes allocated by PetPSClient::GetReceiveBuffer");
-DEFINE_int32(
-    rdma_wait_spin_loops,
-    1000,
-    "Busy-spin loops before yielding in PetPSClient::WaitRPCFinish");
-DEFINE_int32(
-    rdma_wait_yield_loops,
-    2000,
-    "Yield loops before sleeping in PetPSClient::WaitRPCFinish");
+DEFINE_int32(rdma_wait_spin_loops,
+             1000,
+             "Busy-spin loops before yielding in PetPSClient::WaitRPCFinish");
+DEFINE_int32(rdma_wait_yield_loops,
+             2000,
+             "Yield loops before sleeping in PetPSClient::WaitRPCFinish");
 DEFINE_int32(
     rdma_wait_sleep_us,
     50,
@@ -153,9 +149,8 @@ std::vector<int> PetPSClient::GetServerThreadIDs() {
 
 int PetPSClient::SelectServerThreadID() const {
   CHECK(!serverThreadIdsRoutedTo_.empty());
-  const uint32_t slot =
-      round_robin_.fetch_add(1, std::memory_order_relaxed) %
-      serverThreadIdsRoutedTo_.size();
+  const uint32_t slot = round_robin_.fetch_add(1, std::memory_order_relaxed) %
+                        serverThreadIdsRoutedTo_.size();
   int ret = serverThreadIdsRoutedTo_[slot];
   return ret;
 }
@@ -233,7 +228,7 @@ bool PetPSClient::QueryRPCFinished(int rpc_id) {
 }
 
 void PetPSClient::WaitRPCFinish(int rpc_id) {
-  auto* poll = GetPollSlot(static_cast<uint64_t>(rpc_id));
+  auto* poll     = GetPollSlot(static_cast<uint64_t>(rpc_id));
   int wait_loops = 0;
   while (poll->load(std::memory_order_acquire) ==
          static_cast<std::int32_t>(RpcStatus::kPending)) {
@@ -323,7 +318,7 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   m->receive_gaddr    = gaddr;
 
   // LOG(INFO) << "send PS Put";
-  auto* poll = reinterpret_cast<std::atomic<int32_t>*>(values);
+  auto* poll            = reinterpret_cast<std::atomic<int32_t>*>(values);
   const uint64_t rpc_id = rpcIDAcc_.fetch_add(1, std::memory_order_relaxed);
   {
     std::lock_guard<std::mutex> guard(rpc_mu_);

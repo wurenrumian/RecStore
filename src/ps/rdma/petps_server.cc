@@ -135,9 +135,8 @@ private:
         recv->t_id,
         Slice((char*)thread_ids.data(), thread_ids.size() * sizeof(int)));
     VLOG(1) << "component=rdma_server event=get_server_threadids_reply node_id="
-            << static_cast<int>(recv->node_id)
-            << " tid=" << static_cast<int>(recv->t_id)
-            << " threads=" << thread_ids.size();
+            << static_cast<int>(recv->node_id) << " tid="
+            << static_cast<int>(recv->t_id) << " threads=" << thread_ids.size();
   }
 
   void RpcPsPut(RawMessage* recv, int thread_id) {
@@ -237,9 +236,8 @@ private:
 
     if (response_bytes > FLAGS_rdma_per_thread_response_limit_bytes) {
       LOG(ERROR) << "component=rdma_server event=batch_too_large shard="
-                 << XPostoffice::GetInstance()->ServerID()
-                 << " thread_id=" << thread_id
-                 << " key_count=" << batch_get_kv_count
+                 << XPostoffice::GetInstance()->ServerID() << " thread_id="
+                 << thread_id << " key_count=" << batch_get_kv_count
                  << " response_bytes=" << response_bytes << " limit_bytes="
                  << FLAGS_rdma_per_thread_response_limit_bytes;
       auto* status_word =
