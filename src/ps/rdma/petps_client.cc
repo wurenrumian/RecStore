@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
@@ -14,6 +15,25 @@
 DECLARE_int32(value_size);
 DECLARE_int32(max_kv_num_per_request);
 DEFINE_int32(numa_id, 0, "");
+DEFINE_int32(
+    rdma_server_ready_timeout_sec,
+    30,
+    "Timeout in seconds waiting for petps server ready key");
+DEFINE_int32(
+    rdma_server_ready_poll_ms,
+    10,
+    "Polling interval in milliseconds for petps server ready key");
+DEFINE_uint64(
+    rdma_client_receive_arena_bytes,
+    256 * 1024 * 1024,
+    "Per-process max bytes allocated by PetPSClient::GetReceiveBuffer");
+
+namespace {
+bool ShouldValidateRouting() {
+  const char* env = std::getenv("RECSTORE_RDMA_VALIDATE_ROUTING");
+  return env != nullptr && std::string(env) != "0";
+}
+} // namespace
 
 namespace petps {
 
@@ -73,14 +93,16 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
 void PetPSClient::WaitForServerReady() {
   const std::string key = "petps-server-ready-" + std::to_string(shard_);
   const auto deadline =
-      std::chrono::steady_clock::now() + std::chrono::seconds(30);
+      std::chrono::steady_clock::now() +
+      std::chrono::seconds(FLAGS_rdma_server_ready_timeout_sec);
   std::string value;
   while (std::chrono::steady_clock::now() < deadline) {
     if (XPostoffice::GetInstance()->MemCachedTryGet(key, &value) &&
         value == "1") {
       return;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(FLAGS_rdma_server_ready_poll_ms));
   }
   throw std::runtime_error(
       "Timed out waiting for RDMA server ready key: " + key);
@@ -139,9 +161,18 @@ std::size_t PetPSClient::ResponseBufferBytes(std::size_t key_count) const {
 
 void* PetPSClient::GetReceiveBuffer(size_t size) {
   static std::atomic<uint64_t> client_memory_offset_acc{0};
+  const uint64_t old_offset =
+      client_memory_offset_acc.fetch_add(static_cast<uint64_t>(size));
+  const uint64_t new_offset = old_offset + static_cast<uint64_t>(size);
+  if (new_offset > FLAGS_rdma_client_receive_arena_bytes) {
+    throw std::runtime_error(
+        "RDMA receive arena exhausted: request=" + std::to_string(size) +
+        " old_offset=" + std::to_string(old_offset) +
+        " limit=" + std::to_string(FLAGS_rdma_client_receive_arena_bytes));
+  }
   GlobalAddress gaddr;
   gaddr.nodeID = dsm_->getMyNodeID();
-  gaddr.offset = client_memory_offset_acc.fetch_add(size);
+  gaddr.offset = old_offset;
   return dsm_->addr(gaddr);
 }
 
@@ -161,12 +192,12 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
   poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
               std::memory_order_release);
 
-#ifdef RPC_DEBUG
-  for (auto each : keys) {
-    CHECK_EQ(shard_, ShardManager::KeyPartition(each))
-        << each << " not belong to this PS";
+  if (ShouldValidateRouting()) {
+    for (auto each : keys) {
+      CHECK_EQ(shard_, ShardManager::KeyPartition(each))
+          << each << " not belong to this PS";
+    }
   }
-#endif
 
   dsm_->rpc_call(m,
                  shard_,
@@ -247,6 +278,8 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
 
 int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
                                   float* values) {
+  LOG(WARNING) << "FakePutParameter is a benchmark-only path and does not "
+                  "carry full put payload values";
   thread_local auto m = RawMessage::get_new_msg();
   GlobalAddress gaddr = dsm_->gaddr(values);
   m->type             = RpcType::PUT;
@@ -258,12 +291,12 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
               std::memory_order_release);
 
-#ifdef RPC_DEBUG
-  for (auto each : keys) {
-    CHECK_EQ(shard_, ShardManager::KeyPartition(each))
-        << each << " not belong to this PS";
+  if (ShouldValidateRouting()) {
+    for (auto each : keys) {
+      CHECK_EQ(shard_, ShardManager::KeyPartition(each))
+          << each << " not belong to this PS";
+    }
   }
-#endif
 
   dsm_->rpc_call(m,
                  shard_,

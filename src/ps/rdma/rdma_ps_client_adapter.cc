@@ -131,6 +131,7 @@ void RDMAPSClientAdapter::EnsureClientInitialized() {
 
 void RDMAPSClientAdapter::EnsureThreadInitialized() {
   EnsureClientInitialized();
+  std::lock_guard<std::mutex> guard(thread_init_mu_);
   if (thread_initialized_) {
     return;
   }

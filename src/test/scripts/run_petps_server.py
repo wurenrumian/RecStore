@@ -52,6 +52,11 @@ def main():
     parser.add_argument("--memcached-host", default="127.0.0.1")
     parser.add_argument("--memcached-port", type=int, default=21211)
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--rdma-per-thread-response-limit-bytes", type=int)
+    parser.add_argument("--rdma-server-ready-timeout-sec", type=int)
+    parser.add_argument("--rdma-server-ready-poll-ms", type=int)
+    parser.add_argument("--rdma-client-receive-arena-bytes", type=int)
+    parser.add_argument("--validate-routing", action="store_true")
     parser.add_argument(
         "--show-runner-logs",
         action="store_true",
@@ -73,6 +78,11 @@ def main():
         timeout=args.timeout,
         show_status_logs=args.show_runner_logs,
         show_memcached_logs=args.show_runner_logs,
+        rdma_per_thread_response_limit_bytes=args.rdma_per_thread_response_limit_bytes,
+        rdma_server_ready_timeout_sec=args.rdma_server_ready_timeout_sec,
+        rdma_server_ready_poll_ms=args.rdma_server_ready_poll_ms,
+        rdma_client_receive_arena_bytes=args.rdma_client_receive_arena_bytes,
+        validate_routing=args.validate_routing,
     )
 
     print(

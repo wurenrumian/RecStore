@@ -35,6 +35,11 @@ class PetPSClusterRunner:
         show_status_logs=True,
         show_memcached_logs=True,
         memcached_namespace="auto",
+        rdma_per_thread_response_limit_bytes=None,
+        rdma_server_ready_timeout_sec=None,
+        rdma_server_ready_poll_ms=None,
+        rdma_client_receive_arena_bytes=None,
+        validate_routing=False,
     ):
         self.server_path = Path(server_path)
         if not self.server_path.is_absolute():
@@ -63,6 +68,13 @@ class PetPSClusterRunner:
         if memcached_namespace == "auto":
             memcached_namespace = f"recstore-{os.getpid()}-{time.time_ns()}"
         self.memcached_namespace = memcached_namespace
+        self.rdma_per_thread_response_limit_bytes = (
+            rdma_per_thread_response_limit_bytes
+        )
+        self.rdma_server_ready_timeout_sec = rdma_server_ready_timeout_sec
+        self.rdma_server_ready_poll_ms = rdma_server_ready_poll_ms
+        self.rdma_client_receive_arena_bytes = rdma_client_receive_arena_bytes
+        self.validate_routing = validate_routing
         self.processes = []
         self.memcached_process = None
         self.ready = set()
@@ -96,6 +108,8 @@ class PetPSClusterRunner:
         env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"] = "1"
         if self.memcached_namespace:
             env["RECSTORE_MEMCACHED_NAMESPACE"] = self.memcached_namespace
+        if self.validate_routing:
+            env["RECSTORE_RDMA_VALIDATE_ROUTING"] = "1"
         return env
 
     def build_memcached_cmd(self):
@@ -119,7 +133,7 @@ class PetPSClusterRunner:
         ]
 
     def build_server_cmd(self, global_id):
-        return [
+        cmd = [
             str(self.server_path),
             f"--config_path={self.config_path}",
             f"--global_id={global_id}",
@@ -129,16 +143,35 @@ class PetPSClusterRunner:
             f"--value_size={self.value_size}",
             f"--max_kv_num_per_request={self.max_kv_num_per_request}",
         ]
+        if self.rdma_per_thread_response_limit_bytes is not None:
+            cmd.append(
+                "--rdma_per_thread_response_limit_bytes="
+                f"{self.rdma_per_thread_response_limit_bytes}"
+            )
+        return cmd
 
     def build_client_cmd(self, argv, client_index=0):
         client_global_id = self.num_servers + client_index
-        return list(argv) + [
+        cmd = list(argv) + [
             f"--global_id={client_global_id}",
             f"--num_server_processes={self.num_servers}",
             f"--num_client_processes={self.num_clients}",
             f"--value_size={self.value_size}",
             f"--max_kv_num_per_request={self.max_kv_num_per_request}",
         ]
+        if self.rdma_server_ready_timeout_sec is not None:
+            cmd.append(
+                "--rdma_server_ready_timeout_sec="
+                f"{self.rdma_server_ready_timeout_sec}"
+            )
+        if self.rdma_server_ready_poll_ms is not None:
+            cmd.append(f"--rdma_server_ready_poll_ms={self.rdma_server_ready_poll_ms}")
+        if self.rdma_client_receive_arena_bytes is not None:
+            cmd.append(
+                "--rdma_client_receive_arena_bytes="
+                f"{self.rdma_client_receive_arena_bytes}"
+            )
+        return cmd
 
     def is_ready_line(self, line):
         return "[RDMA-DBG] Server polling thread ready" in line

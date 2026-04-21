@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <future>
 #include <string>
@@ -15,6 +16,7 @@
 #include "ps/base/base_ps_server.h"
 #include "ps/base/cache_ps_impl.h"
 #include "ps/base/parameters.h"
+#include "ps/base/shard_manager.h"
 #include "mayfly_config.h"
 #include "memory/epoch_manager.h"
 #include "memory/shm_file.h"
@@ -38,9 +40,19 @@ DEFINE_bool(use_sglist, true, "");
 DEFINE_bool(preload, false, "");
 DEFINE_bool(use_dram, false, "");
 DEFINE_int32(numa_id, 0, "");
+DEFINE_uint64(rdma_per_thread_response_limit_bytes,
+              1 * 1024 * 1024,
+              "Per-thread max response bytes for RDMA GET replies");
 
 DECLARE_int32(value_size);
 DECLARE_int32(max_kv_num_per_request);
+
+namespace {
+bool ShouldValidateRouting() {
+  const char* env = std::getenv("RECSTORE_RDMA_VALIDATE_ROUTING");
+  return env != nullptr && std::string(env) != "0";
+}
+} // namespace
 
 namespace recstore {
 class PetPSServer : public BaseParameterServer {
@@ -178,14 +190,15 @@ private:
     tp[thread_id][0] += batch_get_kv_count;
     base::ConstArray<uint64_t> keys(
         (uint64_t*)extra_data.s, batch_get_kv_count);
-#ifdef RPC_DEBUG
-    for (auto each : keys) {
-      CHECK_EQ(XPostoffice::GetInstance()->ServerID(),
-               ShardManager::KeyPartition(each))
-          << each << " not belong to this PS; "
-          << "sended from client node_id = " << (int)recv->node_id;
-      ;
+    if (ShouldValidateRouting()) {
+      for (auto each : keys) {
+        CHECK_EQ(XPostoffice::GetInstance()->ServerID(),
+                 ShardManager::KeyPartition(each))
+            << each << " not belong to this PS; "
+            << "sended from client node_id = " << (int)recv->node_id;
+      }
     }
+#ifdef RPC_DEBUG
     LOG(INFO) << "recv->msg_size=" << extra_data.len;
     LOG(INFO) << "server batch gets: " << keys.Debug();
 #endif
@@ -222,12 +235,13 @@ private:
     const std::size_t response_bytes =
         petps::FixedSlotResponseBytes(batch_get_kv_count, FLAGS_value_size);
 
-    // Validate response doesn't exceed per-thread RDMA buffer size (1MB)
-    constexpr std::size_t kPerThreadRDMABufferSize = 1 * 1024 * 1024;
-    if (response_bytes > kPerThreadRDMABufferSize) {
-      LOG(ERROR) << "Response buffer size " << response_bytes
-                 << " exceeds per-thread RDMA buffer limit "
-                 << kPerThreadRDMABufferSize;
+    if (response_bytes > FLAGS_rdma_per_thread_response_limit_bytes) {
+      LOG(ERROR) << "component=rdma_server event=batch_too_large shard="
+                 << XPostoffice::GetInstance()->ServerID()
+                 << " thread_id=" << thread_id
+                 << " key_count=" << batch_get_kv_count
+                 << " response_bytes=" << response_bytes << " limit_bytes="
+                 << FLAGS_rdma_per_thread_response_limit_bytes;
       auto* status_word =
           reinterpret_cast<std::int32_t*>(dsm_->get_rdma_buffer());
       *status_word =

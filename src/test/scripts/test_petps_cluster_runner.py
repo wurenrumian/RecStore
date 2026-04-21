@@ -65,12 +65,28 @@ class TestPetPSClusterRunner(unittest.TestCase):
             num_clients=1,
             memcached_port=12345,
             memcached_namespace="test-namespace",
+            validate_routing=True,
         )
         env = runner.build_env()
         self.assertEqual(env["RECSTORE_MEMCACHED_HOST"], "127.0.0.1")
         self.assertEqual(env["RECSTORE_MEMCACHED_PORT"], "12345")
         self.assertEqual(env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"], "1")
         self.assertEqual(env["RECSTORE_MEMCACHED_NAMESPACE"], "test-namespace")
+        self.assertEqual(env["RECSTORE_RDMA_VALIDATE_ROUTING"], "1")
+
+    def test_build_commands_include_optional_rdma_flags(self):
+        runner = PetPSClusterRunner(
+            rdma_per_thread_response_limit_bytes=2097152,
+            rdma_server_ready_timeout_sec=45,
+            rdma_server_ready_poll_ms=3,
+            rdma_client_receive_arena_bytes=134217728,
+        )
+        server_cmd = runner.build_server_cmd(0)
+        client_cmd = runner.build_client_cmd(["./build/bin/petps_integration_test"])
+        self.assertIn("--rdma_per_thread_response_limit_bytes=2097152", server_cmd)
+        self.assertIn("--rdma_server_ready_timeout_sec=45", client_cmd)
+        self.assertIn("--rdma_server_ready_poll_ms=3", client_cmd)
+        self.assertIn("--rdma_client_receive_arena_bytes=134217728", client_cmd)
 
     @mock.patch("petps_cluster_runner.shutil.which", return_value="/usr/bin/memcached")
     def test_build_memcached_cmd_uses_system_memcached(self, _mock_which):

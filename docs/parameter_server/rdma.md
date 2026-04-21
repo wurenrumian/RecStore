@@ -196,11 +196,24 @@ python3 src/test/scripts/run_petps_server.py \
   --use-local-memcached=auto
 ```
 
+如需调优，也可追加：
+`--rdma-per-thread-response-limit-bytes`、
+`--rdma-server-ready-timeout-sec`、
+`--rdma-server-ready-poll-ms`、
+`--rdma-client-receive-arena-bytes`、
+`--validate-routing`。
+
 该入口会：
 
 - 根据配置推断 `server-count`（也可显式传 `--server-count`）
 - 自动注入 RDMA 所需运行参数
 - 统一处理 memcached（`auto/always/never`）
+- 支持按需透传 RDMA 调优参数（例如
+  `--rdma-per-thread-response-limit-bytes`、
+  `--rdma-server-ready-timeout-sec`、
+  `--rdma-server-ready-poll-ms`、
+  `--rdma-client-receive-arena-bytes`、
+  `--validate-routing`）
 
 ### 单分片 integration
 

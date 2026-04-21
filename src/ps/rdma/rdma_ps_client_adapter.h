@@ -68,6 +68,7 @@ private:
 
   json config_;
   std::mutex init_mu_;
+  std::mutex thread_init_mu_;
   std::mutex state_mu_;
   bool initialized_        = false;
   bool thread_initialized_ = false;
