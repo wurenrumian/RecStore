@@ -65,16 +65,16 @@ int main(int argc, char** argv) {
           client.RevokeRPCResource(rpc_id);
         }
         auto end = std::chrono::steady_clock::now();
-        std::cout << "transport=RDMA phase=" << (is_warmup ? "warmup" : "measure")
-                  << " round="
-                  << (is_warmup ? (round + 1)
-                                : (round - FLAGS_warmup_rounds + 1))
-                  << "/" << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds)
-                  << " elapsed_us="
-                  << std::chrono::duration_cast<std::chrono::microseconds>(
-                         end - start)
-                         .count()
-                  << std::endl;
+        std::cout
+            << "transport=RDMA phase=" << (is_warmup ? "warmup" : "measure")
+            << " round="
+            << (is_warmup ? (round + 1) : (round - FLAGS_warmup_rounds + 1))
+            << "/" << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds)
+            << " elapsed_us="
+            << std::chrono::duration_cast<std::chrono::microseconds>(
+                   end - start)
+                   .count()
+            << std::endl;
       }
       return 0;
     }
@@ -103,16 +103,15 @@ int main(int argc, char** argv) {
         client.RevokeRPCResource(rpc_id);
       }
       auto end = std::chrono::steady_clock::now();
-      std::cout << "transport=RDMA phase=" << (is_warmup ? "warmup" : "measure")
-                << " round="
-                << (is_warmup ? (round + 1)
-                              : (round - FLAGS_warmup_rounds + 1))
-                << "/" << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds)
-                << " elapsed_us="
-                << std::chrono::duration_cast<std::chrono::microseconds>(
-                       end - start)
-                       .count()
-                << std::endl;
+      std::cout
+          << "transport=RDMA phase=" << (is_warmup ? "warmup" : "measure")
+          << " round="
+          << (is_warmup ? (round + 1) : (round - FLAGS_warmup_rounds + 1))
+          << "/" << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds)
+          << " elapsed_us="
+          << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                 .count()
+          << std::endl;
     }
     return 0;
   }
@@ -138,17 +137,14 @@ int main(int argc, char** argv) {
       }
     }
     auto end = std::chrono::steady_clock::now();
-    std::cout << "transport=" << transport
-              << " phase=" << (is_warmup ? "warmup" : "measure")
-              << " round="
-              << (is_warmup ? (round + 1)
-                            : (round - FLAGS_warmup_rounds + 1))
-              << "/" << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds)
-              << " elapsed_us="
-              << std::chrono::duration_cast<std::chrono::microseconds>(
-                     end - start)
-                     .count()
-              << std::endl;
+    std::cout
+        << "transport=" << transport
+        << " phase=" << (is_warmup ? "warmup" : "measure") << " round="
+        << (is_warmup ? (round + 1) : (round - FLAGS_warmup_rounds + 1)) << "/"
+        << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds) << " elapsed_us="
+        << std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+               .count()
+        << std::endl;
   }
   return 0;
 }
