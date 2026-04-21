@@ -57,7 +57,7 @@ XPostoffice::XPostoffice() {
   static bool init_ = false;
 
   CHECK(init_ == false);
-  init_ = true;
+  init_                     = true;
   const char* namespace_env = std::getenv("RECSTORE_MEMCACHED_NAMESPACE");
   if (namespace_env != nullptr) {
     memcached_namespace_ = trim(namespace_env);
