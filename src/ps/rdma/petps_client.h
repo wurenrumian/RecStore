@@ -2,7 +2,10 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "base/array.h"
 #include "base/factory.h"
@@ -25,19 +28,10 @@ public:
   void Barrier(const std::string& ss, int k) override { dsm_->barrier(ss, k); }
 
   void InitThread() override {
-    std::cerr << "[RDMA-DBG] PetPSClient::InitThread begin shard=" << shard_
-              << std::endl;
     LOG(INFO) << "dsm_->registerThread()";
     dsm_->registerThread();
-    std::cerr
-        << "[RDMA-DBG] PetPSClient::InitThread after registerThread shard="
-        << shard_ << std::endl;
     WaitForServerReady();
     serverThreadIdsRoutedTo_ = GetServerThreadIDs();
-    std::cerr
-        << "[RDMA-DBG] PetPSClient::InitThread after GetServerThreadIDs shard="
-        << shard_ << " routed_threads=" << serverThreadIdsRoutedTo_.size()
-        << std::endl;
   }
 
   int GetParameter(base::ConstArray<uint64_t> keys,
@@ -70,10 +64,13 @@ private:
   void WaitForServerReady();
   std::vector<int> GetServerThreadIDs();
   int SelectServerThreadID() const;
+  std::atomic<int32_t>* GetPollSlot(uint64_t rpc_id) const;
   void Init();
   DSM* dsm_;
 
-  uint64_t rpcIDAcc_ = 0;
+  mutable std::mutex rpc_mu_;
+  std::atomic<uint64_t> rpcIDAcc_{0};
+  mutable std::atomic<uint32_t> round_robin_{0};
 
   std::vector<int> serverThreadIdsRoutedTo_;
   std::unordered_map<uint64_t, std::atomic<int32_t>*> rpcId2PollMap_;

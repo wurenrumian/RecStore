@@ -8,6 +8,7 @@
 #include "base/array.h"
 #include "base/log.h"
 #include "base_client.h"
+#include "ps/rdma/rdma_status.h"
 
 class AllShardsParameterClientWrapper : public BaseParameterClient {
 public:
@@ -43,6 +44,9 @@ private:
   struct BatchRequest {
     float* user_buffer = nullptr;
     bool assembled     = false;
+    std::size_t total_key_count = 0;
+    std::int32_t status_code =
+        static_cast<std::int32_t>(petps::RpcStatus::kPending);
     std::vector<PendingShardRpc> shard_rpcs;
   };
 
@@ -54,7 +58,7 @@ private:
 
   int PartitionKey(uint64_t key) const;
   std::vector<ShardChunk> BuildChunks(base::ConstArray<uint64_t> keys) const;
-  void AssembleIfNeeded(BatchRequest* batch);
+  bool FinalizeBatchIfNeeded(BatchRequest* batch);
 
   std::vector<BaseParameterClient*> clients_;
   int num_shards_;

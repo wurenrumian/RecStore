@@ -27,6 +27,18 @@ DEFINE_uint64(
     rdma_client_receive_arena_bytes,
     256 * 1024 * 1024,
     "Per-process max bytes allocated by PetPSClient::GetReceiveBuffer");
+DEFINE_int32(
+    rdma_wait_spin_loops,
+    1000,
+    "Busy-spin loops before yielding in PetPSClient::WaitRPCFinish");
+DEFINE_int32(
+    rdma_wait_yield_loops,
+    2000,
+    "Yield loops before sleeping in PetPSClient::WaitRPCFinish");
+DEFINE_int32(
+    rdma_wait_sleep_us,
+    50,
+    "Sleep duration in microseconds after spin/yield phases in WaitRPCFinish");
 
 namespace {
 bool ShouldValidateRouting() {
@@ -109,27 +121,18 @@ void PetPSClient::WaitForServerReady() {
 }
 
 std::vector<int> PetPSClient::GetServerThreadIDs() {
-  std::cerr << "[RDMA-DBG] GetServerThreadIDs begin shard=" << shard_
-            << std::endl;
   auto m     = RawMessage::get_new_msg();
   m->node_id = dsm_->getMyNodeID();
   m->t_id    = dsm_->getMyThreadID();
   m->type    = GET_SERVER_THREADIDS;
   // RPC to the server ID <shard_>
-  std::cerr << "[RDMA-DBG] GetServerThreadIDs before rpc_call shard=" << shard_
-            << " node_id=" << static_cast<int>(m->node_id)
-            << " thread_id=" << static_cast<int>(m->t_id) << std::endl;
   dsm_->rpc_call(m, shard_, 0);
-  std::cerr << "[RDMA-DBG] GetServerThreadIDs after rpc_call shard=" << shard_
-            << std::endl;
   uint64_t wr_id;
   while (1) {
     auto recv = dsm_->rpc_fast_wait(&wr_id);
     // FB_LOG_EVERY_MS(WARNING, 5000)
     //     << "client wait the result of GetServerThreadIDs";
     if (recv) {
-      std::cerr << "[RDMA-DBG] GetServerThreadIDs received response shard="
-                << shard_ << " wr_id=" << wr_id << std::endl;
       CHECK_EQ(recv->type, RESP_GET_SERVER_THREADIDS);
       Cursor cursor;
       Slice extra_data = recv->get_string(cursor);
@@ -149,10 +152,19 @@ std::vector<int> PetPSClient::GetServerThreadIDs() {
 }
 
 int PetPSClient::SelectServerThreadID() const {
-  static int round_robin = 0;
-  int ret                = serverThreadIdsRoutedTo_[round_robin];
-  round_robin            = (round_robin + 1) % serverThreadIdsRoutedTo_.size();
+  CHECK(!serverThreadIdsRoutedTo_.empty());
+  const uint32_t slot =
+      round_robin_.fetch_add(1, std::memory_order_relaxed) %
+      serverThreadIdsRoutedTo_.size();
+  int ret = serverThreadIdsRoutedTo_[slot];
   return ret;
+}
+
+std::atomic<int32_t>* PetPSClient::GetPollSlot(uint64_t rpc_id) const {
+  std::lock_guard<std::mutex> guard(rpc_mu_);
+  auto it = rpcId2PollMap_.find(rpc_id);
+  CHECK(it != rpcId2PollMap_.end()) << "unknown rpc_id=" << rpc_id;
+  return it->second;
 }
 
 std::size_t PetPSClient::ResponseBufferBytes(std::size_t key_count) const {
@@ -188,7 +200,11 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
 
   auto* poll = reinterpret_cast<std::atomic<int32_t>*>(
       reinterpret_cast<char*>(values) + keys.Size() * FLAGS_value_size);
-  rpcId2PollMap_[rpcIDAcc_] = poll;
+  const uint64_t rpc_id = rpcIDAcc_.fetch_add(1, std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> guard(rpc_mu_);
+    rpcId2PollMap_[rpc_id] = poll;
+  }
   poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
               std::memory_order_release);
 
@@ -205,20 +221,20 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
                  Slice(keys.binary_data(), keys.binary_size()));
 
   if (!isAsync) {
-    WaitRPCFinish(rpcIDAcc_);
+    WaitRPCFinish(static_cast<int>(rpc_id));
   }
-  rpcIDAcc_++;
-  return rpcIDAcc_ - 1;
+  return static_cast<int>(rpc_id);
 }
 
 bool PetPSClient::QueryRPCFinished(int rpc_id) {
-  auto* poll = rpcId2PollMap_[rpc_id];
+  auto* poll = GetPollSlot(static_cast<uint64_t>(rpc_id));
   return poll->load(std::memory_order_acquire) !=
          static_cast<std::int32_t>(RpcStatus::kPending);
 }
 
 void PetPSClient::WaitRPCFinish(int rpc_id) {
-  auto* poll = rpcId2PollMap_[rpc_id];
+  auto* poll = GetPollSlot(static_cast<uint64_t>(rpc_id));
+  int wait_loops = 0;
   while (poll->load(std::memory_order_acquire) ==
          static_cast<std::int32_t>(RpcStatus::kPending)) {
 #ifdef RPC_DEBUG
@@ -230,13 +246,28 @@ void PetPSClient::WaitRPCFinish(int rpc_id) {
     // << "values[4]=" << values[4] << "\n"
     // << "values[5]=" << values[5] << "\n";
 #endif
-    std::this_thread::yield();
+    if (wait_loops < FLAGS_rdma_wait_spin_loops) {
+      ++wait_loops;
+      continue;
+    }
+    if (wait_loops < FLAGS_rdma_wait_spin_loops + FLAGS_rdma_wait_yield_loops) {
+      ++wait_loops;
+      std::this_thread::yield();
+      continue;
+    }
+    if (FLAGS_rdma_wait_sleep_us > 0) {
+      std::this_thread::sleep_for(
+          std::chrono::microseconds(FLAGS_rdma_wait_sleep_us));
+    } else {
+      std::this_thread::yield();
+    }
   }
   return;
 }
 
 void PetPSClient::RevokeRPCResource(int rpc_id) {
-  rpcId2PollMap_.erase(rpc_id);
+  std::lock_guard<std::mutex> guard(rpc_mu_);
+  rpcId2PollMap_.erase(static_cast<uint64_t>(rpc_id));
 };
 
 int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
@@ -265,14 +296,20 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
   m->type             = RpcType::PUT;
   m->receive_gaddr    = dsm_->gaddr(ack);
 
-  rpcId2PollMap_[rpcIDAcc_] = ack;
+  const uint64_t rpc_id = rpcIDAcc_.fetch_add(1, std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> guard(rpc_mu_);
+    rpcId2PollMap_[rpc_id] = ack;
+  }
   dsm_->rpc_call(
       m, shard_, SelectServerThreadID(), Slice(payload.data(), payload.size()));
 
-  WaitRPCFinish(rpcIDAcc_);
+  WaitRPCFinish(static_cast<int>(rpc_id));
   const std::int32_t status = ack->load(std::memory_order_acquire);
-  rpcId2PollMap_.erase(rpcIDAcc_);
-  rpcIDAcc_++;
+  {
+    std::lock_guard<std::mutex> guard(rpc_mu_);
+    rpcId2PollMap_.erase(rpc_id);
+  }
   return status == static_cast<std::int32_t>(RpcStatus::kOk) ? 0 : -1;
 }
 
@@ -286,8 +323,12 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   m->receive_gaddr    = gaddr;
 
   // LOG(INFO) << "send PS Put";
-  auto* poll                = reinterpret_cast<std::atomic<int32_t>*>(values);
-  rpcId2PollMap_[rpcIDAcc_] = poll;
+  auto* poll = reinterpret_cast<std::atomic<int32_t>*>(values);
+  const uint64_t rpc_id = rpcIDAcc_.fetch_add(1, std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> guard(rpc_mu_);
+    rpcId2PollMap_[rpc_id] = poll;
+  }
   poll->store(static_cast<std::int32_t>(RpcStatus::kPending),
               std::memory_order_release);
 
@@ -306,8 +347,7 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   // if (!isAsync) {
   //   WaitRPCFinish(rpcIDAcc_);
   // }
-  rpcIDAcc_++;
-  return rpcIDAcc_ - 1;
+  return static_cast<int>(rpc_id);
 }
 
 } // namespace petps

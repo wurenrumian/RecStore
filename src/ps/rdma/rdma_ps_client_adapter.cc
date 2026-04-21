@@ -114,11 +114,16 @@ void RDMAPSClientAdapter::EnsureClientInitialized() {
 
     std::vector<BaseParameterClient*> raw_clients;
     raw_clients.reserve(servers_it->size());
-    for (const auto& server : *servers_it) {
+    CHECK_EQ(static_cast<int>(servers_it->size()), num_shards)
+        << "RDMA distributed_client.servers size must equal num_shards";
+    for (std::size_t shard_idx = 0; shard_idx < servers_it->size(); ++shard_idx) {
+      const auto& server = (*servers_it)[shard_idx];
+      const int shard =
+          server.value("shard", static_cast<int>(shard_idx));
       shard_clients_.push_back(std::make_unique<petps::PetPSClient>(
           server.value("host", std::string("127.0.0.1")),
           server.value("port", 25000),
-          server.value("shard", 0)));
+          shard));
       raw_clients.push_back(shard_clients_.back().get());
     }
     multi_client_ = std::make_unique<AllShardsParameterClientWrapper>(

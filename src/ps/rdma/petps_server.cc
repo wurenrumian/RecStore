@@ -118,9 +118,9 @@ public:
 private:
   void RpcGetServerServingThreadIDs(RawMessage* recv) {
     CHECK_EQ(recv->type, GET_SERVER_THREADIDS);
-    std::cerr << "[RDMA-DBG] Server received GET_SERVER_THREADIDS from node="
-              << static_cast<int>(recv->node_id)
-              << " tid=" << static_cast<int>(recv->t_id) << std::endl;
+    VLOG(1) << "component=rdma_server event=get_server_threadids_recv node_id="
+            << static_cast<int>(recv->node_id)
+            << " tid=" << static_cast<int>(recv->t_id);
     static std::atomic_int serving_thread_id{0};
     auto m  = RawMessage::get_new_msg();
     m->type = RESP_GET_SERVER_THREADIDS;
@@ -134,10 +134,10 @@ private:
         recv->node_id,
         recv->t_id,
         Slice((char*)thread_ids.data(), thread_ids.size() * sizeof(int)));
-    std::cerr << "[RDMA-DBG] Server replied GET_SERVER_THREADIDS to node="
-              << static_cast<int>(recv->node_id)
-              << " tid=" << static_cast<int>(recv->t_id)
-              << " threads=" << thread_ids.size() << std::endl;
+    VLOG(1) << "component=rdma_server event=get_server_threadids_reply node_id="
+            << static_cast<int>(recv->node_id)
+            << " tid=" << static_cast<int>(recv->t_id)
+            << " threads=" << thread_ids.size();
   }
 
   void RpcPsPut(RawMessage* recv, int thread_id) {
@@ -288,15 +288,15 @@ private:
   void PollingThread(int thread_id) {
     auto_bind_core(0);
     dsm_->registerThread();
-    std::cerr << "[RDMA-DBG] Server polling thread ready " << thread_id
-              << std::endl;
+    VLOG(1) << "component=rdma_server event=polling_thread_ready thread_id="
+            << thread_id;
     const int ready_threads = registered_polling_threads_.fetch_add(1) + 1;
     if (ready_threads == thread_count_) {
       const std::string key =
           "petps-server-ready-" +
           std::to_string(XPostoffice::GetInstance()->ServerID());
       XPostoffice::GetInstance()->MemCachedSet(key, "1");
-      std::cerr << "[RDMA-DBG] Server published ready key " << key << std::endl;
+      VLOG(1) << "component=rdma_server event=publish_ready_key key=" << key;
     }
     auto msg = RawMessage::get_new_msg();
 
@@ -315,10 +315,8 @@ private:
       } while (nullptr == recv);
 
       if (recv->type == GET_SERVER_THREADIDS) {
-        LOG(INFO) << "RPC: GET_SERVER_THREADIDS received";
         RpcGetServerServingThreadIDs(recv);
       } else if (recv->type == PUT) {
-        FB_LOG_EVERY_MS(WARNING, 5000) << "here is write";
         RpcPsPut(recv, thread_id);
       } else if (recv->type == GET) {
         RpcPsGet(recv, thread_id);
