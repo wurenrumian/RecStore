@@ -3,10 +3,26 @@
 ## 概述
 
 !!! warning "边界说明"
-    RDMA 当前是 `BaseParameterClient` 路线，不是 `BasePSClient` 路线，不能直接通过 `KVClientOp` 的 `ps_type` 切换进去。
+    本仓库当前同时存在两条 RDMA 使用路径：
+    1) PetPS 直连路径：`BaseParameterClient`（`PetPSClient` / `AllShardsParameterClientWrapper`）
+    2) Framework Op-layer 路径：`BasePSClient`（`RDMAPSClientAdapter`，通过 `cache_ps.ps_type=RDMA` 进入）
+    两条路径复用同一套 PetPS/RDMA 数据面，但初始化与调用入口不同。
 
 RDMA 模块基于 Mayfly/DSM，提供独立 `petps_server` 数据面。  
 本页聚焦“怎么启动、怎么测、怎么排障”，不展开实现细节。
+
+## 路径选择
+
+| 路径 | 入口 | 典型用途 |
+|------|------|----------|
+| PetPS 直连 | `src/ps/rdma/petps_client.cc`、`src/ps/rdma/allshards_ps_client.cc` | RDMA 协议/传输专项验证、integration 测试 |
+| Op-layer RDMA | `src/ps/rdma/rdma_ps_client_adapter.cc` + `KVClientOp` | 通过统一框架接口验证 init/write/read/update/prefetch |
+
+!!! note
+    若目标是验证 framework 侧切换，请使用 `cache_ps.ps_type=RDMA` 与
+    `src/test/configs/recstore_config.op_rdma.json`。
+    若目标是验证 PetPS 传输链路本身，请优先使用 `recstore_config.rdma_test.json`
+    或 `recstore_config.rdma_multishard_test.json`。
 
 ## 配置
 
@@ -46,6 +62,11 @@ RDMA 专项配置位于：
   }
 }
 ```
+
+!!! note
+    `recstore_config.rdma_test.json` / `recstore_config.rdma_multishard_test.json`
+    主要用于 PetPS 专项链路测试；Op-layer 验证请使用
+    `recstore_config.op_rdma.json`（其中 `cache_ps.ps_type` 为 `RDMA`）。
 
 ## 测试入口
 
@@ -130,14 +151,58 @@ python3 src/test/scripts/run_petps_integration.py \
 ```bash
 python3 src/test/scripts/run_rdma_transport_benchmarks.py \
   --benchmark-binary ./build/bin/ps_transport_benchmark \
-  --iterations 20 \
+  --iterations 1000 \
+  --batch-keys 500 \
   --rounds 50 \
   --rdma-warmup-rounds 5 \
+  --report-mode summary \
+  --rdma-only \
   --use-local-memcached=auto
 ```
 
 !!! note
     `run_petps_integration.py` 对 `client-timeout` 与 `cluster-timeout` 采用 15 秒硬上限；超过 15 秒会自动终止并清理进程。
+    `--report-mode` 支持：
+    `summary`（默认，输出聚合延迟与吞吐，日志最少）、
+    `per_round`（逐轮延迟）、
+    `both`（逐轮 + 聚合）。
+    `run_rdma_transport_benchmarks.py` 在三种 transport 全部完成后，
+    会额外打印一张 `measure` 阶段汇总表（包含延迟与吞吐）。
+    仅关注 RDMA 时可加 `--rdma-only`，跳过 GRPC/BRPC 阶段。
+
+### benchmark 汇总表解读
+
+`report-mode=summary` 或 `both` 时，脚本末尾会输出：
+
+- `mean_us / p50_us / p95_us / p99_us`：单轮（一个 round）总耗时统计
+- `batch_keys`：单个 Put/Get RPC 内携带的 key 数
+- `ops/s`：每秒完成的请求对数量（`Put + Get` 合并统计）
+- `key_ops/s`：每秒处理的 key 数量（按每次请求 key 数折算）
+
+当前 `ps_transport_benchmark` 的单轮工作量是：
+
+- 每轮执行 `iterations` 次循环
+- 每次循环执行 `1 Put + 1 Get`
+- 每次请求处理 `batch_keys` 个 key（默认 4，可通过 `--batch-keys` 调整）
+
+因此吞吐计算可写为：
+
+```text
+ops/s = (iterations * 2) / (mean_us / 1e6)
+key_ops/s = (iterations * 2 * batch_keys) / (mean_us / 1e6)
+```
+
+示例（`iterations=1000, rounds=50`）：
+
+| transport | mean_us | ops/s | key_ops/s |
+|-----------|---------|-------|-----------|
+| RDMA | 10,534 | 189,861 | 759,443 |
+| BRPC | 192,259 | 10,402.70 | 41,610.60 |
+| GRPC | 274,482 | 7,286.44 | 29,145.80 |
+
+!!! note
+    上表用于说明字段含义与计算方式，不同机器/配置下绝对值会变化。
+    在同机同配置下进行横向对比更有意义。
 
 ### ctest 入口（可选）
 

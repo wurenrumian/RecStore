@@ -1,6 +1,7 @@
 #include "petps_client.h"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -40,6 +41,18 @@ namespace {
 bool ShouldValidateRouting() {
   const char* env = std::getenv("RECSTORE_RDMA_VALIDATE_ROUTING");
   return env != nullptr && std::string(env) != "0";
+}
+
+int MaxPutKeysPerRpc(int value_size_bytes) {
+  const std::size_t usable_payload =
+      MESSAGE_SIZE - 40 - sizeof(RawMessage) - sizeof(std::uint32_t);
+  if (value_size_bytes <= 0 || usable_payload <= sizeof(petps::PutPayloadHeader)) {
+    return 0;
+  }
+  const std::size_t per_key_bytes =
+      sizeof(std::uint64_t) + static_cast<std::size_t>(value_size_bytes);
+  return static_cast<int>(
+      (usable_payload - sizeof(petps::PutPayloadHeader)) / per_key_bytes);
 }
 } // namespace
 
@@ -281,31 +294,59 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
     }
   }
 
-  std::string payload = EncodePutPayload(keys, values);
-  auto* ack           = reinterpret_cast<std::atomic<int32_t>*>(
-      GetReceiveBuffer(sizeof(std::int32_t)));
-  ack->store(static_cast<std::int32_t>(RpcStatus::kPending),
-             std::memory_order_release);
-
-  thread_local auto m = RawMessage::get_new_msg();
-  m->type             = RpcType::PUT;
-  m->receive_gaddr    = dsm_->gaddr(ack);
-
-  const uint64_t rpc_id = rpcIDAcc_.fetch_add(1, std::memory_order_relaxed);
-  {
-    std::lock_guard<std::mutex> guard(rpc_mu_);
-    rpcId2PollMap_[rpc_id] = ack;
+  const int max_put_keys = MaxPutKeysPerRpc(FLAGS_value_size);
+  if (max_put_keys <= 0) {
+    LOG(ERROR) << "Invalid max_put_keys computed for value_size="
+               << FLAGS_value_size;
+    return -1;
   }
-  dsm_->rpc_call(
-      m, shard_, SelectServerThreadID(), Slice(payload.data(), payload.size()));
 
-  WaitRPCFinish(static_cast<int>(rpc_id));
-  const std::int32_t status = ack->load(std::memory_order_acquire);
-  {
-    std::lock_guard<std::mutex> guard(rpc_mu_);
-    rpcId2PollMap_.erase(rpc_id);
+  for (std::size_t offset = 0; offset < keys.size();
+       offset += static_cast<std::size_t>(max_put_keys)) {
+    const std::size_t end = std::min(
+        offset + static_cast<std::size_t>(max_put_keys), keys.size());
+    std::vector<uint64_t> key_slice(keys.begin() + offset, keys.begin() + end);
+    std::vector<std::vector<float>> value_slice(
+        values.begin() + offset, values.begin() + end);
+
+    std::string payload = EncodePutPayload(key_slice, value_slice);
+    if (payload.empty()) {
+      LOG(ERROR) << "EncodePutPayload failed for slice [" << offset << ", "
+                 << end << ")";
+      return -1;
+    }
+
+    auto* ack = reinterpret_cast<std::atomic<int32_t>*>(
+        GetReceiveBuffer(sizeof(std::int32_t)));
+    ack->store(static_cast<std::int32_t>(RpcStatus::kPending),
+               std::memory_order_release);
+
+    thread_local auto m = RawMessage::get_new_msg();
+    m->type             = RpcType::PUT;
+    m->receive_gaddr    = dsm_->gaddr(ack);
+
+    const uint64_t rpc_id = rpcIDAcc_.fetch_add(1, std::memory_order_relaxed);
+    {
+      std::lock_guard<std::mutex> guard(rpc_mu_);
+      rpcId2PollMap_[rpc_id] = ack;
+    }
+    dsm_->rpc_call(
+        m, shard_, SelectServerThreadID(), Slice(payload.data(), payload.size()));
+
+    WaitRPCFinish(static_cast<int>(rpc_id));
+    const std::int32_t status = ack->load(std::memory_order_acquire);
+    {
+      std::lock_guard<std::mutex> guard(rpc_mu_);
+      rpcId2PollMap_.erase(rpc_id);
+    }
+    if (status != static_cast<std::int32_t>(RpcStatus::kOk)) {
+      LOG(ERROR) << "PUT slice failed with status="
+                 << RpcStatusToString(static_cast<RpcStatus>(status))
+                 << " slice=[" << offset << ", " << end << ")";
+      return -1;
+    }
   }
-  return status == static_cast<std::int32_t>(RpcStatus::kOk) ? 0 : -1;
+  return 0;
 }
 
 int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
