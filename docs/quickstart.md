@@ -9,23 +9,23 @@ RecStore 推荐使用 Docker 进行环境配置。在开始之前，请确保你
 *   **Docker**: [安装指南](https://docs.docker.com/engine/install/ubuntu/)
 *   **NVIDIA Docker (NVIDIA Container Toolkit)**: [安装指南](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
-### Ubuntu 快速安装脚本
+??? info "Ubuntu 快速安装脚本"
 
-如果你使用的是 Ubuntu 系统，可以使用以下命令快速安装 Docker 和 NVIDIA Container Toolkit：
+    如果你使用的是 Ubuntu 系统，可以使用以下命令快速安装 Docker 和 NVIDIA Container Toolkit：
 
-```bash
-# 1. 安装 Docker
-curl -fsSL https://get.docker.com | sudo sh
+    ```bash
+    # 1. 安装 Docker
+    curl -fsSL https://get.docker.com | sudo sh
 
-# 2. 安装 NVIDIA Container Toolkit
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-  && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    # 2. 安装 NVIDIA Container Toolkit
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
+    && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
-sudo apt-get update
-sudo apt-get install -y nvidia-container-toolkit
-```
+    sudo apt-get update
+    sudo apt-get install -y nvidia-container-toolkit
+    ```
 
 ## 2. 获取代码
 
@@ -36,6 +36,17 @@ git clone https://github.com/RecStore/RecStore.git
 cd RecStore
 git submodule update --init --recursive
 ```
+
+???+ note "更新子模块"
+    首次执行拉取子模块可能耗时较长（取决于网络状况），请耐心等待。
+
+    如果你希望一次性下载第三方依赖，也可以访问 [Release](https://github.com/RecStore/RecStore/releases) 页面，下载发布产物中的 `recstore-<version>-linux-x86_64-third_party.tar.gz`。该压缩包是对 `third_party` 目录的完整打包，解压到 RecStore 根目录即可：
+
+    ```bash
+    # in RecStore root directory
+    tar -xzvf recstore-<version>-linux-x86_64-third_party.tar.gz -C .
+    ```
+
 
 ## 3. 构建 Docker 镜像
 
@@ -51,7 +62,7 @@ cd -
 
 你可以使用以下命令启动容器。**请务必根据你的实际环境修改路径映射 ( `-v` 选项)**。
 
-```bash
+```bash linenums="1" hl_lines="5-8"
 RECSTORE_PATH="$(cd .. && pwd)" \
 sudo docker run --cap-add=SYS_ADMIN --privileged \
     --security-opt seccomp=unconfined --runtime=nvidia \
@@ -86,7 +97,7 @@ sudo docker exec -it recstore /bin/bash
 cd dockerfiles
 bash init_env_inside_docker.sh > init_env.log 2>&1
 
-# 安装 GPU 开发默认依赖（全局安装）
+# 安装计算层开发依赖
 bash init_dlrm.sh --mirror=0
 ```
 
@@ -116,10 +127,12 @@ bash init_dlrm.sh --mirror=0
 
 ```bash
 cd ..
-mkdir build
-cd build
+# in RecStore root directory
+mkdir -p build && cd build
+```
 
+```bash title="编译 RecStore"
+# in RecStore/build directory
 cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.10 ..
-
 make -j
 ```
