@@ -140,10 +140,11 @@ private:
     auto m  = RawMessage::get_new_msg();
     m->type = RESP_GET_SERVER_THREADIDS;
     std::vector<int> thread_ids;
-    int r = serving_thread_id.fetch_add(1);
-    thread_ids.push_back(r % thread_count_);
-    r = serving_thread_id.fetch_add(1);
-    thread_ids.push_back(r % thread_count_);
+    thread_ids.reserve(static_cast<std::size_t>(thread_count_));
+    const int start = serving_thread_id.fetch_add(1);
+    for (int i = 0; i < thread_count_; ++i) {
+      thread_ids.push_back((start + i) % thread_count_);
+    }
     dsm_->rpc_call(
         m,
         recv->node_id,

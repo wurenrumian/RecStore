@@ -4,6 +4,7 @@
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include <folly/portability/GFlags.h>
@@ -136,8 +137,9 @@ void RDMAPSClientAdapter::EnsureClientInitialized() {
 
 void RDMAPSClientAdapter::EnsureThreadInitialized() {
   EnsureClientInitialized();
+  const std::thread::id tid = std::this_thread::get_id();
   std::lock_guard<std::mutex> guard(thread_init_mu_);
-  if (thread_initialized_) {
+  if (initialized_threads_.find(tid) != initialized_threads_.end()) {
     return;
   }
 
@@ -147,7 +149,7 @@ void RDMAPSClientAdapter::EnsureThreadInitialized() {
     client_->InitThread();
   }
 
-  thread_initialized_ = true;
+  initialized_threads_.insert(tid);
 }
 
 void RDMAPSClientAdapter::EnsureTableReady(const std::string& table_name,
@@ -349,7 +351,7 @@ RDMAPSClientAdapter::PrefetchParameter(const base::ConstArray<uint64_t>& keys) {
 }
 
 bool RDMAPSClientAdapter::IsPrefetchDone(uint64_t prefetch_id) {
-  EnsureClientInitialized();
+  EnsureThreadInitialized();
   if (client_ == nullptr) {
     return false;
   }
@@ -358,12 +360,18 @@ bool RDMAPSClientAdapter::IsPrefetchDone(uint64_t prefetch_id) {
 }
 
 void RDMAPSClientAdapter::WaitForPrefetch(uint64_t prefetch_id) {
-  EnsureClientInitialized();
+  EnsureThreadInitialized();
   if (client_ == nullptr) {
     throw std::runtime_error("RDMA adapter has no initialized client");
   }
   const PrefetchState state = GetPrefetchState(prefetch_id);
-  client_->WaitRPCFinish(state.rpc_id);
+  try {
+    client_->WaitRPCFinish(state.rpc_id);
+  } catch (...) {
+    client_->RevokeRPCResource(state.rpc_id);
+    MarkPrefetchConsumed(prefetch_id);
+    throw;
+  }
 }
 
 bool RDMAPSClientAdapter::GetPrefetchResult(

@@ -3,7 +3,9 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "base/json.h"
@@ -71,7 +73,7 @@ private:
   std::mutex thread_init_mu_;
   std::mutex state_mu_;
   bool initialized_        = false;
-  bool thread_initialized_ = false;
+  std::unordered_set<std::thread::id> initialized_threads_;
   std::vector<std::unique_ptr<petps::PetPSClient>> shard_clients_;
   std::unique_ptr<AllShardsParameterClientWrapper> multi_client_;
   BaseParameterClient* client_ = nullptr;

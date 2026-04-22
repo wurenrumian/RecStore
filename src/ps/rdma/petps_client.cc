@@ -293,6 +293,7 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
                               bool isAsync,
                               int async_req_id) {
   thread_local auto m = RawMessage::get_new_msg();
+  m->clear();
   GlobalAddress gaddr = dsm_->gaddr(values);
   m->type             = RpcType::GET;
   m->receive_gaddr    = gaddr;
@@ -318,6 +319,15 @@ int PetPSClient::GetParameter(base::ConstArray<uint64_t> keys,
                  shard_,
                  SelectServerThreadID(),
                  Slice(keys.binary_data(), keys.binary_size()));
+
+  if (rpc_id > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+    {
+      std::lock_guard<std::mutex> guard(rpc_mu_);
+      rpcId2PollMap_.erase(rpc_id);
+    }
+    throw std::runtime_error(
+        "rpc_id overflow int range: " + std::to_string(rpc_id));
+  }
 
   if (!isAsync) {
     WaitRPCFinish(static_cast<int>(rpc_id));
@@ -527,6 +537,7 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
                std::memory_order_release);
 
     thread_local auto m = RawMessage::get_new_msg();
+    m->clear();
     m->type             = RpcType::PUT;
     m->receive_gaddr    = dsm_->gaddr(slot);
     dsm_->rpc_call(m,
@@ -580,6 +591,7 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
                std::memory_order_release);
 
     thread_local auto m = RawMessage::get_new_msg();
+    m->clear();
     m->type             = RpcType::PUT;
     m->receive_gaddr    = dsm_->gaddr(slot);
     dsm_->rpc_call(m,
@@ -602,6 +614,7 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
   LOG(WARNING) << "FakePutParameter is a benchmark-only path and does not "
                   "carry full put payload values";
   thread_local auto m = RawMessage::get_new_msg();
+  m->clear();
   GlobalAddress gaddr = dsm_->gaddr(values);
   m->type             = RpcType::PUT;
   m->receive_gaddr    = gaddr;
@@ -627,6 +640,15 @@ int PetPSClient::FakePutParameter(base::ConstArray<uint64_t> keys,
                  shard_,
                  SelectServerThreadID(),
                  Slice(keys.binary_data(), keys.binary_size()));
+
+  if (rpc_id > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+    {
+      std::lock_guard<std::mutex> guard(rpc_mu_);
+      rpcId2PollMap_.erase(rpc_id);
+    }
+    throw std::runtime_error(
+        "rpc_id overflow int range: " + std::to_string(rpc_id));
+  }
 
   // if (!isAsync) {
   //   WaitRPCFinish(rpcIDAcc_);

@@ -8,8 +8,6 @@ from ps_test_config import (
     DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
     resolve_rdma_integration_config,
 )
-
-MAX_TIMEOUT_SECONDS = 15
 MEMCACHED_NOISE_PATTERNS = (
     "[petps-memcached]",
     "[petps-status] phase=memcached",
@@ -18,8 +16,10 @@ MEMCACHED_NOISE_PATTERNS = (
 )
 
 
-def normalize_timeout(timeout_seconds):
-    return min(timeout_seconds, MAX_TIMEOUT_SECONDS)
+def normalize_timeout(timeout_seconds, field_name):
+    if timeout_seconds <= 0:
+        raise ValueError(f"{field_name} must be > 0, got {timeout_seconds}")
+    return timeout_seconds
 
 
 def is_memcached_noise_line(line):
@@ -64,8 +64,8 @@ def main():
     )
     args = parser.parse_args()
     config_path = resolve_rdma_integration_config(args.server_count, args.config_path)
-    client_timeout = normalize_timeout(args.client_timeout)
-    cluster_timeout = normalize_timeout(args.cluster_timeout)
+    client_timeout = normalize_timeout(args.client_timeout, "client-timeout")
+    cluster_timeout = normalize_timeout(args.cluster_timeout, "cluster-timeout")
 
     runner = PetPSClusterRunner(
         config_path=config_path,

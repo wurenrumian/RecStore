@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "base/hash.h"
@@ -153,8 +155,17 @@ int AllShardsParameterClientWrapper::GetParameter(
     });
   }
 
-  const std::uint64_t batch_id = batch_rpc_id_acc_++;
-  batches_[batch_id]           = std::move(batch);
+  std::uint64_t batch_id = 0;
+  {
+    std::lock_guard<std::mutex> guard(batches_mu_);
+    batch_id = batch_rpc_id_acc_++;
+    if (batch_id > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      throw std::runtime_error(
+          "allshards batch rpc id overflow int range: " +
+          std::to_string(batch_id));
+    }
+    batches_[batch_id] = std::move(batch);
+  }
   if (!isAsync) {
     WaitRPCFinish(static_cast<int>(batch_id));
   }
@@ -177,6 +188,7 @@ void* AllShardsParameterClientWrapper::GetReceiveBuffer(size_t size) {
 }
 
 bool AllShardsParameterClientWrapper::QueryRPCFinished(int rpc_id) {
+  std::lock_guard<std::mutex> guard(batches_mu_);
   auto it = batches_.find(rpc_id);
   CHECK(it != batches_.end());
 
@@ -190,6 +202,7 @@ bool AllShardsParameterClientWrapper::QueryRPCFinished(int rpc_id) {
 }
 
 void AllShardsParameterClientWrapper::WaitRPCFinish(int rpc_id) {
+  std::lock_guard<std::mutex> guard(batches_mu_);
   auto it = batches_.find(rpc_id);
   CHECK(it != batches_.end());
 
@@ -201,6 +214,7 @@ void AllShardsParameterClientWrapper::WaitRPCFinish(int rpc_id) {
 }
 
 void AllShardsParameterClientWrapper::RevokeRPCResource(int rpc_id) {
+  std::lock_guard<std::mutex> guard(batches_mu_);
   auto it = batches_.find(rpc_id);
   CHECK(it != batches_.end());
 

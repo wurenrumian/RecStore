@@ -89,12 +89,32 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn("--rdma_server_ready_poll_ms=3", client_cmd)
         self.assertIn("--rdma_client_receive_arena_bytes=134217728", client_cmd)
 
+    @mock.patch("petps_cluster_runner.os.geteuid", return_value=0)
     @mock.patch("petps_cluster_runner.shutil.which", return_value="/usr/bin/memcached")
-    def test_build_memcached_cmd_uses_system_memcached(self, _mock_which):
+    def test_build_memcached_cmd_uses_system_memcached_as_root(
+        self,
+        _mock_which,
+        _mock_geteuid,
+    ):
         runner = PetPSClusterRunner(memcached_port=12345)
         cmd = runner.build_memcached_cmd()
         self.assertEqual(cmd[0], "/usr/bin/memcached")
         self.assertEqual(cmd[1:5], ["-u", "root", "-l", "127.0.0.1"])
+        self.assertIn("12345", cmd)
+
+    @mock.patch("petps_cluster_runner.os.geteuid", return_value=1000)
+    @mock.patch("petps_cluster_runner.shutil.which", return_value="/usr/bin/memcached")
+    def test_build_memcached_cmd_does_not_force_root_user_for_non_root(
+        self,
+        _mock_which,
+        _mock_geteuid,
+    ):
+        runner = PetPSClusterRunner(memcached_port=12345)
+        cmd = runner.build_memcached_cmd()
+        self.assertEqual(cmd[0], "/usr/bin/memcached")
+        self.assertNotIn("-u", cmd)
+        self.assertIn("-l", cmd)
+        self.assertIn("127.0.0.1", cmd)
         self.assertIn("12345", cmd)
 
     @mock.patch("petps_cluster_runner.shutil.which", return_value=None)

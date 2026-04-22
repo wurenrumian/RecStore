@@ -2,11 +2,14 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <unordered_map>
 #include <vector>
 
 #include "base/hash.h"
+#define private public
 #include "ps/rdma/allshards_ps_client.h"
+#undef private
 #include "ps/rdma/rdma_protocol.h"
 #include "ps/rdma/rdma_status.h"
 
@@ -189,6 +192,32 @@ TEST(AllShardsClientTest, PropagatesShardFailureStatus) {
   std::vector<std::vector<float>> values;
   EXPECT_EQ(wrapper.GetParameter(base::ConstArray<uint64_t>(keys), &values),
             -1);
+}
+
+TEST(AllShardsClientTest, ThrowsWhenBatchRpcIdOverflowsIntRange) {
+  FLAGS_value_size             = 16;
+  FLAGS_max_kv_num_per_request = 4;
+
+  FakeShardClient shard0(0);
+  FakeShardClient shard1(1);
+  auto shard0_keys = SelectKeysForShard(0, 1, 2);
+  auto shard1_keys = SelectKeysForShard(1, 1, 2);
+  shard0.storage_[shard0_keys[0]] = {10, 0, 0, 0};
+  shard1.storage_[shard1_keys[0]] = {20, 0, 0, 0};
+
+  std::vector<uint64_t> keys                = {shard0_keys[0], shard1_keys[0]};
+  std::vector<BaseParameterClient*> clients = {&shard0, &shard1};
+  AllShardsParameterClientWrapper wrapper(clients, 2);
+  std::vector<float> output(keys.size() * 4 + 1, 0.0f);
+
+  wrapper.batch_rpc_id_acc_ =
+      static_cast<std::uint64_t>(std::numeric_limits<int>::max()) + 1;
+  EXPECT_THROW(
+      wrapper.GetParameter(base::ConstArray<uint64_t>(keys),
+                           output.data(),
+                           false,
+                           0),
+      std::runtime_error);
 }
 
 } // namespace

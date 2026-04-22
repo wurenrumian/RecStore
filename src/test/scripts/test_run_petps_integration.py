@@ -9,15 +9,19 @@ from ps_test_config import (
     DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
     resolve_rdma_integration_config,
 )
-from run_petps_integration import MAX_TIMEOUT_SECONDS, normalize_timeout
+from run_petps_integration import normalize_timeout
 
 
 class TestRunPetPSIntegration(unittest.TestCase):
-    def test_timeout_is_capped_to_hard_limit(self):
-        self.assertEqual(normalize_timeout(99), MAX_TIMEOUT_SECONDS)
+    def test_timeout_keeps_user_value(self):
+        self.assertEqual(normalize_timeout(99, "client-timeout"), 99)
 
     def test_timeout_keeps_value_within_limit(self):
-        self.assertEqual(normalize_timeout(10), 10)
+        self.assertEqual(normalize_timeout(10, "cluster-timeout"), 10)
+
+    def test_timeout_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            normalize_timeout(0, "client-timeout")
 
     def test_uses_single_shard_rdma_config_by_default(self):
         self.assertEqual(

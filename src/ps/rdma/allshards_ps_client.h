@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -63,5 +64,6 @@ private:
   std::vector<BaseParameterClient*> clients_;
   int num_shards_;
   std::uint64_t batch_rpc_id_acc_ = 1;
+  mutable std::mutex batches_mu_;
   std::unordered_map<std::uint64_t, BatchRequest> batches_;
 };

@@ -144,17 +144,19 @@ class PetPSClusterRunner:
                 "--use-local-memcached=never with an external memcached "
                 "instance"
             )
-        return [
-            memcached_bin,
-            "-u",
-            "root",
+        cmd = [memcached_bin]
+        # Only pass -u root when actually running as root.
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            cmd.extend(["-u", "root"])
+        cmd.extend([
             "-l",
             self.memcached_host,
             "-p",
             str(self.memcached_port),
             "-c",
             "10000",
-        ]
+        ])
+        return cmd
 
     def build_server_cmd(self, global_id):
         cmd = [

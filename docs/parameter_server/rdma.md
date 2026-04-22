@@ -41,14 +41,12 @@ RDMA 专项配置位于：
 ## 快速验证
 
 !!! note
-    本节命令默认在仓库根目录执行（`/app/RecStore`）。
-    如果当前目录是 `build/`，请将脚本路径改为 `../src/test/scripts/...`，
-    并将二进制路径改为 `./bin/...`。
+    本节命令默认在仓库根目录（`/app/RecStore`）执行。
 
 ### memcached
 
 ```bash
-memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
+memcached -l 127.0.0.1 -p 21211 -c 10000 -vv
 ```
 
 `--use-local-memcached` 控制 memcached 来源：
@@ -60,12 +58,8 @@ memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
 | `always` | 直接启动系统 `memcached` 二进制 |
 
 !!! note
-    `auto` / `always` 依赖机器上已安装真实 `memcached` 命令，不再使用 Python fake memcached。
-    `run_petps_integration.py` 与 `run_rdma_transport_benchmarks.py` 默认会隐藏
-    memcached 相关噪音日志；如需查看完整 runner 日志可追加
-    `--show-runner-logs`。
-    实际使用中建议优先使用 `--use-local-memcached=auto`，让脚本统一管理
-    memcached 生命周期并减少环境差异。
+    推荐优先使用 `--use-local-memcached=auto`，由脚本统一管理 memcached 生命周期。
+    如需完整 runner 日志，可追加 `--show-runner-logs`。
 
 ### 启动 RDMA Server
 
@@ -114,7 +108,7 @@ python3 src/test/scripts/run_petps_integration.py \
   --config-path ./src/test/configs/recstore_config.rdma_multishard_test.json \
   --test-binary ./build/bin/petps_integration_test \
   --gtest-filter=PetPSIntegrationTest.PutGetRoundTripMultiShard \
-  --client-timeout 20 \
+  --client-timeout 30 \
   --use-local-memcached=auto
 ```
 
@@ -129,7 +123,7 @@ python3 src/test/scripts/run_rdma_transport_benchmarks.py \
   --rdma-warmup-rounds 2 \
   --report-mode summary \
   --rdma-only \
-  --rdma-thread-num 4 \
+  --rdma-thread-num 1 \
   --rdma-put-protocol-version 2 \
   --rdma-put-v2-transfer-mode read \
   --rdma-wait-timeout-ms 10000 \
@@ -138,7 +132,8 @@ python3 src/test/scripts/run_rdma_transport_benchmarks.py \
 ```
 
 !!! note
-    `run_petps_integration.py` 对 `client-timeout` 与 `cluster-timeout` 采用 15 秒硬上限；超过 15 秒会自动终止并清理进程。
+    `run_petps_integration.py` 中 `--client-timeout` 与 `--cluster-timeout`
+    会按你传入的值生效（要求 > 0）。
     `--report-mode` 支持：
     `summary`（默认，输出聚合延迟与吞吐，日志最少）、
     `per_round`（逐轮延迟）、
@@ -188,7 +183,23 @@ key_ops/s = (iterations * 2 * batch_keys) / (mean_us / 1e6)
 
 ### ctest 入口
 
-当构建时启用 `ENABLE_RDMA_INTEGRATION_TESTS=ON`，可直接运行：
+推荐按“冒烟 -> 集成”顺序执行：
+
+```bash
+# 1) RDMA 单测冒烟（快）
+ctest --test-dir ./build -R "^test_rdma_protocol$|^test_allshards_ps_client$" -VV
+
+# 2) Op-layer RDMA 集成（当前 CI 默认覆盖的核心）
+ctest --test-dir ./build -L rdma_integration -VV
+```
+
+!!! note
+    `rdma_integration` 标签当前至少包含：
+    `pytorch_client_test_rdma_basic`、
+    `pytorch_client_test_rdma`、
+    `pytorch_client_test_rdma_auto`。
+
+若构建时额外启用 `ENABLE_RDMA_INTEGRATION_TESTS=ON`，还可以运行 PetPS 专项集成：
 
 ```bash
 ctest --test-dir ./build -R "petps_single_shard_test|petps_multi_shard_test" -VV
@@ -207,18 +218,12 @@ ctest --test-dir ./build -R "^pytorch_client_test_rdma_auto$" -VV
 上述测试使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
 init、write、read、update 与 prefetch 正确性。
 
-如需手工切换 memcached 策略，也可在运行前设置环境变量：
+如需手工指定 memcached 策略：
 
 ```bash
 export RECSTORE_USE_LOCAL_MEMCACHED=auto   # 或 always / never
 ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
 ```
-
-其中：
-
-- `auto`：优先尝试外部 memcached，失败时自动拉起本地 `memcached` 二进制
-- `never`：只使用外部 `127.0.0.1:21211` 的 memcached
-- `always`：直接拉起本地 `memcached` 二进制
 
 ## 排障
 
