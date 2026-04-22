@@ -34,55 +34,24 @@ RDMA 专项配置位于：
 | `src/test/configs/recstore_config.rdma_multishard_test.json` | 多分片测试 |
 
 !!! note
-    这些配置只服务 RDMA 专项验证，不应回落到根目录默认 `recstore_config.json`。
-
-配置示例 (`recstore_config.rdma_test.json`)：
-
-```json
-{
-  "cache_ps": {
-    "ps_type": "GRPC",
-    "max_batch_keys_size": 65536,
-    "num_threads": 32,
-    "num_shards": 1,
-    "servers": [{"host": "127.0.0.1", "port": 25000, "shard": 0}],
-    "base_kv_config": {
-      "path": "/tmp/recstore_data_rdma_test",
-      "capacity": 1000000,
-      "value_size": 16,
-      "value_type": "DRAM",
-      "value_memory_management": "PersistLoopShmMalloc"
-    }
-  },
-  "distributed_client": {
-    "num_shards": 1,
-    "hash_method": "city_hash",
-    "max_keys_per_request": 500,
-    "servers": [{"host": "127.0.0.1", "port": 25000, "shard": 0}]
-  }
-}
-```
-
-!!! note
     `recstore_config.rdma_test.json` / `recstore_config.rdma_multishard_test.json`
     主要用于 PetPS 专项链路测试；Op-layer 验证请使用
     `recstore_config.op_rdma.json`（其中 `cache_ps.ps_type` 为 `RDMA`）。
 
-## 测试入口
+## 快速验证
 
 !!! note
     本节命令默认在仓库根目录执行（`/app/RecStore`）。
     如果当前目录是 `build/`，请将脚本路径改为 `../src/test/scripts/...`，
     并将二进制路径改为 `./bin/...`。
 
-### 启动 memcached
+### memcached
 
 ```bash
 memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
 ```
 
-`run_petps_integration.py` 的 `--use-local-memcached` 参数控制 memcached
-来源：
+`--use-local-memcached` 控制 memcached 来源：
 
 | 参数值 | 行为 |
 |--------|------|
@@ -98,7 +67,7 @@ memcached -u root -l 127.0.0.1 -p 21211 -c 10000 -vv
     实际使用中建议优先使用 `--use-local-memcached=auto`，让脚本统一管理
     memcached 生命周期并减少环境差异。
 
-### RDMA Server 启动（推荐）
+### 启动 RDMA Server
 
 为降低 `petps_server` 直接启动时的参数复杂度（`global_id` /
 `num_server_processes` / `num_client_processes` 等），推荐使用：
@@ -109,19 +78,11 @@ python3 src/test/scripts/run_petps_server.py \
   --use-local-memcached=auto
 ```
 
-如需调优，也可追加：
+当前脚本实际支持的常用调优参数只有：
 `--rdma-per-thread-response-limit-bytes`、
 `--rdma-server-ready-timeout-sec`、
 `--rdma-server-ready-poll-ms`、
 `--rdma-client-receive-arena-bytes`、
-`--rdma-put-protocol-version`、
-`--rdma-put-v2-transfer-mode`、
-`--rdma-put-v2-push-slot-bytes`、
-`--rdma-put-v2-push-slots-per-client`、
-`--rdma-put-v2-push-region-offset`、
-`--rdma-put-client-send-arena-bytes`、
-`--rdma-put-server-scratch-bytes`、
-`--rdma-wait-timeout-ms`、
 `--validate-routing`。
 
 该入口会：
@@ -142,6 +103,9 @@ python3 src/test/scripts/run_petps_integration.py \
   --use-local-memcached=auto
 ```
 
+!!! note
+    这条命令已经按当前代码实际验证通过。
+
 ### 多分片 integration
 
 ```bash
@@ -154,115 +118,7 @@ python3 src/test/scripts/run_petps_integration.py \
   --use-local-memcached=auto
 ```
 
-### transport benchmark
-
-```bash
-python3 src/test/scripts/run_rdma_transport_benchmarks.py \
-  --benchmark-binary ./build/bin/ps_transport_benchmark \
-  --iterations 1000 \
-  --batch-keys 500 \
-  --rounds 50 \
-  --rdma-warmup-rounds 5 \
-  --report-mode summary \
-  --rdma-only \
-  --rdma-put-protocol-version 2 \
-  --use-local-memcached=auto
-```
-
-!!! note
-    `run_petps_integration.py` 对 `client-timeout` 与 `cluster-timeout` 采用 15 秒硬上限；超过 15 秒会自动终止并清理进程。
-    `--report-mode` 支持：
-    `summary`（默认，输出聚合延迟与吞吐，日志最少）、
-    `per_round`（逐轮延迟）、
-    `both`（逐轮 + 聚合）。
-    `run_rdma_transport_benchmarks.py` 在三种 transport 全部完成后，
-    会额外打印一张 `measure` 阶段汇总表（包含延迟与吞吐）。
-    仅关注 RDMA 时可加 `--rdma-only`，跳过 GRPC/BRPC 阶段。
-    当前默认 PUT 协议为 v2（control/data 分离），并默认使用
-    `--rdma-put-v2-transfer-mode push`：
-    客户端先将 payload 通过 RDMA write 推送到服务端预留 slot，再发送小控制消息。
-    如需对比旧版 v2-read，可设置 `--rdma-put-v2-transfer-mode read`。
-    若需回归旧行为，可显式设置 `--rdma-put-protocol-version 1`。
-
-### PUT v2 与 v1 对照
-
-v2（默认）：
-
-```bash
-python3 src/test/scripts/run_rdma_transport_benchmarks.py \
-  --benchmark-binary ./build/bin/ps_transport_benchmark \
-  --iterations 3000 \
-  --batch-keys 500 \
-  --rounds 5 \
-  --rdma-warmup-rounds 1 \
-  --report-mode summary \
-  --rdma-only \
-  --rdma-put-protocol-version 2 \
-  --rdma-put-v2-transfer-mode push \
-  --use-local-memcached=auto
-```
-
-v2-read（对照）：
-
-```bash
-python3 src/test/scripts/run_rdma_transport_benchmarks.py \
-  --benchmark-binary ./build/bin/ps_transport_benchmark \
-  --iterations 3000 \
-  --batch-keys 500 \
-  --rounds 5 \
-  --rdma-warmup-rounds 1 \
-  --report-mode summary \
-  --rdma-only \
-  --rdma-put-protocol-version 2 \
-  --rdma-put-v2-transfer-mode read \
-  --use-local-memcached=auto
-```
-
-v1（兼容回退）：
-
-```bash
-python3 src/test/scripts/run_rdma_transport_benchmarks.py \
-  --benchmark-binary ./build/bin/ps_transport_benchmark \
-  --iterations 3000 \
-  --batch-keys 500 \
-  --rounds 5 \
-  --rdma-warmup-rounds 1 \
-  --report-mode summary \
-  --rdma-only \
-  --rdma-put-protocol-version 1 \
-  --use-local-memcached=auto
-```
-
-已知约束与调优点：
-
-- `--rdma-put-client-send-arena-bytes`：客户端 PUT v2 payload 缓冲上限。
-- `--rdma-put-server-scratch-bytes`：仅 v2-read 使用，服务端每线程拉取 payload 的 scratch 上限。
-- `--rdma-put-v2-push-slot-bytes`：v2-push 单个 slot 大小，需大于等于单次 PUT payload。
-- `--rdma-put-v2-push-slots-per-client`：每个 client node 预留 slot 数。
-- `--rdma-put-v2-push-region-offset`：服务端 DSM 中 slot 区域起始偏移（默认 64MB）。
-- 若大 batch 命中上限，服务端会返回 `batch_too_large`，可按需增大上限。
-
-### 协议升级涉及文件（便于排查）
-
-- `src/ps/rdma/rdma_protocol.h`：定义 PUT v2 control 结构与编解码。
-- `src/ps/rdma/petps_client.cc/.h`：新增 v2(read/push) 发送路径、ack 等待与超时控制。
-- `src/ps/rdma/petps_server.cc`：新增 v2 控制解析、payload 拉取/校验、批量写入路径。
-- `src/ps/base/cache_ps_impl.h`：新增 `PutDenseParameterBatch`，用于服务端批量写入。
-- `src/benchmark/ps_transport_benchmark.cc`：PUT 调用改为强校验返回值。
-- `src/test/scripts/petps_cluster_runner.py`：透传新增 gflags，补充 client timeout 处理。
-- `src/test/scripts/run_rdma_transport_benchmarks.py`：新增协议/线程/超时参数入口。
-- `src/test/scripts/test_*.py`、`src/ps/rdma/petps_integration_test.cpp`：补充协议与脚本参数测试。
-
-### 当前稳定基线（建议）
-
-在当前实现下，推荐先使用下面这组参数作为稳定基线：
-
-- `--batch-keys=500`
-- `--rdma-thread-num=4`
-- `--rdma-put-protocol-version=2`
-- `--rdma-put-v2-transfer-mode=read`
-
-参考命令：
+### RDMA transport benchmark
 
 ```bash
 python3 src/test/scripts/run_rdma_transport_benchmarks.py \
@@ -281,13 +137,34 @@ python3 src/test/scripts/run_rdma_transport_benchmarks.py \
   --use-local-memcached=auto
 ```
 
+!!! note
+    `run_petps_integration.py` 对 `client-timeout` 与 `cluster-timeout` 采用 15 秒硬上限；超过 15 秒会自动终止并清理进程。
+    `--report-mode` 支持：
+    `summary`（默认，输出聚合延迟与吞吐，日志最少）、
+    `per_round`（逐轮延迟）、
+    `both`（逐轮 + 聚合）。
+    `run_rdma_transport_benchmarks.py` 在三种 transport 全部完成后，
+    会额外打印一张 `measure` 阶段汇总表（包含延迟与吞吐）。
+    仅关注 RDMA 时可加 `--rdma-only`，跳过 GRPC/BRPC 阶段。
+    当前默认 PUT 协议为 v2，benchmark 脚本默认 `--rdma-put-v2-transfer-mode=push`。
+    但按当前实现的稳定性，建议优先使用 `read` 模式做基线压测。
+
+### 建议基线
+
+推荐先固定以下组合：
+
+- `--batch-keys=500`
+- `--rdma-thread-num=4`
+- `--rdma-put-protocol-version=2`
+- `--rdma-put-v2-transfer-mode=read`
+
 已知现象（`value_size=16`）：
 
 - 将 `batch-keys` 提升到 `1000` 时，可能触发 Mayfly `MESSAGE_SIZE` 上限并报错
   `messeage size too large`。
 - 建议在默认消息大小配置下，将 `batch-keys` 控制在 `500` 附近进行稳定压测。
 
-### benchmark 汇总表解读
+### benchmark 输出解读
 
 `report-mode=summary` 或 `both` 时，脚本末尾会输出：
 
@@ -309,19 +186,7 @@ ops/s = (iterations * 2) / (mean_us / 1e6)
 key_ops/s = (iterations * 2 * batch_keys) / (mean_us / 1e6)
 ```
 
-示例（`iterations=1000, rounds=50`）：
-
-| transport | mean_us | ops/s | key_ops/s |
-|-----------|---------|-------|-----------|
-| RDMA | 10,534 | 189,861 | 759,443 |
-| BRPC | 192,259 | 10,402.70 | 41,610.60 |
-| GRPC | 274,482 | 7,286.44 | 29,145.80 |
-
-!!! note
-    上表用于说明字段含义与计算方式，不同机器/配置下绝对值会变化。
-    在同机同配置下进行横向对比更有意义。
-
-### ctest 入口（可选）
+### ctest 入口
 
 当构建时启用 `ENABLE_RDMA_INTEGRATION_TESTS=ON`，可直接运行：
 
@@ -339,7 +204,7 @@ ctest --test-dir ./build -R "petps_single_shard_test|petps_multi_shard_test" -VV
 ctest --test-dir ./build -R "^pytorch_client_test_rdma_auto$" -VV
 ```
 
-两个测试均使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
+上述测试使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
 init、write、read、update 与 prefetch 正确性。
 
 如需手工切换 memcached 策略，也可在运行前设置环境变量：
@@ -355,58 +220,19 @@ ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
 - `never`：只使用外部 `127.0.0.1:21211` 的 memcached
 - `always`：直接拉起本地 `memcached` 二进制
 
+## 排障
 
-## 稳定性机制（当前默认行为）
+常见问题优先看这几项：
 
-`run_petps_integration.py` / `PetPSClusterRunner` 已内置以下稳定性机制：
+- 如果卡在 `memcached-wait`，先检查 `127.0.0.1:21211` 是否可达。
+- 如果卡在 `startup-wait`，优先看 `petps_server` 是否已启动、是否有残留旧进程。
+- 多分片失败时，先核对 `recstore_config.rdma_multishard_test.json` 中的 `num_shards/servers` 与测试参数是否一致。
+- 如需看完整 runner 状态日志，可在命令后追加 `--show-runner-logs`。
 
-1. 每次测试启动前自动重置 memcached 状态：
-   - `flush_all`
-   - 重建 `serverNum=0`、`clientNum=0`、`xmh-consistent-dsm=1`
-   - 通过 `get` 回读校验三项键值
-2. 对 memcached 就绪进行重试探测，失败会报明确错误。
-3. 启动阶段周期打印状态刷新日志（`[petps-status]`）。
-4. `client-timeout` 与 `cluster-timeout` 统一受 15 秒硬上限保护，超时自动清理子进程。
-
-典型状态日志：
-
-- `phase=memcached-ready`
-- `phase=memcached-reset`
-- `phase=startup-wait`
-- `phase=startup-timeout`
-- `phase=startup-crash`
-
-## 排障 Runbook
-
-### 常见症状：偶发卡住（非持续高频连接）
-
-建议按以下顺序排查：
-
-1. 先看状态日志停在什么阶段：
-   - 若停在 `memcached-wait`：优先检查 memcached 可达性。
-   - 若停在 `startup-wait`：优先检查 `petps_server` 是否已启动且未崩溃。
-2. 检查 21211 端口连接关系：
+常用检查命令：
 
 ```bash
 ss -tnp | grep ':21211'
 lsof -nP -iTCP:21211
 fuser -v 21211/tcp
 ```
-
-3. 如需手工验证 memcached 重置，可执行（与脚本内置逻辑一致）：
-
-```bash
-printf 'flush_all\r\nset serverNum 0 0 1\r\n0\r\nset clientNum 0 0 1\r\n0\r\nset xmh-consistent-dsm 0 0 1\r\n1\r\nget serverNum\r\nget clientNum\r\nget xmh-consistent-dsm\r\nquit\r\n' | nc -q 1 127.0.0.1 21211
-```
-
-4. 多分片场景优先确认：
-   - `recstore_config.rdma_multishard_test.json` 中 `num_shards/servers` 与测试参数一致。
-   - 本地没有残留旧 `petps_server` 进程占用同一组资源。
-
-## 关键入口文件
-
-- `src/test/scripts/run_petps_server.py`
-- `src/test/scripts/run_petps_integration.py`
-- `src/test/scripts/run_rdma_transport_benchmarks.py`
-- `src/ps/rdma/petps_server.cc`
-- `src/ps/rdma/petps_client.cc`
