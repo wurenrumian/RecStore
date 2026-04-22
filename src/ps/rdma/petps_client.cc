@@ -35,18 +35,15 @@ DEFINE_int32(
     rdma_put_protocol_version,
     2,
     "RDMA PUT protocol version: 2=remote-payload(default), 1=legacy-inline");
-DEFINE_string(
-    rdma_put_v2_transfer_mode,
-    "push",
-    "RDMA PUT-v2 payload transfer mode: read|push");
-DEFINE_uint64(
-    rdma_put_v2_push_slot_bytes,
-    256 * 1024,
-    "RDMA PUT-v2(push) per-slot bytes reserved on server DSM");
-DEFINE_int32(
-    rdma_put_v2_push_slots_per_client,
-    8,
-    "RDMA PUT-v2(push) slot count reserved per client node");
+DEFINE_string(rdma_put_v2_transfer_mode,
+              "push",
+              "RDMA PUT-v2 payload transfer mode: read|push");
+DEFINE_uint64(rdma_put_v2_push_slot_bytes,
+              256 * 1024,
+              "RDMA PUT-v2(push) per-slot bytes reserved on server DSM");
+DEFINE_int32(rdma_put_v2_push_slots_per_client,
+             8,
+             "RDMA PUT-v2(push) slot count reserved per client node");
 DEFINE_uint64(
     rdma_put_v2_push_region_offset,
     64 * 1024 * 1024,
@@ -67,7 +64,7 @@ DEFINE_int32(
     "Timeout for waiting a single RDMA RPC completion; <=0 means no timeout");
 
 namespace {
-constexpr std::uint64_t kClientDsmSizeBytes = 1 * 1000 * define::MB;
+constexpr std::uint64_t kClientDsmSizeBytes        = 1 * 1000 * define::MB;
 constexpr std::size_t kClientRdmaThreadBufferBytes = 1 * define::MB;
 
 bool ShouldValidateRouting() {
@@ -78,7 +75,8 @@ bool ShouldValidateRouting() {
 int MaxPutKeysPerRpc(int value_size_bytes) {
   const std::size_t usable_payload =
       MESSAGE_SIZE - 40 - sizeof(RawMessage) - sizeof(std::uint32_t);
-  if (value_size_bytes <= 0 || usable_payload <= sizeof(petps::PutPayloadHeader)) {
+  if (value_size_bytes <= 0 ||
+      usable_payload <= sizeof(petps::PutPayloadHeader)) {
     return 0;
   }
   const std::size_t per_key_bytes =
@@ -93,7 +91,7 @@ struct alignas(64) PutAckSlot {
 };
 
 std::int32_t WaitPutAck(std::atomic<int32_t>* ack) {
-  int wait_loops = 0;
+  int wait_loops   = 0;
   const auto start = std::chrono::steady_clock::now();
   while (ack->load(std::memory_order_acquire) ==
          static_cast<std::int32_t>(petps::RpcStatus::kPending)) {
@@ -113,13 +111,13 @@ std::int32_t WaitPutAck(std::atomic<int32_t>* ack) {
       std::this_thread::yield();
     }
     if (FLAGS_rdma_wait_timeout_ms > 0) {
-      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now() - start)
-                                  .count();
+      const auto elapsed_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - start)
+              .count();
       if (elapsed_ms > FLAGS_rdma_wait_timeout_ms) {
-        throw std::runtime_error(
-            "PUT ack wait timeout timeout_ms=" +
-            std::to_string(FLAGS_rdma_wait_timeout_ms));
+        throw std::runtime_error("PUT ack wait timeout timeout_ms=" +
+                                 std::to_string(FLAGS_rdma_wait_timeout_ms));
       }
     }
   }
@@ -279,8 +277,8 @@ void* PetPSClient::GetSendBuffer(size_t size) {
   if (base_offset + static_cast<uint64_t>(size) > kClientDsmSizeBytes) {
     throw std::runtime_error(
         "RDMA put send arena exceeds DSM size: request=" +
-        std::to_string(size) + " old_offset=0 base_offset=" +
-        std::to_string(base_offset) +
+        std::to_string(size) +
+        " old_offset=0 base_offset=" + std::to_string(base_offset) +
         " dsm_size=" + std::to_string(kClientDsmSizeBytes));
   }
   GlobalAddress gaddr;
@@ -334,8 +332,8 @@ bool PetPSClient::QueryRPCFinished(int rpc_id) {
 }
 
 void PetPSClient::WaitRPCFinish(int rpc_id) {
-  auto* poll     = GetPollSlot(static_cast<uint64_t>(rpc_id));
-  int wait_loops = 0;
+  auto* poll       = GetPollSlot(static_cast<uint64_t>(rpc_id));
+  int wait_loops   = 0;
   const auto start = std::chrono::steady_clock::now();
   while (poll->load(std::memory_order_acquire) ==
          static_cast<std::int32_t>(RpcStatus::kPending)) {
@@ -364,9 +362,10 @@ void PetPSClient::WaitRPCFinish(int rpc_id) {
       std::this_thread::yield();
     }
     if (FLAGS_rdma_wait_timeout_ms > 0) {
-      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::steady_clock::now() - start)
-                                  .count();
+      const auto elapsed_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              std::chrono::steady_clock::now() - start)
+              .count();
       if (elapsed_ms > FLAGS_rdma_wait_timeout_ms) {
         throw std::runtime_error(
             "WaitRPCFinish timeout rpc_id=" + std::to_string(rpc_id) +
@@ -418,12 +417,12 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
     }();
     if (transfer_mode == std::numeric_limits<std::uint32_t>::max()) {
       LOG(ERROR) << "Unknown rdma_put_v2_transfer_mode="
-                 << FLAGS_rdma_put_v2_transfer_mode
-                 << ", expected read|push";
+                 << FLAGS_rdma_put_v2_transfer_mode << ", expected read|push";
       return -1;
     }
 
-    const std::size_t payload_bytes = PutPayloadBytes(keys.size(), FLAGS_value_size);
+    const std::size_t payload_bytes =
+        PutPayloadBytes(keys.size(), FLAGS_value_size);
     if (payload_bytes > std::numeric_limits<std::uint32_t>::max()) {
       LOG(ERROR) << "PUT-v2 payload too large, bytes=" << payload_bytes;
       return -1;
@@ -440,25 +439,26 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
       }
     } else if (transfer_mode == kPutV2TransferModePush) {
       if (payload_bytes > kClientRdmaThreadBufferBytes) {
-        LOG(ERROR) << "PUT-v2(push) payload exceeds thread RDMA buffer: payload_bytes="
-                   << payload_bytes
-                   << " thread_buffer_bytes=" << kClientRdmaThreadBufferBytes;
+        LOG(ERROR)
+            << "PUT-v2(push) payload exceeds thread RDMA buffer: payload_bytes="
+            << payload_bytes
+            << " thread_buffer_bytes=" << kClientRdmaThreadBufferBytes;
         return -1;
       }
-      // dsm_->write[_sync] uses cacheLKey for local SGE. The local source buffer
-      // must come from the registered per-thread RDMA cache buffer.
+      // dsm_->write[_sync] uses cacheLKey for local SGE. The local source
+      // buffer must come from the registered per-thread RDMA cache buffer.
       payload_buf = dsm_->get_rdma_buffer();
     } else {
       LOG(ERROR) << "PUT-v2 unknown transfer mode=" << transfer_mode;
       return -1;
     }
 
-    std::memcpy(
-        payload_buf, keys.data(), keys.size() * sizeof(std::uint64_t));
+    std::memcpy(payload_buf, keys.data(), keys.size() * sizeof(std::uint64_t));
     char* values_dst = payload_buf + keys.size() * sizeof(std::uint64_t);
     for (std::size_t i = 0; i < values.size(); ++i) {
-      std::memcpy(
-          values_dst + i * FLAGS_value_size, values[i].data(), FLAGS_value_size);
+      std::memcpy(values_dst + i * FLAGS_value_size,
+                  values[i].data(),
+                  FLAGS_value_size);
     }
 
     GlobalAddress payload_gaddr = dsm_->gaddr(payload_buf);
@@ -466,8 +466,7 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
       if (FLAGS_rdma_put_v2_push_slot_bytes == 0 ||
           FLAGS_rdma_put_v2_push_slots_per_client <= 0) {
         LOG(ERROR) << "PUT-v2(push) invalid slot config: slot_bytes="
-                   << FLAGS_rdma_put_v2_push_slot_bytes
-                   << " slots_per_client="
+                   << FLAGS_rdma_put_v2_push_slot_bytes << " slots_per_client="
                    << FLAGS_rdma_put_v2_push_slots_per_client;
         return -1;
       }
@@ -478,16 +477,16 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
         return -1;
       }
       thread_local std::uint64_t slot_cursor = 0;
-      const std::uint64_t slot_id = slot_cursor %
-                                    static_cast<std::uint64_t>(
-                                        FLAGS_rdma_put_v2_push_slots_per_client);
+      const std::uint64_t slot_id =
+          slot_cursor %
+          static_cast<std::uint64_t>(FLAGS_rdma_put_v2_push_slots_per_client);
       ++slot_cursor;
       const std::uint64_t lane =
           static_cast<std::uint64_t>(dsm_->getMyNodeID());
-      const std::uint64_t remote_slot = lane *
-                                            static_cast<std::uint64_t>(
-                                                FLAGS_rdma_put_v2_push_slots_per_client) +
-                                        slot_id;
+      const std::uint64_t remote_slot =
+          lane * static_cast<std::uint64_t>(
+                     FLAGS_rdma_put_v2_push_slots_per_client) +
+          slot_id;
       const std::uint64_t slot_offset =
           FLAGS_rdma_put_v2_push_region_offset +
           remote_slot * FLAGS_rdma_put_v2_push_slot_bytes;
@@ -515,8 +514,8 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
     }
 
     constexpr std::size_t kPutAckSlotCount = 4096;
-    thread_local PutAckSlot* ack_slots = nullptr;
-    thread_local std::size_t ack_cursor = 0;
+    thread_local PutAckSlot* ack_slots     = nullptr;
+    thread_local std::size_t ack_cursor    = 0;
     if (ack_slots == nullptr) {
       ack_slots = static_cast<PutAckSlot*>(
           GetReceiveBuffer(sizeof(PutAckSlot) * kPutAckSlotCount));
@@ -554,8 +553,8 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
 
   for (std::size_t offset = 0; offset < keys.size();
        offset += static_cast<std::size_t>(max_put_keys)) {
-    const std::size_t end = std::min(
-        offset + static_cast<std::size_t>(max_put_keys), keys.size());
+    const std::size_t end =
+        std::min(offset + static_cast<std::size_t>(max_put_keys), keys.size());
     std::vector<uint64_t> key_slice(keys.begin() + offset, keys.begin() + end);
     std::vector<std::vector<float>> value_slice(
         values.begin() + offset, values.begin() + end);
@@ -568,8 +567,8 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
     }
 
     constexpr std::size_t kPutAckSlotCount = 4096;
-    thread_local PutAckSlot* ack_slots = nullptr;
-    thread_local std::size_t ack_cursor = 0;
+    thread_local PutAckSlot* ack_slots     = nullptr;
+    thread_local std::size_t ack_cursor    = 0;
     if (ack_slots == nullptr) {
       ack_slots = static_cast<PutAckSlot*>(
           GetReceiveBuffer(sizeof(PutAckSlot) * kPutAckSlotCount));
@@ -583,8 +582,10 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
     thread_local auto m = RawMessage::get_new_msg();
     m->type             = RpcType::PUT;
     m->receive_gaddr    = dsm_->gaddr(slot);
-    dsm_->rpc_call(
-        m, shard_, SelectServerThreadID(), Slice(payload.data(), payload.size()));
+    dsm_->rpc_call(m,
+                   shard_,
+                   SelectServerThreadID(),
+                   Slice(payload.data(), payload.size()));
     const std::int32_t status = WaitPutAck(ack);
     if (status != static_cast<std::int32_t>(RpcStatus::kOk)) {
       LOG(ERROR) << "PUT-v1 slice failed with status="

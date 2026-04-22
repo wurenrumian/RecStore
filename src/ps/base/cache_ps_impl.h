@@ -84,11 +84,12 @@ public:
     base_kv_->Put(key, std::string_view((char*)data, dim * sizeof(float)), tid);
   }
 
-  void PutDenseParameterBatch(const uint64_t* keys,
-                              const float* values,
-                              int key_count,
-                              int embedding_dim,
-                              int tid) {
+  void PutDenseParameterBatch(
+      const uint64_t* keys,
+      const float* values,
+      int key_count,
+      int embedding_dim,
+      int tid) {
     if (key_count <= 0 || embedding_dim <= 0) {
       return;
     }

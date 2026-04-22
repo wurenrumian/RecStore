@@ -11,9 +11,9 @@
 
 namespace petps {
 
-inline constexpr std::uint32_t kPutPayloadMagic = 0x50545053;
-inline constexpr std::uint16_t kPutProtocolVersionV1 = 1;
-inline constexpr std::uint16_t kPutProtocolVersionV2 = 2;
+inline constexpr std::uint32_t kPutPayloadMagic       = 0x50545053;
+inline constexpr std::uint16_t kPutProtocolVersionV1  = 1;
+inline constexpr std::uint16_t kPutProtocolVersionV2  = 2;
 inline constexpr std::uint32_t kPutRemotePayloadMagic = 0x50545232;
 inline constexpr std::uint32_t kPutV2TransferModeRead = 0;
 inline constexpr std::uint32_t kPutV2TransferModePush = 1;
@@ -161,10 +161,9 @@ inline bool DecodePutPayload(
   return true;
 }
 
-inline bool
-EncodePutRemoteControlV2(const PutRemotePayloadV2& control,
-                         std::string* payload,
-                         std::string* error) {
+inline bool EncodePutRemoteControlV2(const PutRemotePayloadV2& control,
+                                     std::string* payload,
+                                     std::string* error) {
   if (payload == nullptr) {
     if (error != nullptr) {
       *error = "payload is null";
@@ -184,7 +183,8 @@ EncodePutRemoteControlV2(const PutRemotePayloadV2& control,
     return false;
   }
   const std::size_t expected_bytes = PutPayloadBytes(
-      control.key_count, static_cast<std::size_t>(control.embedding_dim) * sizeof(float));
+      control.key_count,
+      static_cast<std::size_t>(control.embedding_dim) * sizeof(float));
   if (expected_bytes != control.payload_bytes) {
     if (error != nullptr) {
       *error = "control payload_bytes mismatch";
@@ -203,10 +203,8 @@ EncodePutRemoteControlV2(const PutRemotePayloadV2& control,
   return true;
 }
 
-inline bool
-DecodePutRemoteControlV2(std::string_view payload,
-                         PutRemotePayloadV2* control,
-                         std::string* error) {
+inline bool DecodePutRemoteControlV2(
+    std::string_view payload, PutRemotePayloadV2* control, std::string* error) {
   if (control == nullptr) {
     if (error != nullptr) {
       *error = "control is null";
@@ -234,7 +232,8 @@ DecodePutRemoteControlV2(std::string_view payload,
     return false;
   }
   const std::size_t expected_bytes = PutPayloadBytes(
-      decoded.key_count, static_cast<std::size_t>(decoded.embedding_dim) * sizeof(float));
+      decoded.key_count,
+      static_cast<std::size_t>(decoded.embedding_dim) * sizeof(float));
   if (expected_bytes != decoded.payload_bytes) {
     if (error != nullptr) {
       *error = "control payload_bytes mismatch";

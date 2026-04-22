@@ -46,14 +46,12 @@ DEFINE_uint64(rdma_per_thread_response_limit_bytes,
 DEFINE_uint64(rdma_put_server_scratch_bytes,
               1 * 1024 * 1024,
               "Per-thread max bytes used for RDMA PUT-v2 payload scratch");
-DEFINE_uint64(
-    rdma_put_v2_push_slot_bytes,
-    256 * 1024,
-    "RDMA PUT-v2(push) per-slot bytes reserved in server DSM");
-DEFINE_int32(
-    rdma_put_v2_push_slots_per_client,
-    8,
-    "RDMA PUT-v2(push) slot count reserved for each client node");
+DEFINE_uint64(rdma_put_v2_push_slot_bytes,
+              256 * 1024,
+              "RDMA PUT-v2(push) per-slot bytes reserved in server DSM");
+DEFINE_int32(rdma_put_v2_push_slots_per_client,
+             8,
+             "RDMA PUT-v2(push) slot count reserved for each client node");
 DEFINE_uint64(
     rdma_put_v2_push_region_offset,
     64 * 1024 * 1024,
@@ -171,11 +169,11 @@ private:
                    << control.embedding_dim
                    << " FLAGS_value_size=" << FLAGS_value_size;
         status = petps::RpcStatus::kValueSizeMismatch;
-      } else if (control.key_count > static_cast<std::uint32_t>(
-                                       FLAGS_max_kv_num_per_request)) {
+      } else if (control.key_count >
+                 static_cast<std::uint32_t>(FLAGS_max_kv_num_per_request)) {
         LOG(ERROR) << "RpcPsPut(v2) batch too large, key_count="
-                   << control.key_count
-                   << " max_kv_num_per_request=" << FLAGS_max_kv_num_per_request;
+                   << control.key_count << " max_kv_num_per_request="
+                   << FLAGS_max_kv_num_per_request;
         status = petps::RpcStatus::kBatchTooLarge;
       } else {
         const char* payload_ptr = nullptr;
@@ -201,29 +199,34 @@ private:
                        << " slots_per_client="
                        << FLAGS_rdma_put_v2_push_slots_per_client;
             status = petps::RpcStatus::kInvalidPayload;
-          } else if (control.payload_bytes > FLAGS_rdma_put_v2_push_slot_bytes) {
-            LOG(ERROR) << "RpcPsPut(v2-push) payload larger than slot: payload_bytes="
-                       << control.payload_bytes << " slot_bytes="
-                       << FLAGS_rdma_put_v2_push_slot_bytes;
+          } else if (control.payload_bytes >
+                     FLAGS_rdma_put_v2_push_slot_bytes) {
+            LOG(ERROR)
+                << "RpcPsPut(v2-push) payload larger than slot: payload_bytes="
+                << control.payload_bytes
+                << " slot_bytes=" << FLAGS_rdma_put_v2_push_slot_bytes;
             status = petps::RpcStatus::kBatchTooLarge;
           } else if (control.payload_gaddr.nodeID != dsm_->getMyNodeID()) {
-            LOG(ERROR) << "RpcPsPut(v2-push) payload node mismatch: payload_node="
-                       << control.payload_gaddr.nodeID
-                       << " local_node=" << dsm_->getMyNodeID();
+            LOG(ERROR)
+                << "RpcPsPut(v2-push) payload node mismatch: payload_node="
+                << control.payload_gaddr.nodeID
+                << " local_node=" << dsm_->getMyNodeID();
             status = petps::RpcStatus::kInvalidPayload;
           } else {
-            const std::uint64_t slots_per_client =
-                static_cast<std::uint64_t>(FLAGS_rdma_put_v2_push_slots_per_client);
+            const std::uint64_t slots_per_client = static_cast<std::uint64_t>(
+                FLAGS_rdma_put_v2_push_slots_per_client);
             const std::uint64_t total_slots =
                 static_cast<std::uint64_t>(dsm_->get_conf()->machineNR) *
                 slots_per_client;
             const std::uint64_t region_bytes =
                 total_slots * FLAGS_rdma_put_v2_push_slot_bytes;
-            const std::uint64_t region_begin = FLAGS_rdma_put_v2_push_region_offset;
-            const std::uint64_t region_end = region_begin + region_bytes;
+            const std::uint64_t region_begin =
+                FLAGS_rdma_put_v2_push_region_offset;
+            const std::uint64_t region_end    = region_begin + region_bytes;
             const std::uint64_t payload_begin = control.payload_gaddr.offset;
             const std::uint64_t payload_end =
-                payload_begin + static_cast<std::uint64_t>(control.payload_bytes);
+                payload_begin +
+                static_cast<std::uint64_t>(control.payload_bytes);
             const std::uint64_t sender_lane_begin =
                 region_begin +
                 static_cast<std::uint64_t>(recv->node_id) * slots_per_client *
@@ -236,7 +239,8 @@ private:
               LOG(ERROR) << "RpcPsPut(v2-push) invalid region range begin="
                          << region_begin << " end=" << region_end;
               status = petps::RpcStatus::kInvalidPayload;
-            } else if (payload_begin < region_begin || payload_end > region_end ||
+            } else if (payload_begin < region_begin ||
+                       payload_end > region_end ||
                        payload_end < payload_begin) {
               LOG(ERROR) << "RpcPsPut(v2-push) payload out of range: payload=["
                          << payload_begin << "," << payload_end << ") region=["
@@ -245,23 +249,25 @@ private:
             } else if ((payload_begin - region_begin) %
                            FLAGS_rdma_put_v2_push_slot_bytes !=
                        0) {
-              LOG(ERROR) << "RpcPsPut(v2-push) payload not slot-aligned: payload_begin="
+              LOG(ERROR) << "RpcPsPut(v2-push) payload not slot-aligned: "
+                            "payload_begin="
                          << payload_begin << " region_begin=" << region_begin
                          << " slot_bytes=" << FLAGS_rdma_put_v2_push_slot_bytes;
               status = petps::RpcStatus::kInvalidPayload;
             } else if (payload_begin < sender_lane_begin ||
                        payload_end > sender_lane_end ||
                        sender_lane_end < sender_lane_begin) {
-              LOG(ERROR) << "RpcPsPut(v2-push) payload not in sender lane: sender="
-                         << static_cast<int>(recv->node_id) << " payload=["
-                         << payload_begin << "," << payload_end << ") sender_lane=["
-                         << sender_lane_begin << "," << sender_lane_end << ")";
+              LOG(ERROR)
+                  << "RpcPsPut(v2-push) payload not in sender lane: sender="
+                  << static_cast<int>(recv->node_id) << " payload=["
+                  << payload_begin << "," << payload_end << ") sender_lane=["
+                  << sender_lane_begin << "," << sender_lane_end << ")";
               status = petps::RpcStatus::kInvalidPayload;
             } else if (payload_end >
                        static_cast<std::uint64_t>(dsm_->get_conf()->dsmSize)) {
-              LOG(ERROR) << "RpcPsPut(v2-push) payload exceeds DSM size: payload_end="
-                         << payload_end
-                         << " dsm_size=" << dsm_->get_conf()->dsmSize;
+              LOG(ERROR)
+                  << "RpcPsPut(v2-push) payload exceeds DSM size: payload_end="
+                  << payload_end << " dsm_size=" << dsm_->get_conf()->dsmSize;
               status = petps::RpcStatus::kInvalidPayload;
             } else {
               payload_ptr = dsm_->addr(control.payload_gaddr);
@@ -274,10 +280,11 @@ private:
         }
 
         if (status == petps::RpcStatus::kOk && payload_ptr != nullptr) {
-          const auto* keys = reinterpret_cast<const std::uint64_t*>(payload_ptr);
+          const auto* keys =
+              reinterpret_cast<const std::uint64_t*>(payload_ptr);
           const char* value_bytes =
-              payload_ptr +
-              static_cast<std::size_t>(control.key_count) * sizeof(std::uint64_t);
+              payload_ptr + static_cast<std::size_t>(control.key_count) *
+                                sizeof(std::uint64_t);
           cache_ps_->PutDenseParameterBatch(
               keys,
               reinterpret_cast<const float*>(value_bytes),
@@ -301,8 +308,7 @@ private:
       } else if (decoded.keys.size() >
                  static_cast<std::size_t>(FLAGS_max_kv_num_per_request)) {
         LOG(ERROR) << "RpcPsPut(v1) batch too large, key_count="
-                   << decoded.keys.size()
-                   << " max_kv_num_per_request="
+                   << decoded.keys.size() << " max_kv_num_per_request="
                    << FLAGS_max_kv_num_per_request;
         status = petps::RpcStatus::kBatchTooLarge;
       } else {
