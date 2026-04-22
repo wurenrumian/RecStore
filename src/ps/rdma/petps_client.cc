@@ -538,8 +538,8 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
 
     thread_local auto m = RawMessage::get_new_msg();
     m->clear();
-    m->type             = RpcType::PUT;
-    m->receive_gaddr    = dsm_->gaddr(slot);
+    m->type          = RpcType::PUT;
+    m->receive_gaddr = dsm_->gaddr(slot);
     dsm_->rpc_call(m,
                    shard_,
                    SelectServerThreadID(),
@@ -592,8 +592,8 @@ int PetPSClient::PutParameter(const std::vector<uint64_t>& keys,
 
     thread_local auto m = RawMessage::get_new_msg();
     m->clear();
-    m->type             = RpcType::PUT;
-    m->receive_gaddr    = dsm_->gaddr(slot);
+    m->type          = RpcType::PUT;
+    m->receive_gaddr = dsm_->gaddr(slot);
     dsm_->rpc_call(m,
                    shard_,
                    SelectServerThreadID(),

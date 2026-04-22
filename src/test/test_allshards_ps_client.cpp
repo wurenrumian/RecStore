@@ -200,8 +200,8 @@ TEST(AllShardsClientTest, ThrowsWhenBatchRpcIdOverflowsIntRange) {
 
   FakeShardClient shard0(0);
   FakeShardClient shard1(1);
-  auto shard0_keys = SelectKeysForShard(0, 1, 2);
-  auto shard1_keys = SelectKeysForShard(1, 1, 2);
+  auto shard0_keys                = SelectKeysForShard(0, 1, 2);
+  auto shard1_keys                = SelectKeysForShard(1, 1, 2);
   shard0.storage_[shard0_keys[0]] = {10, 0, 0, 0};
   shard1.storage_[shard1_keys[0]] = {20, 0, 0, 0};
 
@@ -212,12 +212,9 @@ TEST(AllShardsClientTest, ThrowsWhenBatchRpcIdOverflowsIntRange) {
 
   wrapper.batch_rpc_id_acc_ =
       static_cast<std::uint64_t>(std::numeric_limits<int>::max()) + 1;
-  EXPECT_THROW(
-      wrapper.GetParameter(base::ConstArray<uint64_t>(keys),
-                           output.data(),
-                           false,
-                           0),
-      std::runtime_error);
+  EXPECT_THROW(wrapper.GetParameter(
+                   base::ConstArray<uint64_t>(keys), output.data(), false, 0),
+               std::runtime_error);
 }
 
 } // namespace

@@ -72,7 +72,7 @@ private:
   std::mutex init_mu_;
   std::mutex thread_init_mu_;
   std::mutex state_mu_;
-  bool initialized_        = false;
+  bool initialized_ = false;
   std::unordered_set<std::thread::id> initialized_threads_;
   std::vector<std::unique_ptr<petps::PetPSClient>> shard_clients_;
   std::unique_ptr<AllShardsParameterClientWrapper> multi_client_;
