@@ -2,6 +2,7 @@ import unittest
 from unittest import mock
 from io import StringIO
 import sys
+import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -264,6 +265,27 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn("[petps-status]", output)
         self.assertIn("ready=1/2", output)
         self.assertIn("running_pids=1234", output)
+
+    @mock.patch("petps_cluster_runner.subprocess.run")
+    def test_run_client_timeout_handles_bytes_stdout_stderr(self, mock_run):
+        runner = PetPSClusterRunner()
+        mock_run.side_effect = subprocess.TimeoutExpired(
+            cmd=["/bin/echo", "x"],
+            timeout=1,
+            output=b"partial-out",
+            stderr=b"partial-err",
+        )
+
+        completed = runner.run_client(
+            ["/bin/echo", "x"],
+            stream_output=False,
+            timeout=1,
+        )
+
+        self.assertEqual(completed.returncode, 124)
+        self.assertIn("partial-out", completed.stdout)
+        self.assertIn("timed out after 1 seconds", completed.stdout)
+        self.assertEqual(completed.stderr, "partial-err")
 
 
 if __name__ == "__main__":

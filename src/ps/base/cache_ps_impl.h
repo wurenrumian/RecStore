@@ -84,6 +84,23 @@ public:
     base_kv_->Put(key, std::string_view((char*)data, dim * sizeof(float)), tid);
   }
 
+  void PutDenseParameterBatch(const uint64_t* keys,
+                              const float* values,
+                              int key_count,
+                              int embedding_dim,
+                              int tid) {
+    if (key_count <= 0 || embedding_dim <= 0) {
+      return;
+    }
+    base::ConstArray<uint64_t> key_array(keys, key_count);
+    std::vector<base::ConstArray<float>> value_slices;
+    value_slices.reserve(static_cast<std::size_t>(key_count));
+    for (int i = 0; i < key_count; ++i) {
+      value_slices.emplace_back(values + i * embedding_dim, embedding_dim);
+    }
+    base_kv_->BatchPut(key_array, &value_slices, tid);
+  }
+
   void PutSingleParameter(const ParameterCompressItem* item, int tid) {
     auto key = item->key;
     auto dim = item->dim;

@@ -50,6 +50,7 @@ def build_rdma_runner(args):
         config_path=DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
         num_servers=1,
         num_clients=1,
+        thread_num=getattr(args, "rdma_thread_num", 1),
         max_kv_num_per_request=max_kv_num_per_request,
         use_local_memcached=args.use_local_memcached,
         memcached_host=args.memcached_host,
@@ -66,6 +67,26 @@ def build_rdma_runner(args):
         rdma_client_receive_arena_bytes=getattr(
             args, "rdma_client_receive_arena_bytes", None
         ),
+        rdma_put_protocol_version=getattr(args, "rdma_put_protocol_version", 2),
+        rdma_put_v2_transfer_mode=getattr(
+            args, "rdma_put_v2_transfer_mode", "push"
+        ),
+        rdma_put_v2_push_slot_bytes=getattr(
+            args, "rdma_put_v2_push_slot_bytes", None
+        ),
+        rdma_put_v2_push_slots_per_client=getattr(
+            args, "rdma_put_v2_push_slots_per_client", None
+        ),
+        rdma_put_v2_push_region_offset=getattr(
+            args, "rdma_put_v2_push_region_offset", None
+        ),
+        rdma_put_client_send_arena_bytes=getattr(
+            args, "rdma_put_client_send_arena_bytes", None
+        ),
+        rdma_put_server_scratch_bytes=getattr(
+            args, "rdma_put_server_scratch_bytes", None
+        ),
+        rdma_wait_timeout_ms=getattr(args, "rdma_wait_timeout_ms", None),
         validate_routing=getattr(args, "validate_routing", False),
     )
 
@@ -198,6 +219,12 @@ def main():
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument(
+        "--rdma-thread-num",
+        type=int,
+        default=1,
+        help="number of RDMA server polling threads",
+    )
+    parser.add_argument(
         "--batch-keys",
         type=int,
         default=4,
@@ -226,6 +253,31 @@ def main():
     parser.add_argument("--rdma-server-ready-timeout-sec", type=int)
     parser.add_argument("--rdma-server-ready-poll-ms", type=int)
     parser.add_argument("--rdma-client-receive-arena-bytes", type=int)
+    parser.add_argument(
+        "--rdma-put-protocol-version",
+        type=int,
+        choices=[1, 2],
+        default=2,
+        help="RDMA PUT protocol version: 2(default)=remote payload, 1=legacy",
+    )
+    parser.add_argument(
+        "--rdma-put-v2-transfer-mode",
+        choices=["read", "push"],
+        default="push",
+        help="RDMA PUT-v2 payload mode: read(server read payload) or push(client push payload)",
+    )
+    parser.add_argument("--rdma-put-v2-push-slot-bytes", type=int)
+    parser.add_argument("--rdma-put-v2-push-slots-per-client", type=int)
+    parser.add_argument("--rdma-put-v2-push-region-offset", type=int)
+    parser.add_argument("--rdma-put-client-send-arena-bytes", type=int)
+    parser.add_argument("--rdma-put-server-scratch-bytes", type=int)
+    parser.add_argument("--rdma-wait-timeout-ms", type=int)
+    parser.add_argument(
+        "--rdma-client-timeout-sec",
+        type=int,
+        default=120,
+        help="timeout for RDMA benchmark client process (seconds), <=0 means no timeout",
+    )
     parser.add_argument("--validate-routing", action="store_true")
     parser.add_argument(
         "--show-runner-logs",
@@ -255,6 +307,7 @@ def main():
                 batch_keys=args.batch_keys,
             ),
             stream_output=False,
+            timeout=(args.rdma_client_timeout_sec if args.rdma_client_timeout_sec > 0 else None),
         )
         print_filtered_output(completed.stdout, args.show_runner_logs)
         print_filtered_output(completed.stderr, args.show_runner_logs)

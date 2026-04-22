@@ -114,6 +114,14 @@ python3 src/test/scripts/run_petps_server.py \
 `--rdma-server-ready-timeout-sec`、
 `--rdma-server-ready-poll-ms`、
 `--rdma-client-receive-arena-bytes`、
+`--rdma-put-protocol-version`、
+`--rdma-put-v2-transfer-mode`、
+`--rdma-put-v2-push-slot-bytes`、
+`--rdma-put-v2-push-slots-per-client`、
+`--rdma-put-v2-push-region-offset`、
+`--rdma-put-client-send-arena-bytes`、
+`--rdma-put-server-scratch-bytes`、
+`--rdma-wait-timeout-ms`、
 `--validate-routing`。
 
 该入口会：
@@ -157,6 +165,7 @@ python3 src/test/scripts/run_rdma_transport_benchmarks.py \
   --rdma-warmup-rounds 5 \
   --report-mode summary \
   --rdma-only \
+  --rdma-put-protocol-version 2 \
   --use-local-memcached=auto
 ```
 
@@ -169,6 +178,114 @@ python3 src/test/scripts/run_rdma_transport_benchmarks.py \
     `run_rdma_transport_benchmarks.py` 在三种 transport 全部完成后，
     会额外打印一张 `measure` 阶段汇总表（包含延迟与吞吐）。
     仅关注 RDMA 时可加 `--rdma-only`，跳过 GRPC/BRPC 阶段。
+    当前默认 PUT 协议为 v2（control/data 分离），并默认使用
+    `--rdma-put-v2-transfer-mode push`：
+    客户端先将 payload 通过 RDMA write 推送到服务端预留 slot，再发送小控制消息。
+    如需对比旧版 v2-read，可设置 `--rdma-put-v2-transfer-mode read`。
+    若需回归旧行为，可显式设置 `--rdma-put-protocol-version 1`。
+
+### PUT v2 与 v1 对照
+
+v2（默认）：
+
+```bash
+python3 src/test/scripts/run_rdma_transport_benchmarks.py \
+  --benchmark-binary ./build/bin/ps_transport_benchmark \
+  --iterations 3000 \
+  --batch-keys 500 \
+  --rounds 5 \
+  --rdma-warmup-rounds 1 \
+  --report-mode summary \
+  --rdma-only \
+  --rdma-put-protocol-version 2 \
+  --rdma-put-v2-transfer-mode push \
+  --use-local-memcached=auto
+```
+
+v2-read（对照）：
+
+```bash
+python3 src/test/scripts/run_rdma_transport_benchmarks.py \
+  --benchmark-binary ./build/bin/ps_transport_benchmark \
+  --iterations 3000 \
+  --batch-keys 500 \
+  --rounds 5 \
+  --rdma-warmup-rounds 1 \
+  --report-mode summary \
+  --rdma-only \
+  --rdma-put-protocol-version 2 \
+  --rdma-put-v2-transfer-mode read \
+  --use-local-memcached=auto
+```
+
+v1（兼容回退）：
+
+```bash
+python3 src/test/scripts/run_rdma_transport_benchmarks.py \
+  --benchmark-binary ./build/bin/ps_transport_benchmark \
+  --iterations 3000 \
+  --batch-keys 500 \
+  --rounds 5 \
+  --rdma-warmup-rounds 1 \
+  --report-mode summary \
+  --rdma-only \
+  --rdma-put-protocol-version 1 \
+  --use-local-memcached=auto
+```
+
+已知约束与调优点：
+
+- `--rdma-put-client-send-arena-bytes`：客户端 PUT v2 payload 缓冲上限。
+- `--rdma-put-server-scratch-bytes`：仅 v2-read 使用，服务端每线程拉取 payload 的 scratch 上限。
+- `--rdma-put-v2-push-slot-bytes`：v2-push 单个 slot 大小，需大于等于单次 PUT payload。
+- `--rdma-put-v2-push-slots-per-client`：每个 client node 预留 slot 数。
+- `--rdma-put-v2-push-region-offset`：服务端 DSM 中 slot 区域起始偏移（默认 64MB）。
+- 若大 batch 命中上限，服务端会返回 `batch_too_large`，可按需增大上限。
+
+### 协议升级涉及文件（便于排查）
+
+- `src/ps/rdma/rdma_protocol.h`：定义 PUT v2 control 结构与编解码。
+- `src/ps/rdma/petps_client.cc/.h`：新增 v2(read/push) 发送路径、ack 等待与超时控制。
+- `src/ps/rdma/petps_server.cc`：新增 v2 控制解析、payload 拉取/校验、批量写入路径。
+- `src/ps/base/cache_ps_impl.h`：新增 `PutDenseParameterBatch`，用于服务端批量写入。
+- `src/benchmark/ps_transport_benchmark.cc`：PUT 调用改为强校验返回值。
+- `src/test/scripts/petps_cluster_runner.py`：透传新增 gflags，补充 client timeout 处理。
+- `src/test/scripts/run_rdma_transport_benchmarks.py`：新增协议/线程/超时参数入口。
+- `src/test/scripts/test_*.py`、`src/ps/rdma/petps_integration_test.cpp`：补充协议与脚本参数测试。
+
+### 当前稳定基线（建议）
+
+在当前实现下，推荐先使用下面这组参数作为稳定基线：
+
+- `--batch-keys=500`
+- `--rdma-thread-num=4`
+- `--rdma-put-protocol-version=2`
+- `--rdma-put-v2-transfer-mode=read`
+
+参考命令：
+
+```bash
+python3 src/test/scripts/run_rdma_transport_benchmarks.py \
+  --benchmark-binary ./build/bin/ps_transport_benchmark \
+  --iterations 300 \
+  --batch-keys 500 \
+  --rounds 10 \
+  --rdma-warmup-rounds 2 \
+  --report-mode summary \
+  --rdma-only \
+  --rdma-thread-num 4 \
+  --rdma-put-protocol-version 2 \
+  --rdma-put-v2-transfer-mode read \
+  --rdma-wait-timeout-ms 10000 \
+  --rdma-client-timeout-sec 60 \
+  --use-local-memcached=auto
+```
+
+已知现象（`value_size=16`）：
+
+- 将 `batch-keys` 提升到 `1000` 时，可能触发 Mayfly `MESSAGE_SIZE` 上限并报错
+  `messeage size too large`。
+- 建议在默认消息大小配置下，将 `batch-keys` 控制在 `500` 附近进行稳定压测。
 
 ### benchmark 汇总表解读
 

@@ -46,6 +46,7 @@ public:
   std::size_t ResponseBufferBytes(std::size_t key_count) const;
 
   void* GetReceiveBuffer(size_t size) override;
+  void* GetSendBuffer(size_t size);
 
   inline int shard() const { return shard_; }
 
@@ -69,6 +70,7 @@ private:
   DSM* dsm_;
 
   mutable std::mutex rpc_mu_;
+  mutable std::mutex put_mu_;
   std::atomic<uint64_t> rpcIDAcc_{0};
   mutable std::atomic<uint32_t> round_robin_{0};
 

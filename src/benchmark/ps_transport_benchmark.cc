@@ -142,7 +142,8 @@ int main(int argc, char** argv) {
         const bool is_warmup = round < FLAGS_warmup_rounds;
         auto start           = std::chrono::steady_clock::now();
         for (int i = 0; i < FLAGS_iterations; ++i) {
-          client.PutParameter(keys, values);
+          CHECK_EQ(client.PutParameter(keys, values), 0)
+              << "RDMA PutParameter failed at iteration=" << i;
           int rpc_id = client.GetParameter(
               key_array, static_cast<float*>(recv_buffer), false, 0);
           client.WaitRPCFinish(rpc_id);
@@ -198,7 +199,8 @@ int main(int argc, char** argv) {
       const bool is_warmup = round < FLAGS_warmup_rounds;
       auto start           = std::chrono::steady_clock::now();
       for (int i = 0; i < FLAGS_iterations; ++i) {
-        client.PutParameter(keys, values);
+        CHECK_EQ(client.PutParameter(keys, values), 0)
+            << "RDMA(all-shards) PutParameter failed at iteration=" << i;
         std::vector<float> output(
             keys.size() * (FLAGS_value_size / sizeof(float)) + 1, 0.0f);
         int rpc_id = client.GetParameter(key_array, output.data(), false, 0);
@@ -246,7 +248,8 @@ int main(int argc, char** argv) {
     const bool is_warmup = round < FLAGS_warmup_rounds;
     auto start           = std::chrono::steady_clock::now();
     for (int i = 0; i < FLAGS_iterations; ++i) {
-      client->PutParameter(key_array, values);
+      CHECK_EQ(client->PutParameter(key_array, values), 0)
+          << transport << " PutParameter failed at iteration=" << i;
       if (BenchmarkUsesVectorGet(transport)) {
         auto* brpc_client = dynamic_cast<BRPCParameterClient*>(client.get());
         CHECK_NE(brpc_client, nullptr);

@@ -12,6 +12,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _to_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 class PetPSClusterRunner:
     def __init__(
         self,
@@ -39,6 +47,14 @@ class PetPSClusterRunner:
         rdma_server_ready_timeout_sec=None,
         rdma_server_ready_poll_ms=None,
         rdma_client_receive_arena_bytes=None,
+        rdma_put_protocol_version=None,
+        rdma_put_v2_transfer_mode=None,
+        rdma_put_v2_push_slot_bytes=None,
+        rdma_put_v2_push_slots_per_client=None,
+        rdma_put_v2_push_region_offset=None,
+        rdma_put_client_send_arena_bytes=None,
+        rdma_put_server_scratch_bytes=None,
+        rdma_wait_timeout_ms=None,
         validate_routing=False,
     ):
         self.server_path = Path(server_path)
@@ -74,6 +90,14 @@ class PetPSClusterRunner:
         self.rdma_server_ready_timeout_sec = rdma_server_ready_timeout_sec
         self.rdma_server_ready_poll_ms = rdma_server_ready_poll_ms
         self.rdma_client_receive_arena_bytes = rdma_client_receive_arena_bytes
+        self.rdma_put_protocol_version = rdma_put_protocol_version
+        self.rdma_put_v2_transfer_mode = rdma_put_v2_transfer_mode
+        self.rdma_put_v2_push_slot_bytes = rdma_put_v2_push_slot_bytes
+        self.rdma_put_v2_push_slots_per_client = rdma_put_v2_push_slots_per_client
+        self.rdma_put_v2_push_region_offset = rdma_put_v2_push_region_offset
+        self.rdma_put_client_send_arena_bytes = rdma_put_client_send_arena_bytes
+        self.rdma_put_server_scratch_bytes = rdma_put_server_scratch_bytes
+        self.rdma_wait_timeout_ms = rdma_wait_timeout_ms
         self.validate_routing = validate_routing
         self.processes = []
         self.memcached_process = None
@@ -148,6 +172,26 @@ class PetPSClusterRunner:
                 "--rdma_per_thread_response_limit_bytes="
                 f"{self.rdma_per_thread_response_limit_bytes}"
             )
+        if self.rdma_put_server_scratch_bytes is not None:
+            cmd.append(
+                "--rdma_put_server_scratch_bytes="
+                f"{self.rdma_put_server_scratch_bytes}"
+            )
+        if self.rdma_put_v2_push_slot_bytes is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slot_bytes="
+                f"{self.rdma_put_v2_push_slot_bytes}"
+            )
+        if self.rdma_put_v2_push_slots_per_client is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slots_per_client="
+                f"{self.rdma_put_v2_push_slots_per_client}"
+            )
+        if self.rdma_put_v2_push_region_offset is not None:
+            cmd.append(
+                "--rdma_put_v2_push_region_offset="
+                f"{self.rdma_put_v2_push_region_offset}"
+            )
         return cmd
 
     def build_client_cmd(self, argv, client_index=0):
@@ -171,6 +215,38 @@ class PetPSClusterRunner:
                 "--rdma_client_receive_arena_bytes="
                 f"{self.rdma_client_receive_arena_bytes}"
             )
+        if self.rdma_put_protocol_version is not None:
+            cmd.append(
+                "--rdma_put_protocol_version="
+                f"{self.rdma_put_protocol_version}"
+            )
+        if self.rdma_put_v2_transfer_mode is not None:
+            cmd.append(
+                "--rdma_put_v2_transfer_mode="
+                f"{self.rdma_put_v2_transfer_mode}"
+            )
+        if self.rdma_put_v2_push_slot_bytes is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slot_bytes="
+                f"{self.rdma_put_v2_push_slot_bytes}"
+            )
+        if self.rdma_put_v2_push_slots_per_client is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slots_per_client="
+                f"{self.rdma_put_v2_push_slots_per_client}"
+            )
+        if self.rdma_put_v2_push_region_offset is not None:
+            cmd.append(
+                "--rdma_put_v2_push_region_offset="
+                f"{self.rdma_put_v2_push_region_offset}"
+            )
+        if self.rdma_put_client_send_arena_bytes is not None:
+            cmd.append(
+                "--rdma_put_client_send_arena_bytes="
+                f"{self.rdma_put_client_send_arena_bytes}"
+            )
+        if self.rdma_wait_timeout_ms is not None:
+            cmd.append(f"--rdma_wait_timeout_ms={self.rdma_wait_timeout_ms}")
         return cmd
 
     def is_ready_line(self, line):
@@ -434,15 +510,29 @@ class PetPSClusterRunner:
                 f"client_index={client_index}"
             )
         if not stream_output:
-            completed = subprocess.run(
-                cmd,
-                cwd=str(REPO_ROOT),
-                text=True,
-                capture_output=True,
-                check=False,
-                env=env,
-                timeout=timeout,
-            )
+            try:
+                completed = subprocess.run(
+                    cmd,
+                    cwd=str(REPO_ROOT),
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=env,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                class Completed:
+                    def __init__(self, stdout, stderr):
+                        self.returncode = 124
+                        self.stdout = stdout
+                        self.stderr = stderr
+
+                timeout_text = (
+                    f"\n[petps-client] timed out after {timeout} seconds\n"
+                )
+                stdout = _to_text(exc.stdout) + timeout_text
+                stderr = _to_text(exc.stderr)
+                return Completed(stdout, stderr)
             if self.verbose:
                 print(completed.stdout)
                 print(completed.stderr)

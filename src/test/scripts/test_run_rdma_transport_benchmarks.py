@@ -31,13 +31,31 @@ class TestRunRDMATransportBenchmarks(unittest.TestCase):
             memcached_port=21211,
             show_runner_logs=False,
             batch_keys=500,
+            rdma_thread_num=4,
+            rdma_put_protocol_version=1,
+            rdma_put_v2_transfer_mode="read",
+            rdma_put_v2_push_slot_bytes=262144,
+            rdma_put_v2_push_slots_per_client=16,
+            rdma_put_v2_push_region_offset=73400320,
+            rdma_put_client_send_arena_bytes=123456,
+            rdma_put_server_scratch_bytes=654321,
+            rdma_wait_timeout_ms=15000,
         )
 
         runner = build_rdma_runner(args)
 
         expected = (Path("/app/RecStore") / DEFAULT_RDMA_SINGLE_SHARD_CONFIG).resolve()
         self.assertEqual(runner.config_path, expected)
+        self.assertEqual(runner.thread_num, 4)
         self.assertEqual(runner.max_kv_num_per_request, 500)
+        self.assertEqual(runner.rdma_put_protocol_version, 1)
+        self.assertEqual(runner.rdma_put_v2_transfer_mode, "read")
+        self.assertEqual(runner.rdma_put_v2_push_slot_bytes, 262144)
+        self.assertEqual(runner.rdma_put_v2_push_slots_per_client, 16)
+        self.assertEqual(runner.rdma_put_v2_push_region_offset, 73400320)
+        self.assertEqual(runner.rdma_put_client_send_arena_bytes, 123456)
+        self.assertEqual(runner.rdma_put_server_scratch_bytes, 654321)
+        self.assertEqual(runner.rdma_wait_timeout_ms, 15000)
 
     def test_load_client_endpoint_for_default_grpc_config(self):
         host, port = load_client_endpoint(DEFAULT_GRPC_MAIN_CONFIG)
@@ -122,6 +140,8 @@ class TestRunRDMATransportBenchmarks(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0)
         self.assertIn("--rdma-only", completed.stdout)
+        self.assertIn("--rdma-put-protocol-version", completed.stdout)
+        self.assertIn("--rdma-put-v2-transfer-mode", completed.stdout)
 
 
 if __name__ == "__main__":

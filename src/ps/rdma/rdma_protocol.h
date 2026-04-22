@@ -7,11 +7,16 @@
 #include <vector>
 
 #include "base/log.h"
+#include "third_party/Mayfly-main/include/GlobalAddress.h"
 
 namespace petps {
 
 inline constexpr std::uint32_t kPutPayloadMagic = 0x50545053;
-inline constexpr std::uint16_t kProtocolVersion = 1;
+inline constexpr std::uint16_t kPutProtocolVersionV1 = 1;
+inline constexpr std::uint16_t kPutProtocolVersionV2 = 2;
+inline constexpr std::uint32_t kPutRemotePayloadMagic = 0x50545232;
+inline constexpr std::uint32_t kPutV2TransferModeRead = 0;
+inline constexpr std::uint32_t kPutV2TransferModePush = 1;
 
 struct PutPayloadHeader {
   std::uint32_t magic;
@@ -27,9 +32,28 @@ struct DecodedPutPayload {
   std::vector<float> values;
 };
 
+struct PutRemotePayloadV2 {
+  std::uint32_t magic;
+  std::uint16_t version;
+  std::uint16_t reserved;
+  std::uint32_t key_count;
+  std::uint32_t embedding_dim;
+  GlobalAddress payload_gaddr;
+  std::uint32_t payload_bytes;
+  std::uint32_t transfer_mode;
+  std::uint32_t checksum;
+} __attribute__((packed));
+
+static_assert(sizeof(PutRemotePayloadV2) <= 64, "unexpected v2 control size");
+
 inline std::size_t
 FixedSlotResponseBytes(std::size_t key_count, std::size_t value_size_bytes) {
   return key_count * value_size_bytes + sizeof(std::int32_t);
+}
+
+inline std::size_t
+PutPayloadBytes(std::size_t key_count, std::size_t value_size_bytes) {
+  return key_count * (sizeof(std::uint64_t) + value_size_bytes);
 }
 
 inline std::string
@@ -59,7 +83,7 @@ EncodePutPayload(const std::vector<std::uint64_t>& keys,
 
   PutPayloadHeader header{
       kPutPayloadMagic,
-      kProtocolVersion,
+      kPutProtocolVersionV1,
       0,
       static_cast<std::uint32_t>(keys.size()),
       static_cast<std::uint32_t>(embedding_dim),
@@ -103,7 +127,7 @@ inline bool DecodePutPayload(
     }
     return false;
   }
-  if (header.version != kProtocolVersion) {
+  if (header.version != kPutProtocolVersionV1) {
     if (error != nullptr) {
       *error = "bad protocol version";
     }
@@ -135,6 +159,107 @@ inline bool DecodePutPayload(
       decoded->values.data(), cursor, decoded->values.size() * sizeof(float));
 
   return true;
+}
+
+inline bool
+EncodePutRemoteControlV2(const PutRemotePayloadV2& control,
+                         std::string* payload,
+                         std::string* error) {
+  if (payload == nullptr) {
+    if (error != nullptr) {
+      *error = "payload is null";
+    }
+    return false;
+  }
+  if (control.magic != kPutRemotePayloadMagic) {
+    if (error != nullptr) {
+      *error = "bad control magic";
+    }
+    return false;
+  }
+  if (control.version != kPutProtocolVersionV2) {
+    if (error != nullptr) {
+      *error = "bad control version";
+    }
+    return false;
+  }
+  const std::size_t expected_bytes = PutPayloadBytes(
+      control.key_count, static_cast<std::size_t>(control.embedding_dim) * sizeof(float));
+  if (expected_bytes != control.payload_bytes) {
+    if (error != nullptr) {
+      *error = "control payload_bytes mismatch";
+    }
+    return false;
+  }
+  if (control.transfer_mode != kPutV2TransferModeRead &&
+      control.transfer_mode != kPutV2TransferModePush) {
+    if (error != nullptr) {
+      *error = "bad transfer mode";
+    }
+    return false;
+  }
+  payload->resize(sizeof(PutRemotePayloadV2));
+  std::memcpy(payload->data(), &control, sizeof(PutRemotePayloadV2));
+  return true;
+}
+
+inline bool
+DecodePutRemoteControlV2(std::string_view payload,
+                         PutRemotePayloadV2* control,
+                         std::string* error) {
+  if (control == nullptr) {
+    if (error != nullptr) {
+      *error = "control is null";
+    }
+    return false;
+  }
+  if (payload.size() != sizeof(PutRemotePayloadV2)) {
+    if (error != nullptr) {
+      *error = "control size mismatch";
+    }
+    return false;
+  }
+  PutRemotePayloadV2 decoded{};
+  std::memcpy(&decoded, payload.data(), sizeof(decoded));
+  if (decoded.magic != kPutRemotePayloadMagic) {
+    if (error != nullptr) {
+      *error = "bad control magic";
+    }
+    return false;
+  }
+  if (decoded.version != kPutProtocolVersionV2) {
+    if (error != nullptr) {
+      *error = "bad control version";
+    }
+    return false;
+  }
+  const std::size_t expected_bytes = PutPayloadBytes(
+      decoded.key_count, static_cast<std::size_t>(decoded.embedding_dim) * sizeof(float));
+  if (expected_bytes != decoded.payload_bytes) {
+    if (error != nullptr) {
+      *error = "control payload_bytes mismatch";
+    }
+    return false;
+  }
+  if (decoded.transfer_mode != kPutV2TransferModeRead &&
+      decoded.transfer_mode != kPutV2TransferModePush) {
+    if (error != nullptr) {
+      *error = "bad transfer mode";
+    }
+    return false;
+  }
+  *control = decoded;
+  return true;
+}
+
+inline bool IsPutRemoteControlV2(std::string_view payload) {
+  if (payload.size() != sizeof(PutRemotePayloadV2)) {
+    return false;
+  }
+  PutRemotePayloadV2 decoded{};
+  std::memcpy(&decoded, payload.data(), sizeof(decoded));
+  return decoded.magic == kPutRemotePayloadMagic &&
+         decoded.version == kPutProtocolVersionV2;
 }
 
 } // namespace petps
