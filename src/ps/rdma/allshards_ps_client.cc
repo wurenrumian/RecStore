@@ -159,10 +159,10 @@ int AllShardsParameterClientWrapper::GetParameter(
   {
     std::lock_guard<std::mutex> guard(batches_mu_);
     batch_id = batch_rpc_id_acc_++;
-    if (batch_id > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
-      throw std::runtime_error(
-          "allshards batch rpc id overflow int range: " +
-          std::to_string(batch_id));
+    if (batch_id >
+        static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      throw std::runtime_error("allshards batch rpc id overflow int range: " +
+                               std::to_string(batch_id));
     }
     batches_[batch_id] = std::move(batch);
   }
