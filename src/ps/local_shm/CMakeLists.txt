@@ -1,5 +1,6 @@
 add_library(local_shm_common SHARED
     local_shm_futex.cpp
+    local_shm_queue.cpp
     local_shm_region.cpp
 )
 

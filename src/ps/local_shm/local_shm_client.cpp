@@ -1,5 +1,6 @@
 #include "ps/local_shm/local_shm_client.h"
 #include "ps/local_shm/local_shm_futex.h"
+#include "ps/local_shm/local_shm_queue.h"
 
 #include <chrono>
 #include <cstring>
@@ -84,6 +85,9 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
     std::memcpy(payload, keys.Data(), input_bytes);
   }
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
+                             region_.queue_cells(LocalQueueKind::kReady),
+                             static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
@@ -156,6 +160,9 @@ int LocalShmPSClient::PutParameter(
     }
   }
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
+                             region_.queue_cells(LocalQueueKind::kReady),
+                             static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
@@ -245,6 +252,9 @@ int LocalShmPSClient::UpdateParameterFlat(
               grads,
               sizeof(float) * keys.Size() * static_cast<size_t>(embedding_dim));
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
+                             region_.queue_cells(LocalQueueKind::kReady),
+                             static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
@@ -297,6 +307,9 @@ int LocalShmPSClient::InitEmbeddingTable(const std::string& table_name,
   cursor += sizeof(config.num_embeddings);
   std::memcpy(cursor, &config.embedding_dim, sizeof(config.embedding_dim));
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
+                             region_.queue_cells(LocalQueueKind::kReady),
+                             static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
@@ -337,20 +350,42 @@ int LocalShmPSClient::AcquireSlot() {
   if (!region_.IsOpen()) {
     return -1;
   }
-  for (uint32_t slot_id = 0; slot_id < region_.slot_count(); ++slot_id) {
-    auto* header      = region_.slot_header(slot_id);
-    uint32_t expected = static_cast<uint32_t>(LocalSlotState::kFree);
-    if (header->state.compare_exchange_strong(
-            expected, static_cast<uint32_t>(LocalSlotState::kWriting))) {
+  auto* control      = region_.control();
+  auto* queue_header = region_.queue_header(LocalQueueKind::kFree);
+  auto* queue_cells  = region_.queue_cells(LocalQueueKind::kFree);
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_);
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    uint32_t slot_id = 0;
+    if (LocalShmQueueDequeue(queue_header, queue_cells, &slot_id)) {
+      auto* header = region_.slot_header(slot_id);
+      header->state.store(static_cast<uint32_t>(LocalSlotState::kWriting),
+                          std::memory_order_release);
       return static_cast<int>(slot_id);
     }
+    const uint32_t observed =
+        control->free_doorbell.load(std::memory_order_acquire);
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      break;
+    }
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+    FutexWaitUntilValueChange(&control->free_doorbell, observed, remaining);
   }
   return -1;
 }
 
 void LocalShmPSClient::ReleaseSlot(uint32_t slot_id) {
   auto* header = region_.slot_header(slot_id);
-  header->state.store(static_cast<uint32_t>(LocalSlotState::kFree));
+  header->state.store(static_cast<uint32_t>(LocalSlotState::kFree),
+                      std::memory_order_release);
+  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kFree),
+                             region_.queue_cells(LocalQueueKind::kFree),
+                             slot_id));
+  region_.control()->free_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&region_.control()->free_doorbell);
 }
 
 bool LocalShmPSClient::WaitForSlot(uint32_t slot_id, uint64_t request_id) {

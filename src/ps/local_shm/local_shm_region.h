@@ -33,6 +33,10 @@ public:
 
   LocalShmControlBlock* control();
   const LocalShmControlBlock* control() const;
+  LocalShmQueueHeader* queue_header(LocalQueueKind kind);
+  const LocalShmQueueHeader* queue_header(LocalQueueKind kind) const;
+  LocalShmQueueCell* queue_cells(LocalQueueKind kind);
+  const LocalShmQueueCell* queue_cells(LocalQueueKind kind) const;
   LocalShmSlotHeader* slot_header(uint32_t slot_id);
   const LocalShmSlotHeader* slot_header(uint32_t slot_id) const;
   uint8_t* slot_payload(uint32_t slot_id);

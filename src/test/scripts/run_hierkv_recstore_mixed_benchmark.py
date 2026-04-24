@@ -103,7 +103,7 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
 
 
 def build_recstore_cmd(args: argparse.Namespace) -> list[str]:
-    return [
+    cmd = [
         str(args.recstore_binary),
         f"--transport={args.transport}",
         f"--host={args.host}",
@@ -118,6 +118,9 @@ def build_recstore_cmd(args: argparse.Namespace) -> list[str]:
         f"--report_mode={args.report_mode}",
         f"--update_scale={args.update_scale}",
     ]
+    if args.transport.lower() == "brpc":
+        cmd.append(f"--brpc_timeout_ms={args.brpc_timeout_ms}")
+    return cmd
 
 
 def build_hierkv_cmd(args: argparse.Namespace) -> list[str]:
@@ -245,6 +248,7 @@ def main() -> int:
     parser.add_argument("--init-chunk-size", type=int, default=4096)
     parser.add_argument("--report-mode", choices=["summary", "per_round", "both"], default="summary")
     parser.add_argument("--update-scale", type=float, default=0.001)
+    parser.add_argument("--brpc-timeout-ms", type=int, default=5000)
     parser.add_argument("--init-capacity", type=int, default=0)
     parser.add_argument("--max-capacity", type=int, default=0)
     parser.add_argument("--max-hbm-for-vectors", type=int, default=1073741824)

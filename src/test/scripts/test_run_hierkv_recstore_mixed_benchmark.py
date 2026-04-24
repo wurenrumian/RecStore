@@ -79,7 +79,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
             (),
             {
                 "recstore_binary": "/tmp/recstore_mixed_benchmark",
-                "transport": "grpc",
+                "transport": "brpc",
                 "host": "127.0.0.1",
                 "port": 15000,
                 "iterations": 100,
@@ -91,6 +91,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
                 "init_chunk_size": 8192,
                 "report_mode": "summary",
                 "update_scale": 0.001,
+                "brpc_timeout_ms": 20000,
             },
         )()
         cmd = build_recstore_cmd(args)
@@ -99,6 +100,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
         self.assertIn("--update_scale=0.001", cmd)
         self.assertIn("--num_embeddings=1000000", cmd)
         self.assertIn("--init_chunk_size=8192", cmd)
+        self.assertIn("--brpc_timeout_ms=20000", cmd)
 
     def test_build_recstore_server_cmd_uses_brpc_binary_and_flag(self):
         args = type(

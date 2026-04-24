@@ -9,6 +9,12 @@ namespace recstore {
 constexpr uint64_t kLocalShmMagic         = 0x52454353544F5245ULL; // "RECSTORE"
 constexpr uint32_t kLocalShmVersion       = 1;
 constexpr uint32_t kLocalShmReservedBytes = 64;
+constexpr uint32_t kLocalShmQueueCount    = 2;
+
+enum class LocalQueueKind : uint32_t {
+  kFree  = 0,
+  kReady = 1,
+};
 
 enum class LocalOpcode : uint32_t {
   kInvalid    = 0,
@@ -51,9 +57,25 @@ struct alignas(64) LocalShmControlBlock {
   std::atomic<uint64_t> next_request_id;
   std::atomic<uint32_t> fatal_status;
   std::atomic<uint32_t> request_doorbell;
+  std::atomic<uint32_t> free_doorbell;
   std::atomic<uint32_t> active_clients;
 
   uint8_t reserved[kLocalShmReservedBytes];
+};
+
+struct alignas(64) LocalShmQueueHeader {
+  std::atomic<uint32_t> enqueue_pos;
+  std::atomic<uint32_t> dequeue_pos;
+  uint32_t capacity;
+  uint32_t reserved0;
+
+  uint8_t reserved[kLocalShmReservedBytes];
+};
+
+struct alignas(16) LocalShmQueueCell {
+  std::atomic<uint32_t> sequence;
+  uint32_t value;
+  uint64_t reserved0;
 };
 
 struct alignas(64) LocalShmSlotHeader {
@@ -86,6 +108,10 @@ struct alignas(64) LocalShmSlotHeader {
 
 static_assert(std::is_standard_layout<LocalShmControlBlock>::value,
               "LocalShmControlBlock must be standard layout");
+static_assert(std::is_standard_layout<LocalShmQueueHeader>::value,
+              "LocalShmQueueHeader must be standard layout");
+static_assert(std::is_standard_layout<LocalShmQueueCell>::value,
+              "LocalShmQueueCell must be standard layout");
 static_assert(std::is_standard_layout<LocalShmSlotHeader>::value,
               "LocalShmSlotHeader must be standard layout");
 

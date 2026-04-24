@@ -1,5 +1,6 @@
 #include "ps/local_shm/local_shm_server.h"
 #include "ps/local_shm/local_shm_futex.h"
+#include "ps/local_shm/local_shm_queue.h"
 
 #include <cstring>
 #include <thread>
@@ -33,10 +34,13 @@ LocalShmStoreRuntime::LocalShmStoreRuntime(LocalShmRegion* region,
 void LocalShmStoreRuntime::Run() {
   while (!stop_.load()) {
     auto* control = region_->control();
-    const uint32_t observed_before_scan =
+    auto* ready_header = region_->queue_header(LocalQueueKind::kReady);
+    auto* ready_cells  = region_->queue_cells(LocalQueueKind::kReady);
+    const uint32_t observed_before_wait =
         control->request_doorbell.load(std::memory_order_acquire);
+    uint32_t slot_id = 0;
     bool found_work = false;
-    for (uint32_t slot_id = 0; slot_id < region_->slot_count(); ++slot_id) {
+    while (LocalShmQueueDequeue(ready_header, ready_cells, &slot_id)) {
       auto* header      = region_->slot_header(slot_id);
       uint32_t expected = static_cast<uint32_t>(LocalSlotState::kReady);
       if (header->state.compare_exchange_strong(
@@ -49,7 +53,7 @@ void LocalShmStoreRuntime::Run() {
       if (!stop_.load(std::memory_order_acquire)) {
         FutexWaitUntilValueChange(
             &control->request_doorbell,
-            observed_before_scan,
+            observed_before_wait,
             std::chrono::milliseconds(100));
       }
     }

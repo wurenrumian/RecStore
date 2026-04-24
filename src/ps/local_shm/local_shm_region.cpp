@@ -1,5 +1,7 @@
 #include "local_shm_region.h"
 
+#include "ps/local_shm/local_shm_queue.h"
+
 #include <cerrno>
 #include <cstring>
 
@@ -65,8 +67,18 @@ bool LocalShmRegion::Create(const std::string& region_name,
   ctrl->next_request_id   = 1;
   ctrl->fatal_status      = 0;
   ctrl->request_doorbell  = 0;
+  ctrl->free_doorbell     = 0;
   ctrl->active_clients    = 0;
   std::memset(ctrl->reserved, 0, sizeof(ctrl->reserved));
+
+  LocalShmQueueInitialize(
+      queue_header(LocalQueueKind::kFree),
+      queue_cells(LocalQueueKind::kFree),
+      slot_count_);
+  LocalShmQueueInitialize(
+      queue_header(LocalQueueKind::kReady),
+      queue_cells(LocalQueueKind::kReady),
+      slot_count_);
 
   for (uint32_t slot_id = 0; slot_id < slot_count_; ++slot_id) {
     auto* header                = slot_header(slot_id);
@@ -88,6 +100,10 @@ bool LocalShmRegion::Create(const std::string& region_name,
     header->error_message_len   = 0;
     std::memset(header->reserved, 0, sizeof(header->reserved));
     std::memset(slot_payload(slot_id), 0, slot_buffer_bytes_);
+    CHECK(LocalShmQueueEnqueue(
+        queue_header(LocalQueueKind::kFree),
+        queue_cells(LocalQueueKind::kFree),
+        slot_id));
   }
 
   return true;
@@ -155,9 +171,32 @@ const LocalShmControlBlock* LocalShmRegion::control() const {
   return reinterpret_cast<const LocalShmControlBlock*>(base_);
 }
 
+LocalShmQueueHeader* LocalShmRegion::queue_header(LocalQueueKind kind) {
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) + QueueHeaderOffset(kind);
+  return reinterpret_cast<LocalShmQueueHeader*>(bytes);
+}
+
+const LocalShmQueueHeader* LocalShmRegion::queue_header(LocalQueueKind kind) const {
+  const auto* bytes =
+      reinterpret_cast<const uint8_t*>(base_) + QueueHeaderOffset(kind);
+  return reinterpret_cast<const LocalShmQueueHeader*>(bytes);
+}
+
+LocalShmQueueCell* LocalShmRegion::queue_cells(LocalQueueKind kind) {
+  auto* bytes =
+      reinterpret_cast<uint8_t*>(base_) + QueueCellArrayOffset(slot_count_, kind);
+  return reinterpret_cast<LocalShmQueueCell*>(bytes);
+}
+
+const LocalShmQueueCell* LocalShmRegion::queue_cells(LocalQueueKind kind) const {
+  const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
+                      QueueCellArrayOffset(slot_count_, kind);
+  return reinterpret_cast<const LocalShmQueueCell*>(bytes);
+}
+
 LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) {
   CHECK_LT(slot_id, slot_count_);
-  auto* bytes = reinterpret_cast<uint8_t*>(base_) + SlotHeadersOffset() +
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) + SlotHeadersOffset(slot_count_) +
                 sizeof(LocalShmSlotHeader) * static_cast<std::size_t>(slot_id);
   return reinterpret_cast<LocalShmSlotHeader*>(bytes);
 }
@@ -165,7 +204,7 @@ LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) {
 const LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) const {
   CHECK_LT(slot_id, slot_count_);
   const auto* bytes =
-      reinterpret_cast<const uint8_t*>(base_) + SlotHeadersOffset() +
+      reinterpret_cast<const uint8_t*>(base_) + SlotHeadersOffset(slot_count_) +
       sizeof(LocalShmSlotHeader) * static_cast<std::size_t>(slot_id);
   return reinterpret_cast<const LocalShmSlotHeader*>(bytes);
 }
