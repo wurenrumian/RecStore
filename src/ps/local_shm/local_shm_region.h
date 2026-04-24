@@ -21,7 +21,7 @@ public:
               uint32_t slot_count,
               uint32_t slot_buffer_bytes);
   bool Attach(const std::string& region_name,
-              uint32_t expected_slot_count = 0,
+              uint32_t expected_slot_count        = 0,
               uint32_t expected_slot_buffer_bytes = 0);
   void Close();
 
@@ -45,10 +45,10 @@ private:
 
 private:
   std::string region_name_;
-  int fd_ = -1;
-  void* base_ = nullptr;
-  std::size_t mapped_size_ = 0;
-  uint32_t slot_count_ = 0;
+  int fd_                     = -1;
+  void* base_                 = nullptr;
+  std::size_t mapped_size_    = 0;
+  uint32_t slot_count_        = 0;
   uint32_t slot_buffer_bytes_ = 0;
 };
 

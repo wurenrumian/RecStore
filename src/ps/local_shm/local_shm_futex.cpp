@@ -23,23 +23,25 @@ timespec ToTimespec(std::chrono::milliseconds timeout) {
 int FutexWait(std::atomic<uint32_t>* addr,
               uint32_t expected,
               const struct timespec* timeout) {
-  return static_cast<int>(syscall(SYS_futex,
-                                  reinterpret_cast<uint32_t*>(addr),
-                                  FUTEX_WAIT,
-                                  expected,
-                                  timeout,
-                                  nullptr,
-                                  0));
+  return static_cast<int>(syscall(
+      SYS_futex,
+      reinterpret_cast<uint32_t*>(addr),
+      FUTEX_WAIT,
+      expected,
+      timeout,
+      nullptr,
+      0));
 }
 
 int FutexWake(std::atomic<uint32_t>* addr, int count) {
-  return static_cast<int>(syscall(SYS_futex,
-                                  reinterpret_cast<uint32_t*>(addr),
-                                  FUTEX_WAKE,
-                                  count,
-                                  nullptr,
-                                  nullptr,
-                                  0));
+  return static_cast<int>(syscall(
+      SYS_futex,
+      reinterpret_cast<uint32_t*>(addr),
+      FUTEX_WAKE,
+      count,
+      nullptr,
+      nullptr,
+      0));
 }
 
 bool FutexWaitUntilValueChange(std::atomic<uint32_t>* addr,
@@ -52,10 +54,10 @@ bool FutexWaitUntilValueChange(std::atomic<uint32_t>* addr,
       return false;
     }
 
-    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - now);
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
     const timespec ts = ToTimespec(remaining);
-    const int rc = FutexWait(addr, expected, &ts);
+    const int rc      = FutexWait(addr, expected, &ts);
     if (rc == 0) {
       continue;
     }

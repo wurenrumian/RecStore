@@ -15,7 +15,8 @@ public:
   explicit LocalShmPSClient(json config);
   ~LocalShmPSClient() override = default;
 
-  int GetParameter(const base::ConstArray<uint64_t>& keys, float* values) override;
+  int GetParameter(const base::ConstArray<uint64_t>& keys,
+                   float* values) override;
   int PutParameter(const base::ConstArray<uint64_t>& keys,
                    const std::vector<std::vector<float>>& values) override;
   int UpdateParameter(const std::string& table_name,
@@ -28,7 +29,8 @@ public:
                           int64_t embedding_dim) override;
   int InitEmbeddingTable(const std::string& table_name,
                          const EmbeddingTableConfig& config) override;
-  int AsyncGetParameter(const base::ConstArray<uint64_t>& keys, float* values) override;
+  int AsyncGetParameter(const base::ConstArray<uint64_t>& keys,
+                        float* values) override;
 
   void Command(PSCommand command) override;
 
@@ -51,7 +53,7 @@ private:
 private:
   LocalShmRegion region_;
   std::string region_name_;
-  uint32_t client_id_ = 0;
+  uint32_t client_id_  = 0;
   uint32_t timeout_ms_ = 30000;
   std::unordered_map<uint64_t, std::pair<uint32_t, uint64_t>> prefetch_map_;
 };

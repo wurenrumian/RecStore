@@ -6,8 +6,8 @@
 
 namespace recstore {
 
-constexpr uint64_t kLocalShmMagic   = 0x52454353544F5245ULL; // "RECSTORE"
-constexpr uint32_t kLocalShmVersion = 1;
+constexpr uint64_t kLocalShmMagic         = 0x52454353544F5245ULL; // "RECSTORE"
+constexpr uint32_t kLocalShmVersion       = 1;
 constexpr uint32_t kLocalShmReservedBytes = 64;
 
 enum class LocalOpcode : uint32_t {

@@ -291,12 +291,13 @@ public:
     return true;
   }
 
-  bool UpdateParameterFlat(const std::string& table_name,
-                           const base::ConstArray<uint64_t>& keys,
-                           const float* grads,
-                           int64_t num_rows,
-                           int64_t embedding_dim,
-                           unsigned tid) {
+  bool UpdateParameterFlat(
+      const std::string& table_name,
+      const base::ConstArray<uint64_t>& keys,
+      const float* grads,
+      int64_t num_rows,
+      int64_t embedding_dim,
+      unsigned tid) {
     if (grads == nullptr) {
       LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
       return false;
@@ -323,8 +324,8 @@ public:
 
     std::string block;
     compressor.ToBlock(&block);
-    const auto* reader = reinterpret_cast<const ParameterCompressReader*>(
-        block.data());
+    const auto* reader =
+        reinterpret_cast<const ParameterCompressReader*>(block.data());
     return UpdateParameter(table_name, reader, tid);
   }
 

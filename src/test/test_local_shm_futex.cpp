@@ -14,8 +14,7 @@ TEST(LocalShmFutexTest, WaitUntilValueChangeWakesAfterUpdate) {
   bool woke = false;
 
   std::thread waiter([&]() {
-    woke = FutexWaitUntilValueChange(
-        &word, 0, std::chrono::milliseconds(200));
+    woke = FutexWaitUntilValueChange(&word, 0, std::chrono::milliseconds(200));
   });
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -29,11 +28,10 @@ TEST(LocalShmFutexTest, WaitUntilValueChangeWakesAfterUpdate) {
 TEST(LocalShmFutexTest, WaitUntilValueChangeTimesOut) {
   std::atomic<uint32_t> word{7};
   const auto start = std::chrono::steady_clock::now();
-  const bool woke = FutexWaitUntilValueChange(
-      &word, 7, std::chrono::milliseconds(20));
-  const auto elapsed =
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::steady_clock::now() - start);
+  const bool woke =
+      FutexWaitUntilValueChange(&word, 7, std::chrono::milliseconds(20));
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - start);
 
   EXPECT_FALSE(woke);
   EXPECT_GE(elapsed.count(), 15);

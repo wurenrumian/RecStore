@@ -124,8 +124,8 @@ std::vector<uint64_t> MakeKeys(int batch_keys) {
   return keys;
 }
 
-std::vector<std::vector<float>> MakeValues(const std::vector<uint64_t>& keys,
-                                           int embedding_dim) {
+std::vector<std::vector<float>>
+MakeValues(const std::vector<uint64_t>& keys, int embedding_dim) {
   std::vector<std::vector<float>> values;
   values.reserve(keys.size());
   for (auto key : keys) {
@@ -136,9 +136,8 @@ std::vector<std::vector<float>> MakeValues(const std::vector<uint64_t>& keys,
   return values;
 }
 
-std::vector<float> MakeFlatGradients(const std::vector<uint64_t>& keys,
-                                     int embedding_dim,
-                                     double update_scale) {
+std::vector<float> MakeFlatGradients(
+    const std::vector<uint64_t>& keys, int embedding_dim, double update_scale) {
   std::vector<float> grads(
       static_cast<std::size_t>(keys.size()) *
           static_cast<std::size_t>(embedding_dim),
@@ -166,10 +165,10 @@ int main(int argc, char** argv) {
       << ", expected summary|per_round|both";
   CHECK_GT(FLAGS_embedding_dim, 0) << "--embedding_dim must be positive";
 
-  const auto keys        = MakeKeys(FLAGS_batch_keys);
-  const auto values      = MakeValues(keys, FLAGS_embedding_dim);
-  const auto grads       = MakeFlatGradients(
-      keys, FLAGS_embedding_dim, FLAGS_update_scale);
+  const auto keys   = MakeKeys(FLAGS_batch_keys);
+  const auto values = MakeValues(keys, FLAGS_embedding_dim);
+  const auto grads =
+      MakeFlatGradients(keys, FLAGS_embedding_dim, FLAGS_update_scale);
   const auto key_array   = base::ConstArray<uint64_t>(keys);
   const int total_rounds = FLAGS_warmup_rounds + FLAGS_rounds;
 
@@ -177,13 +176,12 @@ int main(int argc, char** argv) {
   std::unique_ptr<recstore::BasePSClient> client(
       recstore::CreateFrameworkPSClient(config));
 
-  CHECK_EQ(
-      client->InitEmbeddingTable(
-          FLAGS_table_name,
-          recstore::EmbeddingTableConfig{
-              static_cast<uint64_t>(std::max(FLAGS_batch_keys, 1024)),
-              static_cast<uint64_t>(FLAGS_embedding_dim)}),
-      0)
+  CHECK_EQ(client->InitEmbeddingTable(
+               FLAGS_table_name,
+               recstore::EmbeddingTableConfig{
+                   static_cast<uint64_t>(std::max(FLAGS_batch_keys, 1024)),
+                   static_cast<uint64_t>(FLAGS_embedding_dim)}),
+           0)
       << transport << " InitEmbeddingTable failed";
   CHECK_EQ(client->PutParameter(key_array, values), 0)
       << transport << " PutParameter failed during initialization";
@@ -209,14 +207,13 @@ int main(int argc, char** argv) {
         CHECK_EQ(client->GetParameter(key_array, output.data()), 0)
             << transport << " GetParameter failed at iteration=" << i;
       }
-      CHECK_EQ(
-          client->UpdateParameterFlat(
-              FLAGS_table_name,
-              key_array,
-              grads.data(),
-              static_cast<int64_t>(keys.size()),
-              FLAGS_embedding_dim),
-          0)
+      CHECK_EQ(client->UpdateParameterFlat(
+                   FLAGS_table_name,
+                   key_array,
+                   grads.data(),
+                   static_cast<int64_t>(keys.size()),
+                   FLAGS_embedding_dim),
+               0)
           << transport << " UpdateParameterFlat failed at iteration=" << i;
     }
     auto end = std::chrono::steady_clock::now();
@@ -226,8 +223,7 @@ int main(int argc, char** argv) {
     (is_warmup ? warmup_samples_us : measure_samples_us).push_back(elapsed_us);
     if (ShouldPrintPerRound(report_mode)) {
       std::cout << "system=RecStore transport=" << transport
-                << " phase=" << (is_warmup ? "warmup" : "measure")
-                << " round="
+                << " phase=" << (is_warmup ? "warmup" : "measure") << " round="
                 << (is_warmup ? (round + 1) : (round - FLAGS_warmup_rounds + 1))
                 << "/" << (is_warmup ? FLAGS_warmup_rounds : FLAGS_rounds)
                 << " elapsed_us=" << elapsed_us << std::endl;
@@ -235,14 +231,16 @@ int main(int argc, char** argv) {
   }
 
   if (ShouldPrintSummary(report_mode)) {
-    PrintSummary(
-        transport, "warmup", warmup_samples_us, FLAGS_iterations, FLAGS_batch_keys);
-    PrintSummary(
-        transport,
-        "measure",
-        measure_samples_us,
-        FLAGS_iterations,
-        FLAGS_batch_keys);
+    PrintSummary(transport,
+                 "warmup",
+                 warmup_samples_us,
+                 FLAGS_iterations,
+                 FLAGS_batch_keys);
+    PrintSummary(transport,
+                 "measure",
+                 measure_samples_us,
+                 FLAGS_iterations,
+                 FLAGS_batch_keys);
   }
   return 0;
 }

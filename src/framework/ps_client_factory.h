@@ -63,10 +63,9 @@ inline BasePSClient* CreateFrameworkPSClient(const json& config) {
     return new RDMAPSClientAdapter(config);
   }
 
-  const std::string type_key = (ps_type == "BRPC")
-                                   ? "brpc"
-                                   : ((ps_type == "LOCAL_SHM") ? "local_shm"
-                                                               : "grpc");
+  const std::string type_key =
+      (ps_type == "BRPC") ? "brpc"
+                          : ((ps_type == "LOCAL_SHM") ? "local_shm" : "grpc");
 
   BasePSClient* client =
       base::Factory<BasePSClient, json>::NewInstance(type_key, client_config);

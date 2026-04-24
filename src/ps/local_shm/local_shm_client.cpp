@@ -57,7 +57,7 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
     return -1;
   }
 
-  auto* header = region_.slot_header(static_cast<uint32_t>(slot));
+  auto* header  = region_.slot_header(static_cast<uint32_t>(slot));
   auto* payload = region_.slot_payload(static_cast<uint32_t>(slot));
   const std::size_t input_bytes = GetPayloadBytes(keys.Size());
   if (input_bytes > region_.slot_buffer_bytes()) {
@@ -67,16 +67,16 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
   }
 
   const uint64_t request_id = NextRequestId();
-  header->opcode = static_cast<uint32_t>(LocalOpcode::kGet);
-  header->status_code = static_cast<uint32_t>(LocalStatusCode::kOk);
-  header->client_id = client_id_;
-  header->request_id = request_id;
-  header->client_pid = static_cast<int64_t>(::getpid());
-  header->table_name_len = 0;
-  header->key_count = static_cast<uint32_t>(keys.Size());
-  header->embedding_dim = 0;
-  header->input_bytes = input_bytes;
-  header->output_bytes = 0;
+  header->opcode            = static_cast<uint32_t>(LocalOpcode::kGet);
+  header->status_code       = static_cast<uint32_t>(LocalStatusCode::kOk);
+  header->client_id         = client_id_;
+  header->request_id        = request_id;
+  header->client_pid        = static_cast<int64_t>(::getpid());
+  header->table_name_len    = 0;
+  header->key_count         = static_cast<uint32_t>(keys.Size());
+  header->embedding_dim     = 0;
+  header->input_bytes       = input_bytes;
+  header->output_bytes      = 0;
   header->server_seen_epoch = region_.control()->server_epoch;
   header->error_message_len = 0;
 
@@ -94,14 +94,16 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
   }
 
   if (header->output_bytes > 0) {
-    std::memcpy(values, payload, static_cast<std::size_t>(header->output_bytes));
+    std::memcpy(
+        values, payload, static_cast<std::size_t>(header->output_bytes));
   }
   ReleaseSlot(static_cast<uint32_t>(slot));
   return 0;
 }
 
-int LocalShmPSClient::PutParameter(const base::ConstArray<uint64_t>& keys,
-                                   const std::vector<std::vector<float>>& values) {
+int LocalShmPSClient::PutParameter(
+    const base::ConstArray<uint64_t>& keys,
+    const std::vector<std::vector<float>>& values) {
   if (!region_.IsOpen()) {
     return -1;
   }
@@ -119,7 +121,7 @@ int LocalShmPSClient::PutParameter(const base::ConstArray<uint64_t>& keys,
   if (slot < 0) {
     return -1;
   }
-  auto* header = region_.slot_header(static_cast<uint32_t>(slot));
+  auto* header  = region_.slot_header(static_cast<uint32_t>(slot));
   auto* payload = region_.slot_payload(static_cast<uint32_t>(slot));
   const std::size_t input_bytes = PutPayloadBytes(keys.Size(), embedding_dim);
   if (input_bytes > region_.slot_buffer_bytes()) {
@@ -129,16 +131,16 @@ int LocalShmPSClient::PutParameter(const base::ConstArray<uint64_t>& keys,
   }
 
   const uint64_t request_id = NextRequestId();
-  header->opcode = static_cast<uint32_t>(LocalOpcode::kPut);
-  header->status_code = static_cast<uint32_t>(LocalStatusCode::kOk);
-  header->client_id = client_id_;
-  header->request_id = request_id;
-  header->client_pid = static_cast<int64_t>(::getpid());
-  header->table_name_len = 0;
-  header->key_count = static_cast<uint32_t>(keys.Size());
-  header->embedding_dim = static_cast<uint32_t>(embedding_dim);
-  header->input_bytes = input_bytes;
-  header->output_bytes = 0;
+  header->opcode            = static_cast<uint32_t>(LocalOpcode::kPut);
+  header->status_code       = static_cast<uint32_t>(LocalStatusCode::kOk);
+  header->client_id         = client_id_;
+  header->request_id        = request_id;
+  header->client_pid        = static_cast<int64_t>(::getpid());
+  header->table_name_len    = 0;
+  header->key_count         = static_cast<uint32_t>(keys.Size());
+  header->embedding_dim     = static_cast<uint32_t>(embedding_dim);
+  header->input_bytes       = input_bytes;
+  header->output_bytes      = 0;
   header->server_seen_epoch = region_.control()->server_epoch;
   header->error_message_len = 0;
 
@@ -157,9 +159,9 @@ int LocalShmPSClient::PutParameter(const base::ConstArray<uint64_t>& keys,
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
-  const bool ok = WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
-                  header->status_code ==
-                      static_cast<uint32_t>(LocalStatusCode::kOk);
+  const bool ok =
+      WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
+      header->status_code == static_cast<uint32_t>(LocalStatusCode::kOk);
   ReleaseSlot(static_cast<uint32_t>(slot));
   return ok ? 0 : -1;
 }
@@ -183,18 +185,20 @@ int LocalShmPSClient::UpdateParameter(
     }
     flat.insert(flat.end(), row.begin(), row.end());
   }
-  return UpdateParameterFlat(table_name,
-                             keys,
-                             flat.empty() ? nullptr : flat.data(),
-                             static_cast<int64_t>(grads->size()),
-                             static_cast<int64_t>(embedding_dim));
+  return UpdateParameterFlat(
+      table_name,
+      keys,
+      flat.empty() ? nullptr : flat.data(),
+      static_cast<int64_t>(grads->size()),
+      static_cast<int64_t>(embedding_dim));
 }
 
-int LocalShmPSClient::UpdateParameterFlat(const std::string& table_name,
-                                          const base::ConstArray<uint64_t>& keys,
-                                          const float* grads,
-                                          int64_t num_rows,
-                                          int64_t embedding_dim) {
+int LocalShmPSClient::UpdateParameterFlat(
+    const std::string& table_name,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim) {
   if (!region_.IsOpen() || grads == nullptr || num_rows < 0 ||
       embedding_dim <= 0 || keys.Size() != static_cast<size_t>(num_rows)) {
     return -1;
@@ -204,7 +208,7 @@ int LocalShmPSClient::UpdateParameterFlat(const std::string& table_name,
     return -1;
   }
 
-  auto* header = region_.slot_header(static_cast<uint32_t>(slot));
+  auto* header  = region_.slot_header(static_cast<uint32_t>(slot));
   auto* payload = region_.slot_payload(static_cast<uint32_t>(slot));
   const std::size_t input_bytes = UpdateFlatPayloadBytes(
       table_name, keys.Size(), static_cast<std::size_t>(embedding_dim));
@@ -215,16 +219,16 @@ int LocalShmPSClient::UpdateParameterFlat(const std::string& table_name,
   }
 
   const uint64_t request_id = NextRequestId();
-  header->opcode = static_cast<uint32_t>(LocalOpcode::kUpdateFlat);
-  header->status_code = static_cast<uint32_t>(LocalStatusCode::kOk);
-  header->client_id = client_id_;
-  header->request_id = request_id;
-  header->client_pid = static_cast<int64_t>(::getpid());
-  header->table_name_len = static_cast<uint32_t>(table_name.size());
-  header->key_count = static_cast<uint32_t>(keys.Size());
-  header->embedding_dim = static_cast<uint32_t>(embedding_dim);
-  header->input_bytes = input_bytes;
-  header->output_bytes = 0;
+  header->opcode            = static_cast<uint32_t>(LocalOpcode::kUpdateFlat);
+  header->status_code       = static_cast<uint32_t>(LocalStatusCode::kOk);
+  header->client_id         = client_id_;
+  header->request_id        = request_id;
+  header->client_pid        = static_cast<int64_t>(::getpid());
+  header->table_name_len    = static_cast<uint32_t>(table_name.size());
+  header->key_count         = static_cast<uint32_t>(keys.Size());
+  header->embedding_dim     = static_cast<uint32_t>(embedding_dim);
+  header->input_bytes       = input_bytes;
+  header->output_bytes      = 0;
   header->server_seen_epoch = region_.control()->server_epoch;
   header->error_message_len = 0;
 
@@ -244,9 +248,9 @@ int LocalShmPSClient::UpdateParameterFlat(const std::string& table_name,
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
-  const bool ok = WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
-                  header->status_code ==
-                      static_cast<uint32_t>(LocalStatusCode::kOk);
+  const bool ok =
+      WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
+      header->status_code == static_cast<uint32_t>(LocalStatusCode::kOk);
   ReleaseSlot(static_cast<uint32_t>(slot));
   return ok ? 0 : -1;
 }
@@ -261,7 +265,7 @@ int LocalShmPSClient::InitEmbeddingTable(const std::string& table_name,
     return -1;
   }
 
-  auto* header = region_.slot_header(static_cast<uint32_t>(slot));
+  auto* header  = region_.slot_header(static_cast<uint32_t>(slot));
   auto* payload = region_.slot_payload(static_cast<uint32_t>(slot));
   const std::size_t input_bytes = InitTablePayloadBytes(table_name);
   if (input_bytes > region_.slot_buffer_bytes()) {
@@ -271,16 +275,16 @@ int LocalShmPSClient::InitEmbeddingTable(const std::string& table_name,
   }
 
   const uint64_t request_id = NextRequestId();
-  header->opcode = static_cast<uint32_t>(LocalOpcode::kInitTable);
-  header->status_code = static_cast<uint32_t>(LocalStatusCode::kOk);
-  header->client_id = client_id_;
-  header->request_id = request_id;
-  header->client_pid = static_cast<int64_t>(::getpid());
-  header->table_name_len = static_cast<uint32_t>(table_name.size());
-  header->key_count = 0;
-  header->embedding_dim = static_cast<uint32_t>(config.embedding_dim);
-  header->input_bytes = input_bytes;
-  header->output_bytes = 0;
+  header->opcode            = static_cast<uint32_t>(LocalOpcode::kInitTable);
+  header->status_code       = static_cast<uint32_t>(LocalStatusCode::kOk);
+  header->client_id         = client_id_;
+  header->request_id        = request_id;
+  header->client_pid        = static_cast<int64_t>(::getpid());
+  header->table_name_len    = static_cast<uint32_t>(table_name.size());
+  header->key_count         = 0;
+  header->embedding_dim     = static_cast<uint32_t>(config.embedding_dim);
+  header->input_bytes       = input_bytes;
+  header->output_bytes      = 0;
   header->server_seen_epoch = region_.control()->server_epoch;
   header->error_message_len = 0;
 
@@ -296,9 +300,9 @@ int LocalShmPSClient::InitEmbeddingTable(const std::string& table_name,
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
 
-  const bool ok = WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
-                  header->status_code ==
-                      static_cast<uint32_t>(LocalStatusCode::kOk);
+  const bool ok =
+      WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
+      header->status_code == static_cast<uint32_t>(LocalStatusCode::kOk);
   ReleaseSlot(static_cast<uint32_t>(slot));
   return ok ? 0 : -1;
 }
@@ -310,7 +314,8 @@ int LocalShmPSClient::AsyncGetParameter(const base::ConstArray<uint64_t>& keys,
 
 void LocalShmPSClient::Command(PSCommand) {}
 
-uint64_t LocalShmPSClient::PrefetchParameter(const base::ConstArray<uint64_t>&) {
+uint64_t
+LocalShmPSClient::PrefetchParameter(const base::ConstArray<uint64_t>&) {
   return 0;
 }
 
@@ -318,8 +323,8 @@ bool LocalShmPSClient::IsPrefetchDone(uint64_t) { return false; }
 
 void LocalShmPSClient::WaitForPrefetch(uint64_t) {}
 
-bool LocalShmPSClient::GetPrefetchResult(
-    uint64_t, std::vector<std::vector<float>>*) {
+bool LocalShmPSClient::GetPrefetchResult(uint64_t,
+                                         std::vector<std::vector<float>>*) {
   return false;
 }
 
@@ -333,7 +338,7 @@ int LocalShmPSClient::AcquireSlot() {
     return -1;
   }
   for (uint32_t slot_id = 0; slot_id < region_.slot_count(); ++slot_id) {
-    auto* header = region_.slot_header(slot_id);
+    auto* header      = region_.slot_header(slot_id);
     uint32_t expected = static_cast<uint32_t>(LocalSlotState::kFree);
     if (header->state.compare_exchange_strong(
             expected, static_cast<uint32_t>(LocalSlotState::kWriting))) {
@@ -368,7 +373,8 @@ bool LocalShmPSClient::WaitForSlot(uint32_t slot_id, uint64_t request_id) {
     }
     const auto remaining =
         std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-    FutexWaitUntilValueChange(&header->completion_doorbell, observed, remaining);
+    FutexWaitUntilValueChange(
+        &header->completion_doorbell, observed, remaining);
   }
   header->status_code = static_cast<uint32_t>(LocalStatusCode::kTimeout);
   return false;
