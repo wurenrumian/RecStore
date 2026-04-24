@@ -1,0 +1,120 @@
+import sys
+import unittest
+from io import StringIO
+from pathlib import Path
+from contextlib import redirect_stdout
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from run_hierkv_recstore_mixed_benchmark import (  # noqa: E402
+    build_hierkv_cmd,
+    build_recstore_cmd,
+    collect_summary_rows,
+    print_summary_table,
+)
+
+
+class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
+    def test_collect_summary_rows_parses_recstore_and_hierkv(self):
+        sample = (
+            "system=RecStore transport=GRPC phase=measure summary rounds=3 "
+            "iterations=100 batch_keys=128 elapsed_us_mean=1000 "
+            "elapsed_us_p50=900 elapsed_us_p95=1200 elapsed_us_p99=1300 "
+            "ops_per_sec=200000 key_ops_per_sec=25600000\n"
+            "system=HierKV transport=LOCAL_GPU phase=measure summary rounds=3 "
+            "iterations=100 batch_keys=128 elapsed_us_mean=200 "
+            "elapsed_us_p50=180 elapsed_us_p95=240 elapsed_us_p99=260 "
+            "ops_per_sec=1000000 key_ops_per_sec=128000000\n"
+        )
+        rows = collect_summary_rows(sample)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["system"], "RecStore")
+        self.assertEqual(rows[1]["system"], "HierKV")
+
+    def test_print_summary_table_renders_both_systems(self):
+        rows = [
+            {
+                "system": "RecStore",
+                "transport": "GRPC",
+                "rounds": 3,
+                "iterations": 100,
+                "batch_keys": 128,
+                "mean": 1000.0,
+                "p50": 900.0,
+                "p95": 1200.0,
+                "p99": 1300.0,
+                "ops": 200000.0,
+                "key_ops": 25600000.0,
+            },
+            {
+                "system": "HierKV",
+                "transport": "LOCAL_GPU",
+                "rounds": 3,
+                "iterations": 100,
+                "batch_keys": 128,
+                "mean": 200.0,
+                "p50": 180.0,
+                "p95": 240.0,
+                "p99": 260.0,
+                "ops": 1000000.0,
+                "key_ops": 128000000.0,
+            },
+        ]
+        out = StringIO()
+        with redirect_stdout(out):
+            print_summary_table(rows)
+        text = out.getvalue()
+        self.assertIn("=== Mixed Benchmark Summary (measure phase) ===", text)
+        self.assertIn("| system", text)
+        self.assertIn("| HierKV", text)
+        self.assertIn("| RecStore", text)
+
+    def test_build_recstore_cmd_contains_mixed_parameters(self):
+        args = type(
+            "Args",
+            (),
+            {
+                "recstore_binary": "/tmp/recstore_mixed_benchmark",
+                "transport": "grpc",
+                "host": "127.0.0.1",
+                "port": 15000,
+                "iterations": 100,
+                "rounds": 3,
+                "warmup_rounds": 1,
+                "batch_keys": 128,
+                "embedding_dim": 64,
+                "report_mode": "summary",
+                "update_scale": 0.001,
+            },
+        )()
+        cmd = build_recstore_cmd(args)
+        self.assertIn("--embedding_dim=64", cmd)
+        self.assertIn("--batch_keys=128", cmd)
+        self.assertIn("--update_scale=0.001", cmd)
+
+    def test_build_hierkv_cmd_contains_capacity_parameters(self):
+        args = type(
+            "Args",
+            (),
+            {
+                "hierkv_binary": "/tmp/mixed_benchmark",
+                "iterations": 100,
+                "rounds": 3,
+                "warmup_rounds": 1,
+                "batch_keys": 128,
+                "embedding_dim": 64,
+                "report_mode": "summary",
+                "update_scale": 0.001,
+                "init_capacity": 1024,
+                "max_capacity": 2048,
+                "max_hbm_for_vectors": 4096,
+            },
+        )()
+        cmd = build_hierkv_cmd(args)
+        self.assertIn("--init_capacity=1024", cmd)
+        self.assertIn("--max_capacity=2048", cmd)
+        self.assertIn("--max_hbm_for_vectors=4096", cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()

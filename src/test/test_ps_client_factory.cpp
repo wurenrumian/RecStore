@@ -2,6 +2,7 @@
 
 #include "framework/ps_client_factory.h"
 #include "ps/brpc/brpc_ps_client.h"
+#include "ps/local_shm/local_shm_client.h"
 
 namespace recstore {
 
@@ -68,6 +69,28 @@ TEST(PSClientFactoryTest, CreatesBrpcClientWithoutFactoryRegistration) {
   std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
   ASSERT_NE(client, nullptr);
   EXPECT_NE(dynamic_cast<BRPCParameterClient*>(client.get()), nullptr);
+}
+
+TEST(PSClientFactoryTest, CreatesLocalShmClientFromConfig) {
+  json config = {
+      {"cache_ps", {{"ps_type", "LOCAL_SHM"}}},
+      {"local_shm",
+       {{"region_name", "recstore_local_ps_factory_test"},
+        {"slot_count", 4},
+        {"slot_buffer_bytes", 4096},
+        {"client_timeout_ms", 1000}}},
+  };
+
+  EXPECT_EQ(ResolveFrameworkPSType(config), "LOCAL_SHM");
+
+  json client_config = ResolveFrameworkClientConfig(config);
+  EXPECT_EQ(client_config["region_name"], "recstore_local_ps_factory_test");
+  EXPECT_EQ(client_config["slot_count"], 4);
+  EXPECT_EQ(client_config["slot_buffer_bytes"], 4096);
+
+  std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
+  ASSERT_NE(client, nullptr);
+  EXPECT_NE(dynamic_cast<LocalShmPSClient*>(client.get()), nullptr);
 }
 
 } // namespace recstore

@@ -209,6 +209,46 @@ public:
     return true;
   }
 
+  bool GetParameterFlat(base::ConstArray<uint64_t> keys,
+                        float* values,
+                        int64_t num_rows,
+                        int64_t embedding_dim,
+                        int tid) {
+    if (values == nullptr) {
+      LOG(ERROR) << "GetParameterFlat values pointer is null";
+      return false;
+    }
+    if (num_rows < 0 || embedding_dim <= 0) {
+      LOG(ERROR) << "GetParameterFlat invalid shape rows=" << num_rows
+                 << " dim=" << embedding_dim;
+      return false;
+    }
+    if (keys.Size() != static_cast<size_t>(num_rows)) {
+      LOG(ERROR) << "GetParameterFlat keys size mismatch " << keys.Size()
+                 << " vs " << num_rows;
+      return false;
+    }
+
+    std::vector<base::ConstArray<float>> value_slices;
+    base_kv_->BatchGet(keys, &value_slices, tid);
+    if (value_slices.size() != static_cast<size_t>(num_rows)) {
+      LOG(ERROR) << "GetParameterFlat BatchGet returned " << value_slices.size()
+                 << " rows, expected " << num_rows;
+      return false;
+    }
+
+    for (int64_t row = 0; row < num_rows; ++row) {
+      const auto& slice = value_slices[static_cast<size_t>(row)];
+      const int64_t copy_dim =
+          std::min<int64_t>(embedding_dim, static_cast<int64_t>(slice.Size()));
+      std::fill_n(values + row * embedding_dim, embedding_dim, 0.0f);
+      if (copy_dim > 0) {
+        std::copy_n(slice.Data(), copy_dim, values + row * embedding_dim);
+      }
+    }
+    return true;
+  }
+
   bool GetParameterRun2Completion(
       coroutine<void>::push_type& sink,
       base::ConstArray<uint64_t> keys,
@@ -249,6 +289,44 @@ public:
 
     optimizer_->Update(table_name, reader, tid);
     return true;
+  }
+
+  bool UpdateParameterFlat(
+      const std::string& table_name,
+      const base::ConstArray<uint64_t>& keys,
+      const float* grads,
+      int64_t num_rows,
+      int64_t embedding_dim,
+      unsigned tid) {
+    if (grads == nullptr) {
+      LOG(ERROR) << "UpdateParameterFlat grads pointer is null";
+      return false;
+    }
+    if (num_rows < 0 || embedding_dim <= 0) {
+      LOG(ERROR) << "UpdateParameterFlat invalid shape rows=" << num_rows
+                 << " dim=" << embedding_dim;
+      return false;
+    }
+    if (keys.Size() != static_cast<size_t>(num_rows)) {
+      LOG(ERROR) << "UpdateParameterFlat keys size mismatch " << keys.Size()
+                 << " vs " << num_rows;
+      return false;
+    }
+
+    ParameterCompressor compressor(std::numeric_limits<int>::max());
+    for (int64_t row = 0; row < num_rows; ++row) {
+      ParameterPack pack;
+      pack.key      = keys[static_cast<size_t>(row)];
+      pack.dim      = static_cast<int>(embedding_dim);
+      pack.emb_data = grads + row * embedding_dim;
+      compressor.AddItem(pack, nullptr);
+    }
+
+    std::string block;
+    compressor.ToBlock(&block);
+    const auto* reader =
+        reinterpret_cast<const ParameterCompressReader*>(block.data());
+    return UpdateParameter(table_name, reader, tid);
   }
 
 private:

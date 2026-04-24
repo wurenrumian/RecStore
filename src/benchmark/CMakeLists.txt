@@ -24,6 +24,20 @@ target_link_libraries(ps_transport_benchmark PUBLIC
     base
     grpc_ps_client
     brpc_ps_client
+    local_shm_ps_client
+    ${warp_wq_ps_client}
+    OpenMP::OpenMP_CXX
+)
+
+add_executable(recstore_mixed_benchmark
+    recstore_mixed_benchmark.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
+)
+target_link_libraries(recstore_mixed_benchmark PUBLIC
+    base
+    grpc_ps_client
+    brpc_ps_client
+    local_shm_ps_client
     ${warp_wq_ps_client}
     OpenMP::OpenMP_CXX
 )

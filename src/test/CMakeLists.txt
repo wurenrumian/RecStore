@@ -128,6 +128,7 @@ target_link_libraries(test_ps_client_factory PUBLIC
     wq_ps_client
     grpc_ps_client
     brpc_ps_client
+    local_shm_ps_client
     gflags
     glog
     gtest
@@ -136,6 +137,45 @@ target_link_libraries(test_ps_client_factory PUBLIC
 )
 target_link_options(test_ps_client_factory PUBLIC -Wl,--no-as-needed)
 add_test(NAME test_ps_client_factory COMMAND test_ps_client_factory)
+
+add_executable(test_local_shm_protocol test_local_shm_protocol.cpp)
+target_link_libraries(test_local_shm_protocol PUBLIC
+    base
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_local_shm_protocol COMMAND test_local_shm_protocol)
+
+add_executable(test_local_shm_region test_local_shm_region.cpp)
+target_link_libraries(test_local_shm_region PUBLIC
+    base
+    local_shm_common
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_local_shm_region COMMAND test_local_shm_region)
+
+add_executable(test_local_shm_futex test_local_shm_futex.cpp)
+target_link_libraries(test_local_shm_futex PUBLIC
+    local_shm_common
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_local_shm_futex COMMAND test_local_shm_futex)
+
+add_executable(test_local_shm_ps_client test_local_shm_ps_client.cpp)
+target_link_libraries(test_local_shm_ps_client PUBLIC
+    base
+    local_shm_ps_client
+    local_shm_ps_server_runtime
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_local_shm_ps_client COMMAND test_local_shm_ps_client)
 
 add_executable(brpc_ps_server_unit_test
     test_brpc_ps_server.cpp
