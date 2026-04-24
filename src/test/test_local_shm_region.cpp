@@ -14,14 +14,14 @@ std::string UniqueRegionName() {
 }
 
 TEST(LocalShmRegionTest, CreateAndAttachRegion) {
-  const std::string region_name = UniqueRegionName();
-  constexpr uint32_t kSlotCount = 4;
-  constexpr uint32_t kSlotBytes = 4096;
+  const std::string region_name       = UniqueRegionName();
+  constexpr uint32_t kSlotCount       = 4;
+  constexpr uint32_t kSlotBytes       = 4096;
   constexpr uint32_t kReadyQueueCount = 3;
 
   LocalShmRegion server_region;
-  ASSERT_TRUE(
-      server_region.Create(region_name, kSlotCount, kSlotBytes, kReadyQueueCount));
+  ASSERT_TRUE(server_region.Create(
+      region_name, kSlotCount, kSlotBytes, kReadyQueueCount));
   ASSERT_TRUE(server_region.IsOpen());
   EXPECT_EQ(server_region.control()->magic, kLocalShmMagic);
   EXPECT_EQ(server_region.control()->slot_count, kSlotCount);
@@ -40,14 +40,16 @@ TEST(LocalShmRegionTest, CreateAndAttachRegion) {
   seen.reserve(kSlotCount);
   for (uint32_t i = 0; i < kSlotCount; ++i) {
     uint32_t slot_id = 0;
-    ASSERT_TRUE(LocalShmQueueDequeue(client_region.queue_header(LocalQueueKind::kFree),
-                                     client_region.queue_cells(LocalQueueKind::kFree),
-                                     &slot_id));
+    ASSERT_TRUE(LocalShmQueueDequeue(
+        client_region.queue_header(LocalQueueKind::kFree),
+        client_region.queue_cells(LocalQueueKind::kFree),
+        &slot_id));
     seen.push_back(slot_id);
   }
-  EXPECT_FALSE(LocalShmQueueDequeue(client_region.queue_header(LocalQueueKind::kFree),
-                                    client_region.queue_cells(LocalQueueKind::kFree),
-                                    &seen[0]));
+  EXPECT_FALSE(LocalShmQueueDequeue(
+      client_region.queue_header(LocalQueueKind::kFree),
+      client_region.queue_cells(LocalQueueKind::kFree),
+      &seen[0]));
   EXPECT_EQ(seen.size(), static_cast<size_t>(kSlotCount));
 
   for (uint32_t ready_queue_id = 0; ready_queue_id < kReadyQueueCount;

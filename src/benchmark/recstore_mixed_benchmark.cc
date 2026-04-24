@@ -110,13 +110,12 @@ void PrintSummary(const std::string& transport,
       (key_ops_per_round * total_rounds) / (total_us / 1e6);
 
   std::cout << "system=RecStore transport=" << transport << " phase=" << phase
-            << " summary rounds=" << elapsed_us_samples.size()
-            << " iterations=" << iterations_per_round
-            << " batch_keys=" << batch_keys
+            << " summary rounds=" << elapsed_us_samples.size() << " iterations="
+            << iterations_per_round << " batch_keys=" << batch_keys
             << " num_embeddings=" << num_embeddings
-            << " elapsed_us_mean=" << mean_us
-            << " elapsed_us_p50=" << p50_us << " elapsed_us_p95=" << p95_us
-            << " elapsed_us_p99=" << p99_us << " ops_per_sec=" << ops_per_sec
+            << " elapsed_us_mean=" << mean_us << " elapsed_us_p50=" << p50_us
+            << " elapsed_us_p95=" << p95_us << " elapsed_us_p99=" << p99_us
+            << " ops_per_sec=" << ops_per_sec
             << " key_ops_per_sec=" << key_ops_per_sec << std::endl;
 }
 
@@ -131,9 +130,8 @@ std::vector<uint64_t> MakeSequentialKeys(int64_t begin, int key_count) {
   return keys;
 }
 
-std::vector<uint64_t> MakeBatchKeys(int64_t num_embeddings,
-                                    int batch_keys,
-                                    int64_t batch_offset) {
+std::vector<uint64_t>
+MakeBatchKeys(int64_t num_embeddings, int batch_keys, int64_t batch_offset) {
   CHECK_GT(num_embeddings, 0) << "--num_embeddings must be positive";
   CHECK_GT(batch_keys, 0) << "--batch_keys must be positive";
   std::vector<uint64_t> keys;
@@ -208,14 +206,14 @@ int main(int argc, char** argv) {
        begin += FLAGS_init_chunk_size) {
     const int chunk_size = static_cast<int>(
         std::min<int64_t>(FLAGS_init_chunk_size, FLAGS_num_embeddings - begin));
-    const auto init_keys = MakeSequentialKeys(begin, chunk_size);
+    const auto init_keys   = MakeSequentialKeys(begin, chunk_size);
     const auto init_values = MakeValues(init_keys, FLAGS_embedding_dim);
     CHECK(BenchmarkWriteSucceeded(
-              transport,
-              client->PutParameter(
-                  base::ConstArray<uint64_t>(init_keys), init_values)))
-        << transport << " PutParameter failed during initialization at begin="
-        << begin;
+        transport,
+        client->PutParameter(
+            base::ConstArray<uint64_t>(init_keys), init_values)))
+        << transport
+        << " PutParameter failed during initialization at begin=" << begin;
   }
 
   std::vector<int64_t> warmup_samples_us;
@@ -230,8 +228,8 @@ int main(int argc, char** argv) {
       const int64_t batch_offset =
           (static_cast<int64_t>(round) * FLAGS_iterations + i) *
           FLAGS_batch_keys;
-      const auto keys = MakeBatchKeys(
-          FLAGS_num_embeddings, FLAGS_batch_keys, batch_offset);
+      const auto keys =
+          MakeBatchKeys(FLAGS_num_embeddings, FLAGS_batch_keys, batch_offset);
       const auto grads =
           MakeFlatGradients(keys, FLAGS_embedding_dim, FLAGS_update_scale);
       const auto key_array = base::ConstArray<uint64_t>(keys);
@@ -239,14 +237,14 @@ int main(int argc, char** argv) {
         auto* brpc_client = dynamic_cast<BRPCParameterClient*>(client.get());
         CHECK_NE(brpc_client, nullptr);
         std::vector<std::vector<float>> output;
-        CHECK(BenchmarkReadSucceeded(transport,
-                                     brpc_client->GetParameter(key_array, &output)))
+        CHECK(BenchmarkReadSucceeded(
+            transport, brpc_client->GetParameter(key_array, &output)))
             << transport << " GetParameter failed at iteration=" << i;
       } else {
         std::vector<float> output(
             keys.size() * static_cast<std::size_t>(FLAGS_embedding_dim), 0.0f);
-        CHECK(BenchmarkReadSucceeded(transport,
-                                     client->GetParameter(key_array, output.data())))
+        CHECK(BenchmarkReadSucceeded(
+            transport, client->GetParameter(key_array, output.data())))
             << transport << " GetParameter failed at iteration=" << i;
       }
       CHECK_EQ(client->UpdateParameterFlat(
@@ -273,18 +271,20 @@ int main(int argc, char** argv) {
   }
 
   if (ShouldPrintSummary(report_mode)) {
-    PrintSummary(transport,
-                 "warmup",
-                 warmup_samples_us,
-                 FLAGS_iterations,
-                 FLAGS_batch_keys,
-                 FLAGS_num_embeddings);
-    PrintSummary(transport,
-                 "measure",
-                 measure_samples_us,
-                 FLAGS_iterations,
-                 FLAGS_batch_keys,
-                 FLAGS_num_embeddings);
+    PrintSummary(
+        transport,
+        "warmup",
+        warmup_samples_us,
+        FLAGS_iterations,
+        FLAGS_batch_keys,
+        FLAGS_num_embeddings);
+    PrintSummary(
+        transport,
+        "measure",
+        measure_samples_us,
+        FLAGS_iterations,
+        FLAGS_batch_keys,
+        FLAGS_num_embeddings);
   }
   return 0;
 }

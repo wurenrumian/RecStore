@@ -43,7 +43,9 @@ inline bool BenchmarkWriteReturnsZeroOnSuccess(const std::string& transport) {
 }
 
 inline bool BenchmarkWriteSucceeded(const std::string& transport, int ret) {
-  return BenchmarkWriteReturnsZeroOnSuccess(transport) ? (ret == 0) : (ret != 0);
+  return BenchmarkWriteReturnsZeroOnSuccess(transport)
+           ? (ret == 0)
+           : (ret != 0);
 }
 
 inline bool BenchmarkReadReturnsZeroOnSuccess(const std::string& transport) {

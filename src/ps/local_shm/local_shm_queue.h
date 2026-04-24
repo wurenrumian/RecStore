@@ -6,16 +6,13 @@
 
 namespace recstore {
 
-void LocalShmQueueInitialize(LocalShmQueueHeader* header,
-                             LocalShmQueueCell* cells,
-                             uint32_t capacity);
+void LocalShmQueueInitialize(
+    LocalShmQueueHeader* header, LocalShmQueueCell* cells, uint32_t capacity);
 
-bool LocalShmQueueEnqueue(LocalShmQueueHeader* header,
-                          LocalShmQueueCell* cells,
-                          uint32_t value);
+bool LocalShmQueueEnqueue(
+    LocalShmQueueHeader* header, LocalShmQueueCell* cells, uint32_t value);
 
-bool LocalShmQueueDequeue(LocalShmQueueHeader* header,
-                          LocalShmQueueCell* cells,
-                          uint32_t* value);
+bool LocalShmQueueDequeue(
+    LocalShmQueueHeader* header, LocalShmQueueCell* cells, uint32_t* value);
 
 } // namespace recstore

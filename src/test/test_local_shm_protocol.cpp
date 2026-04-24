@@ -16,8 +16,8 @@ TEST(LocalShmProtocolTest, ControlBlockAndSlotHeaderAreDefined) {
 }
 
 TEST(LocalShmProtocolTest, LayoutOffsetsAreMonotonic) {
-  constexpr uint32_t kSlotCount = 8;
-  constexpr uint32_t kSlotBytes = 4096;
+  constexpr uint32_t kSlotCount       = 8;
+  constexpr uint32_t kSlotBytes       = 4096;
   constexpr uint32_t kReadyQueueCount = 4;
 
   EXPECT_EQ(ControlBlockOffset(), 0U);
@@ -29,8 +29,7 @@ TEST(LocalShmProtocolTest, LayoutOffsetsAreMonotonic) {
             SlotHeadersOffset(kSlotCount, kReadyQueueCount));
   EXPECT_GT(TotalRegionBytes(kSlotCount, kSlotBytes, kReadyQueueCount),
             SlotPayloadsOffset(kSlotCount, kReadyQueueCount));
-  EXPECT_EQ(SlotPayloadOffset(
-                kSlotCount, kSlotBytes, 0, kReadyQueueCount),
+  EXPECT_EQ(SlotPayloadOffset(kSlotCount, kSlotBytes, 0, kReadyQueueCount),
             SlotPayloadsOffset(kSlotCount, kReadyQueueCount));
   EXPECT_GT(SlotPayloadOffset(kSlotCount, kSlotBytes, 1),
             SlotPayloadOffset(kSlotCount, kSlotBytes, 0));

@@ -37,7 +37,7 @@ void LocalShmStoreRuntime::Run() {
     const uint32_t observed_before_wait =
         control->request_doorbell.load(std::memory_order_acquire);
     const uint32_t ready_queue_count = region_->ready_queue_count();
-    uint32_t processed = 0;
+    uint32_t processed               = 0;
     for (uint32_t step = 0; step < ready_queue_count; ++step) {
       const uint32_t ready_queue_id =
           (next_ready_queue_id_ + step) % ready_queue_count;
@@ -56,8 +56,8 @@ void LocalShmStoreRuntime::Run() {
   }
 }
 
-bool LocalShmStoreRuntime::DrainReadyQueue(
-    uint32_t ready_queue_id, uint32_t* processed) {
+bool LocalShmStoreRuntime::DrainReadyQueue(uint32_t ready_queue_id,
+                                           uint32_t* processed) {
   auto* ready_header = region_->ready_queue_header(ready_queue_id);
   auto* ready_cells  = region_->ready_queue_cells(ready_queue_id);
   uint32_t slot_id   = 0;

@@ -5,9 +5,8 @@
 
 namespace recstore {
 
-void LocalShmQueueInitialize(LocalShmQueueHeader* header,
-                             LocalShmQueueCell* cells,
-                             uint32_t capacity) {
+void LocalShmQueueInitialize(
+    LocalShmQueueHeader* header, LocalShmQueueCell* cells, uint32_t capacity) {
   header->enqueue_pos.store(0, std::memory_order_relaxed);
   header->dequeue_pos.store(0, std::memory_order_relaxed);
   header->capacity  = capacity;
@@ -20,16 +19,15 @@ void LocalShmQueueInitialize(LocalShmQueueHeader* header,
   }
 }
 
-bool LocalShmQueueEnqueue(LocalShmQueueHeader* header,
-                          LocalShmQueueCell* cells,
-                          uint32_t value) {
+bool LocalShmQueueEnqueue(
+    LocalShmQueueHeader* header, LocalShmQueueCell* cells, uint32_t value) {
   const uint32_t capacity = header->capacity;
-  uint32_t pos = header->enqueue_pos.load(std::memory_order_relaxed);
+  uint32_t pos            = header->enqueue_pos.load(std::memory_order_relaxed);
   while (true) {
     LocalShmQueueCell* cell = &cells[pos % capacity];
-    const uint32_t seq = cell->sequence.load(std::memory_order_acquire);
-    const intptr_t dif = static_cast<intptr_t>(seq) -
-                         static_cast<intptr_t>(pos);
+    const uint32_t seq      = cell->sequence.load(std::memory_order_acquire);
+    const intptr_t dif =
+        static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos);
     if (dif == 0) {
       if (header->enqueue_pos.compare_exchange_weak(
               pos, pos + 1, std::memory_order_relaxed)) {
@@ -45,16 +43,15 @@ bool LocalShmQueueEnqueue(LocalShmQueueHeader* header,
   }
 }
 
-bool LocalShmQueueDequeue(LocalShmQueueHeader* header,
-                          LocalShmQueueCell* cells,
-                          uint32_t* value) {
+bool LocalShmQueueDequeue(
+    LocalShmQueueHeader* header, LocalShmQueueCell* cells, uint32_t* value) {
   const uint32_t capacity = header->capacity;
-  uint32_t pos = header->dequeue_pos.load(std::memory_order_relaxed);
+  uint32_t pos            = header->dequeue_pos.load(std::memory_order_relaxed);
   while (true) {
     LocalShmQueueCell* cell = &cells[pos % capacity];
-    const uint32_t seq = cell->sequence.load(std::memory_order_acquire);
-    const intptr_t dif = static_cast<intptr_t>(seq) -
-                         static_cast<intptr_t>(pos + 1);
+    const uint32_t seq      = cell->sequence.load(std::memory_order_acquire);
+    const intptr_t dif =
+        static_cast<intptr_t>(seq) - static_cast<intptr_t>(pos + 1);
     if (dif == 0) {
       if (header->dequeue_pos.compare_exchange_weak(
               pos, pos + 1, std::memory_order_relaxed)) {

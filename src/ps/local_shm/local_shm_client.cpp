@@ -397,8 +397,8 @@ int LocalShmPSClient::AcquireSlot() {
 
 void LocalShmPSClient::ReleaseSlot(uint32_t slot_id) {
   auto* header = region_.slot_header(slot_id);
-  header->state.store(static_cast<uint32_t>(LocalSlotState::kFree),
-                      std::memory_order_release);
+  header->state.store(
+      static_cast<uint32_t>(LocalSlotState::kFree), std::memory_order_release);
   CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kFree),
                              region_.queue_cells(LocalQueueKind::kFree),
                              slot_id));

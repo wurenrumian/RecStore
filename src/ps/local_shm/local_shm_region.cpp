@@ -76,10 +76,9 @@ bool LocalShmRegion::Create(const std::string& region_name,
   ctrl->active_clients    = 0;
   std::memset(ctrl->reserved, 0, sizeof(ctrl->reserved));
 
-  LocalShmQueueInitialize(
-      queue_header(LocalQueueKind::kFree),
-      queue_cells(LocalQueueKind::kFree),
-      slot_count_);
+  LocalShmQueueInitialize(queue_header(LocalQueueKind::kFree),
+                          queue_cells(LocalQueueKind::kFree),
+                          slot_count_);
   for (uint32_t ready_queue_id = 0; ready_queue_id < ready_queue_count_;
        ++ready_queue_id) {
     LocalShmQueueInitialize(ready_queue_header(ready_queue_id),
@@ -107,10 +106,9 @@ bool LocalShmRegion::Create(const std::string& region_name,
     header->error_message_len   = 0;
     std::memset(header->reserved, 0, sizeof(header->reserved));
     std::memset(slot_payload(slot_id), 0, slot_buffer_bytes_);
-    CHECK(LocalShmQueueEnqueue(
-        queue_header(LocalQueueKind::kFree),
-        queue_cells(LocalQueueKind::kFree),
-        slot_id));
+    CHECK(LocalShmQueueEnqueue(queue_header(LocalQueueKind::kFree),
+                               queue_cells(LocalQueueKind::kFree),
+                               slot_id));
   }
 
   return true;
@@ -189,35 +187,37 @@ LocalShmQueueHeader* LocalShmRegion::queue_header(LocalQueueKind kind) {
   return reinterpret_cast<LocalShmQueueHeader*>(bytes);
 }
 
-const LocalShmQueueHeader* LocalShmRegion::queue_header(LocalQueueKind kind) const {
-  const auto* bytes =
-      reinterpret_cast<const uint8_t*>(base_) +
-      QueueHeaderOffset(kind, ready_queue_count_);
+const LocalShmQueueHeader*
+LocalShmRegion::queue_header(LocalQueueKind kind) const {
+  const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
+                      QueueHeaderOffset(kind, ready_queue_count_);
   return reinterpret_cast<const LocalShmQueueHeader*>(bytes);
 }
 
 LocalShmQueueCell* LocalShmRegion::queue_cells(LocalQueueKind kind) {
-  auto* bytes =
-      reinterpret_cast<uint8_t*>(base_) +
-      QueueCellArrayOffset(slot_count_, kind, ready_queue_count_);
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) +
+                QueueCellArrayOffset(slot_count_, kind, ready_queue_count_);
   return reinterpret_cast<LocalShmQueueCell*>(bytes);
 }
 
-const LocalShmQueueCell* LocalShmRegion::queue_cells(LocalQueueKind kind) const {
-  const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
-                      QueueCellArrayOffset(slot_count_, kind, ready_queue_count_);
+const LocalShmQueueCell*
+LocalShmRegion::queue_cells(LocalQueueKind kind) const {
+  const auto* bytes =
+      reinterpret_cast<const uint8_t*>(base_) +
+      QueueCellArrayOffset(slot_count_, kind, ready_queue_count_);
   return reinterpret_cast<const LocalShmQueueCell*>(bytes);
 }
 
-LocalShmQueueHeader* LocalShmRegion::ready_queue_header(uint32_t ready_queue_id) {
+LocalShmQueueHeader*
+LocalShmRegion::ready_queue_header(uint32_t ready_queue_id) {
   CHECK_LT(ready_queue_id, ready_queue_count_);
-  auto* bytes =
-      reinterpret_cast<uint8_t*>(base_) + ReadyQueueHeaderOffset(ready_queue_id);
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) +
+                ReadyQueueHeaderOffset(ready_queue_id);
   return reinterpret_cast<LocalShmQueueHeader*>(bytes);
 }
 
-const LocalShmQueueHeader* LocalShmRegion::ready_queue_header(
-    uint32_t ready_queue_id) const {
+const LocalShmQueueHeader*
+LocalShmRegion::ready_queue_header(uint32_t ready_queue_id) const {
   CHECK_LT(ready_queue_id, ready_queue_count_);
   const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
                       ReadyQueueHeaderOffset(ready_queue_id);
@@ -226,18 +226,18 @@ const LocalShmQueueHeader* LocalShmRegion::ready_queue_header(
 
 LocalShmQueueCell* LocalShmRegion::ready_queue_cells(uint32_t ready_queue_id) {
   CHECK_LT(ready_queue_id, ready_queue_count_);
-  auto* bytes = reinterpret_cast<uint8_t*>(base_) +
-                ReadyQueueCellsOffset(
-                    slot_count_, ready_queue_id, ready_queue_count_);
+  auto* bytes =
+      reinterpret_cast<uint8_t*>(base_) +
+      ReadyQueueCellsOffset(slot_count_, ready_queue_id, ready_queue_count_);
   return reinterpret_cast<LocalShmQueueCell*>(bytes);
 }
 
-const LocalShmQueueCell* LocalShmRegion::ready_queue_cells(
-    uint32_t ready_queue_id) const {
+const LocalShmQueueCell*
+LocalShmRegion::ready_queue_cells(uint32_t ready_queue_id) const {
   CHECK_LT(ready_queue_id, ready_queue_count_);
-  const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
-                      ReadyQueueCellsOffset(
-                          slot_count_, ready_queue_id, ready_queue_count_);
+  const auto* bytes =
+      reinterpret_cast<const uint8_t*>(base_) +
+      ReadyQueueCellsOffset(slot_count_, ready_queue_id, ready_queue_count_);
   return reinterpret_cast<const LocalShmQueueCell*>(bytes);
 }
 

@@ -11,8 +11,8 @@
 namespace recstore {
 namespace {
 
-json MakeLocalShmConfig(
-    const std::string& region_name, uint32_t ready_queue_count = 1) {
+json MakeLocalShmConfig(const std::string& region_name,
+                        uint32_t ready_queue_count = 1) {
   return {
       {"cache_ps",
        {{"num_threads", 1},
@@ -92,8 +92,8 @@ TEST(LocalShmPSClientTest, MultiClientUsesIndependentReadyQueues) {
   std::thread server_thread([&]() { server.Run(); });
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-  json client0_config              = config["local_shm"];
-  json client1_config              = config["local_shm"];
+  json client0_config                 = config["local_shm"];
+  json client1_config                 = config["local_shm"];
   client0_config["ready_queue_index"] = 0;
   client1_config["ready_queue_index"] = 1;
 
