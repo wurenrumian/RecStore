@@ -3,6 +3,10 @@
 import os
 import socket
 import json
+import glob
+
+
+RDMA_SKIP_EXIT_CODE = 77
 
 
 def find_ps_server_binary():
@@ -88,6 +92,19 @@ def get_rdma_runner_config():
         'value_size': int(base_kv.get('value_size', 512)),
         'max_kv_num_per_request': int(dist_client.get('max_keys_per_request', 64)),
     }
+
+
+def get_rdma_skip_reason():
+    """Return skip reason when RDMA verbs devices are not available."""
+    rdma_device_dir = '/dev/infiniband'
+    if not os.path.isdir(rdma_device_dir):
+        return f"RDMA verbs device directory is unavailable: {rdma_device_dir}"
+
+    uverbs_devices = sorted(glob.glob(os.path.join(rdma_device_dir, 'uverbs*')))
+    if not uverbs_devices:
+        return f"RDMA verbs devices are unavailable under {rdma_device_dir}"
+
+    return None
 
 
 def get_ports_from_config():

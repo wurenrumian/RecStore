@@ -3,6 +3,7 @@
 import argparse
 
 from petps_cluster_runner import PetPSClusterRunner
+from ps_server_helpers import RDMA_SKIP_EXIT_CODE, get_rdma_skip_reason
 from ps_test_config import (
     DEFAULT_RDMA_MULTI_SHARD_CONFIG,
     DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
@@ -34,6 +35,11 @@ def print_filtered_output(text, show_runner_logs):
 
 
 def main():
+    skip_reason = get_rdma_skip_reason()
+    if skip_reason:
+        print(f"[petps-skip] {skip_reason}")
+        return RDMA_SKIP_EXIT_CODE
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-count", type=int, required=True)
     parser.add_argument("--test-binary", required=True)

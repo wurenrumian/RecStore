@@ -31,7 +31,13 @@ if(ENABLE_RDMA_INTEGRATION_TESTS)
                 --test-binary $<TARGET_FILE:petps_integration_test>
                 --gtest-filter=PetPSIntegrationTest.PutGetRoundTripSingleShard:PetPSIntegrationTest.MissingKeysReturnZeroSlots
     )
-    set_tests_properties(petps_single_shard_test PROPERTIES TIMEOUT 60 LABELS "rdma_integration")
+    set_tests_properties(
+        petps_single_shard_test
+        PROPERTIES
+            SKIP_RETURN_CODE 77
+            TIMEOUT 60
+            LABELS "rdma_integration"
+    )
 
     add_test(
         NAME petps_multi_shard_test
@@ -43,5 +49,11 @@ if(ENABLE_RDMA_INTEGRATION_TESTS)
                 --test-binary $<TARGET_FILE:petps_integration_test>
                 --gtest-filter=PetPSIntegrationTest.PutGetRoundTripMultiShard
     )
-    set_tests_properties(petps_multi_shard_test PROPERTIES TIMEOUT 60 LABELS "rdma_integration")
+    set_tests_properties(
+        petps_multi_shard_test
+        PROPERTIES
+            SKIP_RETURN_CODE 77
+            TIMEOUT 60
+            LABELS "rdma_integration"
+    )
 endif()

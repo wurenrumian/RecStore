@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from petps_cluster_runner import PetPSClusterRunner
+from ps_server_helpers import RDMA_SKIP_EXIT_CODE, get_rdma_skip_reason
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -32,6 +33,11 @@ def infer_server_count(config_path):
 
 
 def main():
+    skip_reason = get_rdma_skip_reason()
+    if skip_reason:
+        print(f"[petps-skip] {skip_reason}")
+        return RDMA_SKIP_EXIT_CODE
+
     parser = argparse.ArgumentParser(
         description=(
             "Run RDMA petps_server cluster with integrated memcached lifecycle. "

@@ -55,6 +55,7 @@ set_tests_properties(
     pytorch_client_test_rdma
     pytorch_client_test_rdma_auto
     PROPERTIES
+        SKIP_RETURN_CODE 77
         TIMEOUT 90
         LABELS "rdma_integration"
 )

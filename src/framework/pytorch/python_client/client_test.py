@@ -13,17 +13,41 @@ def log(message):
     print(message, flush=True)
 
 
-def maybe_reexec_for_rdma_flags():
-    """Re-exec the Python test process with the same RDMA gflags as standalone clients."""
-    if os.environ.get("RECSTORE_RDMA_BOOTSTRAPPED") == "1":
-        log("[op-rdma] RDMA bootstrap already applied")
-        return
-
+def ensure_test_scripts_path():
     test_scripts_path = os.path.abspath(
         os.path.join(os.path.dirname(__file__), '../../../test/scripts')
     )
     if test_scripts_path not in sys.path:
         sys.path.insert(0, test_scripts_path)
+
+
+def maybe_skip_for_missing_rdma():
+    ensure_test_scripts_path()
+
+    from ps_server_helpers import (
+        RDMA_SKIP_EXIT_CODE,
+        get_backend_type,
+        get_rdma_skip_reason,
+    )
+
+    if get_backend_type() != "RDMA":
+        return
+
+    skip_reason = get_rdma_skip_reason()
+    if skip_reason:
+        log(f"[op-rdma][skip] {skip_reason}")
+        raise SystemExit(RDMA_SKIP_EXIT_CODE)
+
+
+def maybe_reexec_for_rdma_flags():
+    """Re-exec the Python test process with the same RDMA gflags as standalone clients."""
+    maybe_skip_for_missing_rdma()
+
+    if os.environ.get("RECSTORE_RDMA_BOOTSTRAPPED") == "1":
+        log("[op-rdma] RDMA bootstrap already applied")
+        return
+
+    ensure_test_scripts_path()
 
     from ps_server_helpers import get_backend_type, get_rdma_runner_config
 
@@ -52,13 +76,10 @@ def maybe_reexec_for_rdma_flags():
 def start_server_if_needed():
     """Start ps_server if needed before running tests."""
     global _server_runner
-    
-    test_scripts_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), '../../../test/scripts')
-    )
-    if test_scripts_path not in sys.path:
-        sys.path.insert(0, test_scripts_path)
-    
+
+    maybe_skip_for_missing_rdma()
+    ensure_test_scripts_path()
+
     from ps_server_helpers import (
         get_backend_type,
         get_rdma_runner_config,
