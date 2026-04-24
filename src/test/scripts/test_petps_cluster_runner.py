@@ -286,6 +286,45 @@ class TestPetPSClusterRunner(unittest.TestCase):
         self.assertIn("ready=1/2", output)
         self.assertIn("running_pids=1234", output)
 
+    def test_startup_crash_error_includes_captured_server_output(self):
+        runner = PetPSClusterRunner(num_servers=1)
+        runner.server_path = mock.Mock()
+        runner.server_path.exists.return_value = True
+        runner.startup_delay = 0
+        runner.timeout = 1
+        runner.status_refresh_interval = 0
+
+        fake_proc = mock.Mock()
+        fake_proc.poll.return_value = -11
+        fake_proc.returncode = -11
+        fake_proc.pid = 4321
+        fake_proc.stdout = StringIO("")
+        fake_thread = mock.Mock()
+        runner.process_logs[0] = [
+            "set NUMA ID = 0",
+            "ib device wasn't found",
+        ]
+
+        with mock.patch.object(runner, "_prepare_memcached"), \
+             mock.patch.object(
+                 runner,
+                 "build_env",
+                 return_value={
+                     "RECSTORE_MEMCACHED_HOST": "127.0.0.1",
+                     "RECSTORE_MEMCACHED_PORT": "21211",
+                 },
+             ), \
+             mock.patch("petps_cluster_runner.subprocess.Popen", return_value=fake_proc), \
+             mock.patch("petps_cluster_runner.threading.Thread", return_value=fake_thread), \
+             mock.patch.object(runner, "stop"), \
+             self.assertRaises(RuntimeError) as ctx:
+            runner.start()
+
+        message = str(ctx.exception)
+        self.assertIn("petps_server exited early with code -11", message)
+        self.assertIn("Captured output from petps_server[0]", message)
+        self.assertIn("ib device wasn't found", message)
+
     @mock.patch("petps_cluster_runner.subprocess.run")
     def test_run_client_timeout_handles_bytes_stdout_stderr(self, mock_run):
         runner = PetPSClusterRunner()
