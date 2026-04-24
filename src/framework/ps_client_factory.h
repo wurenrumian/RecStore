@@ -11,6 +11,7 @@
 #include "ps/base/base_client.h"
 #include "ps/brpc/brpc_ps_client.h"
 #include "ps/grpc/grpc_ps_client.h"
+#include "ps/local_shm/local_shm_client.h"
 
 namespace recstore {
 
@@ -29,7 +30,8 @@ inline std::string ResolveFrameworkPSType(const json& config) {
   }
 
   const std::string normalized = NormalizePSType(ps_type);
-  if (normalized == "GRPC" || normalized == "BRPC" || normalized == "RDMA") {
+  if (normalized == "GRPC" || normalized == "BRPC" || normalized == "RDMA" ||
+      normalized == "LOCAL_SHM") {
     return normalized;
   }
 
@@ -37,6 +39,16 @@ inline std::string ResolveFrameworkPSType(const json& config) {
 }
 
 inline json ResolveFrameworkClientConfig(const json& config) {
+  const std::string ps_type = ResolveFrameworkPSType(config);
+  if (ps_type == "LOCAL_SHM") {
+    if (config.contains("local_shm")) {
+      return config["local_shm"];
+    }
+    return json{{"region_name", "recstore_local_ps"},
+                {"slot_count", 64},
+                {"slot_buffer_bytes", 8 * 1024 * 1024},
+                {"client_timeout_ms", 30000}};
+  }
   if (config.contains("client")) {
     return config["client"];
   }
@@ -51,7 +63,10 @@ inline BasePSClient* CreateFrameworkPSClient(const json& config) {
     return new RDMAPSClientAdapter(config);
   }
 
-  const std::string type_key = (ps_type == "BRPC") ? "brpc" : "grpc";
+  const std::string type_key = (ps_type == "BRPC")
+                                   ? "brpc"
+                                   : ((ps_type == "LOCAL_SHM") ? "local_shm"
+                                                               : "grpc");
 
   BasePSClient* client =
       base::Factory<BasePSClient, json>::NewInstance(type_key, client_config);
@@ -65,6 +80,10 @@ inline BasePSClient* CreateFrameworkPSClient(const json& config) {
 
   if (ps_type == "BRPC") {
     return new BRPCParameterClient(client_config);
+  }
+
+  if (ps_type == "LOCAL_SHM") {
+    return new LocalShmPSClient(client_config);
   }
 
   throw std::runtime_error(

@@ -32,6 +32,7 @@ target_link_libraries(recstore_torch_ops PRIVATE
     wq_ps_client
     grpc_ps_client
     brpc_ps_client
+    local_shm_ps_client
     protobuf::libprotobuf
     gRPC::grpc++
     glog::glog
