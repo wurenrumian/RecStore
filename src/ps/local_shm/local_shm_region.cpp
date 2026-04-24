@@ -27,9 +27,10 @@ LocalShmRegion::~LocalShmRegion() { Close(); }
 
 bool LocalShmRegion::Create(const std::string& region_name,
                             uint32_t slot_count,
-                            uint32_t slot_buffer_bytes) {
+                            uint32_t slot_buffer_bytes,
+                            uint32_t ready_queue_count) {
   Close();
-  if (slot_count == 0 || slot_buffer_bytes == 0) {
+  if (slot_count == 0 || slot_buffer_bytes == 0 || ready_queue_count == 0) {
     LOG(ERROR) << "LocalShmRegion::Create invalid geometry";
     return false;
   }
@@ -37,7 +38,9 @@ bool LocalShmRegion::Create(const std::string& region_name,
   region_name_       = NormalizeRegionName(region_name);
   slot_count_        = slot_count;
   slot_buffer_bytes_ = slot_buffer_bytes;
-  mapped_size_       = TotalRegionBytes(slot_count_, slot_buffer_bytes_);
+  ready_queue_count_ = ready_queue_count;
+  mapped_size_ =
+      TotalRegionBytes(slot_count_, slot_buffer_bytes_, ready_queue_count_);
 
   fd_ = shm_open(region_name_.c_str(), O_CREAT | O_RDWR, 0666);
   if (fd_ < 0) {
@@ -64,6 +67,8 @@ bool LocalShmRegion::Create(const std::string& region_name,
   ctrl->server_pid        = static_cast<int64_t>(getpid());
   ctrl->slot_count        = slot_count_;
   ctrl->slot_buffer_bytes = slot_buffer_bytes_;
+  ctrl->ready_queue_count = ready_queue_count_;
+  ctrl->reserved1         = 0;
   ctrl->next_request_id   = 1;
   ctrl->fatal_status      = 0;
   ctrl->request_doorbell  = 0;
@@ -75,10 +80,12 @@ bool LocalShmRegion::Create(const std::string& region_name,
       queue_header(LocalQueueKind::kFree),
       queue_cells(LocalQueueKind::kFree),
       slot_count_);
-  LocalShmQueueInitialize(
-      queue_header(LocalQueueKind::kReady),
-      queue_cells(LocalQueueKind::kReady),
-      slot_count_);
+  for (uint32_t ready_queue_id = 0; ready_queue_id < ready_queue_count_;
+       ++ready_queue_id) {
+    LocalShmQueueInitialize(ready_queue_header(ready_queue_id),
+                            ready_queue_cells(ready_queue_id),
+                            slot_count_);
+  }
 
   for (uint32_t slot_id = 0; slot_id < slot_count_; ++slot_id) {
     auto* header                = slot_header(slot_id);
@@ -111,7 +118,8 @@ bool LocalShmRegion::Create(const std::string& region_name,
 
 bool LocalShmRegion::Attach(const std::string& region_name,
                             uint32_t expected_slot_count,
-                            uint32_t expected_slot_buffer_bytes) {
+                            uint32_t expected_slot_buffer_bytes,
+                            uint32_t expected_ready_queue_count) {
   Close();
   region_name_ = NormalizeRegionName(region_name);
   fd_          = shm_open(region_name_.c_str(), O_RDWR, 0666);
@@ -135,13 +143,16 @@ bool LocalShmRegion::Attach(const std::string& region_name,
   const auto* ctrl   = control();
   slot_count_        = ctrl->slot_count;
   slot_buffer_bytes_ = ctrl->slot_buffer_bytes;
+  ready_queue_count_ = ctrl->ready_queue_count;
   if (ctrl->magic != kLocalShmMagic || ctrl->version != kLocalShmVersion) {
     LOG(ERROR) << "LocalShmRegion attach validation failed for "
                << region_name_;
     Close();
     return false;
   }
-  if (!ValidateGeometry(expected_slot_count, expected_slot_buffer_bytes)) {
+  if (!ValidateGeometry(expected_slot_count,
+                        expected_slot_buffer_bytes,
+                        expected_ready_queue_count)) {
     Close();
     return false;
   }
@@ -160,6 +171,7 @@ void LocalShmRegion::Close() {
   mapped_size_       = 0;
   slot_count_        = 0;
   slot_buffer_bytes_ = 0;
+  ready_queue_count_ = 0;
   region_name_.clear();
 }
 
@@ -172,31 +184,67 @@ const LocalShmControlBlock* LocalShmRegion::control() const {
 }
 
 LocalShmQueueHeader* LocalShmRegion::queue_header(LocalQueueKind kind) {
-  auto* bytes = reinterpret_cast<uint8_t*>(base_) + QueueHeaderOffset(kind);
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) +
+                QueueHeaderOffset(kind, ready_queue_count_);
   return reinterpret_cast<LocalShmQueueHeader*>(bytes);
 }
 
 const LocalShmQueueHeader* LocalShmRegion::queue_header(LocalQueueKind kind) const {
   const auto* bytes =
-      reinterpret_cast<const uint8_t*>(base_) + QueueHeaderOffset(kind);
+      reinterpret_cast<const uint8_t*>(base_) +
+      QueueHeaderOffset(kind, ready_queue_count_);
   return reinterpret_cast<const LocalShmQueueHeader*>(bytes);
 }
 
 LocalShmQueueCell* LocalShmRegion::queue_cells(LocalQueueKind kind) {
   auto* bytes =
-      reinterpret_cast<uint8_t*>(base_) + QueueCellArrayOffset(slot_count_, kind);
+      reinterpret_cast<uint8_t*>(base_) +
+      QueueCellArrayOffset(slot_count_, kind, ready_queue_count_);
   return reinterpret_cast<LocalShmQueueCell*>(bytes);
 }
 
 const LocalShmQueueCell* LocalShmRegion::queue_cells(LocalQueueKind kind) const {
   const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
-                      QueueCellArrayOffset(slot_count_, kind);
+                      QueueCellArrayOffset(slot_count_, kind, ready_queue_count_);
+  return reinterpret_cast<const LocalShmQueueCell*>(bytes);
+}
+
+LocalShmQueueHeader* LocalShmRegion::ready_queue_header(uint32_t ready_queue_id) {
+  CHECK_LT(ready_queue_id, ready_queue_count_);
+  auto* bytes =
+      reinterpret_cast<uint8_t*>(base_) + ReadyQueueHeaderOffset(ready_queue_id);
+  return reinterpret_cast<LocalShmQueueHeader*>(bytes);
+}
+
+const LocalShmQueueHeader* LocalShmRegion::ready_queue_header(
+    uint32_t ready_queue_id) const {
+  CHECK_LT(ready_queue_id, ready_queue_count_);
+  const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
+                      ReadyQueueHeaderOffset(ready_queue_id);
+  return reinterpret_cast<const LocalShmQueueHeader*>(bytes);
+}
+
+LocalShmQueueCell* LocalShmRegion::ready_queue_cells(uint32_t ready_queue_id) {
+  CHECK_LT(ready_queue_id, ready_queue_count_);
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) +
+                ReadyQueueCellsOffset(
+                    slot_count_, ready_queue_id, ready_queue_count_);
+  return reinterpret_cast<LocalShmQueueCell*>(bytes);
+}
+
+const LocalShmQueueCell* LocalShmRegion::ready_queue_cells(
+    uint32_t ready_queue_id) const {
+  CHECK_LT(ready_queue_id, ready_queue_count_);
+  const auto* bytes = reinterpret_cast<const uint8_t*>(base_) +
+                      ReadyQueueCellsOffset(
+                          slot_count_, ready_queue_id, ready_queue_count_);
   return reinterpret_cast<const LocalShmQueueCell*>(bytes);
 }
 
 LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) {
   CHECK_LT(slot_id, slot_count_);
-  auto* bytes = reinterpret_cast<uint8_t*>(base_) + SlotHeadersOffset(slot_count_) +
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) +
+                SlotHeadersOffset(slot_count_, ready_queue_count_) +
                 sizeof(LocalShmSlotHeader) * static_cast<std::size_t>(slot_id);
   return reinterpret_cast<LocalShmSlotHeader*>(bytes);
 }
@@ -204,7 +252,8 @@ LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) {
 const LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) const {
   CHECK_LT(slot_id, slot_count_);
   const auto* bytes =
-      reinterpret_cast<const uint8_t*>(base_) + SlotHeadersOffset(slot_count_) +
+      reinterpret_cast<const uint8_t*>(base_) +
+      SlotHeadersOffset(slot_count_, ready_queue_count_) +
       sizeof(LocalShmSlotHeader) * static_cast<std::size_t>(slot_id);
   return reinterpret_cast<const LocalShmSlotHeader*>(bytes);
 }
@@ -212,13 +261,15 @@ const LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) const {
 uint8_t* LocalShmRegion::slot_payload(uint32_t slot_id) {
   CHECK_LT(slot_id, slot_count_);
   return reinterpret_cast<uint8_t*>(base_) +
-         SlotPayloadOffset(slot_count_, slot_buffer_bytes_, slot_id);
+         SlotPayloadOffset(
+             slot_count_, slot_buffer_bytes_, slot_id, ready_queue_count_);
 }
 
 const uint8_t* LocalShmRegion::slot_payload(uint32_t slot_id) const {
   CHECK_LT(slot_id, slot_count_);
   return reinterpret_cast<const uint8_t*>(base_) +
-         SlotPayloadOffset(slot_count_, slot_buffer_bytes_, slot_id);
+         SlotPayloadOffset(
+             slot_count_, slot_buffer_bytes_, slot_id, ready_queue_count_);
 }
 
 bool LocalShmRegion::MapRegion(int fd, std::size_t mapped_size) {
@@ -235,7 +286,9 @@ bool LocalShmRegion::MapRegion(int fd, std::size_t mapped_size) {
 }
 
 bool LocalShmRegion::ValidateGeometry(
-    uint32_t expected_slot_count, uint32_t expected_slot_buffer_bytes) const {
+    uint32_t expected_slot_count,
+    uint32_t expected_slot_buffer_bytes,
+    uint32_t expected_ready_queue_count) const {
   if (expected_slot_count != 0 && expected_slot_count != slot_count_) {
     LOG(ERROR) << "slot_count mismatch: expected " << expected_slot_count
                << " actual " << slot_count_;
@@ -246,6 +299,13 @@ bool LocalShmRegion::ValidateGeometry(
     LOG(ERROR) << "slot_buffer_bytes mismatch: expected "
                << expected_slot_buffer_bytes << " actual "
                << slot_buffer_bytes_;
+    return false;
+  }
+  if (expected_ready_queue_count != 0 &&
+      expected_ready_queue_count != ready_queue_count_) {
+    LOG(ERROR) << "ready_queue_count mismatch: expected "
+               << expected_ready_queue_count << " actual "
+               << ready_queue_count_;
     return false;
   }
   return true;

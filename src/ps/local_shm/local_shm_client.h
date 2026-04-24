@@ -49,11 +49,13 @@ private:
   void ReleaseSlot(uint32_t slot_id);
   bool WaitForSlot(uint32_t slot_id, uint64_t request_id);
   uint64_t NextRequestId();
+  uint32_t ResolveReadyQueueId(const json& config) const;
 
 private:
   LocalShmRegion region_;
   std::string region_name_;
   uint32_t client_id_  = 0;
+  uint32_t ready_queue_id_ = 0;
   uint32_t timeout_ms_ = 30000;
   std::unordered_map<uint64_t, std::pair<uint32_t, uint64_t>> prefetch_map_;
 };

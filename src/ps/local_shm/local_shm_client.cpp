@@ -37,6 +37,22 @@ void MarkError(LocalShmSlotHeader* header, LocalStatusCode code) {
   header->state.store(static_cast<uint32_t>(LocalSlotState::kError));
 }
 
+uint32_t ReadQueueSelector(const json& config, uint32_t fallback) {
+  if (config.contains("ready_queue_index")) {
+    return config["ready_queue_index"].get<uint32_t>();
+  }
+  if (config.contains("client_rank")) {
+    return config["client_rank"].get<uint32_t>();
+  }
+  if (config.contains("rank")) {
+    return config["rank"].get<uint32_t>();
+  }
+  if (config.contains("local_rank")) {
+    return config["local_rank"].get<uint32_t>();
+  }
+  return fallback;
+}
+
 } // namespace
 
 LocalShmPSClient::LocalShmPSClient(json config) : BasePSClient(config) {
@@ -45,7 +61,9 @@ LocalShmPSClient::LocalShmPSClient(json config) : BasePSClient(config) {
   client_id_   = static_cast<uint32_t>(::getpid());
   if (!region_.Attach(region_name_)) {
     LOG(WARNING) << "LocalShmPSClient failed to attach region " << region_name_;
+    return;
   }
+  ready_queue_id_ = ResolveReadyQueueId(config);
 }
 
 int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
@@ -85,8 +103,8 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
     std::memcpy(payload, keys.Data(), input_bytes);
   }
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
-  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
-                             region_.queue_cells(LocalQueueKind::kReady),
+  CHECK(LocalShmQueueEnqueue(region_.ready_queue_header(ready_queue_id_),
+                             region_.ready_queue_cells(ready_queue_id_),
                              static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
@@ -160,8 +178,8 @@ int LocalShmPSClient::PutParameter(
     }
   }
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
-  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
-                             region_.queue_cells(LocalQueueKind::kReady),
+  CHECK(LocalShmQueueEnqueue(region_.ready_queue_header(ready_queue_id_),
+                             region_.ready_queue_cells(ready_queue_id_),
                              static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
@@ -252,8 +270,8 @@ int LocalShmPSClient::UpdateParameterFlat(
               grads,
               sizeof(float) * keys.Size() * static_cast<size_t>(embedding_dim));
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
-  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
-                             region_.queue_cells(LocalQueueKind::kReady),
+  CHECK(LocalShmQueueEnqueue(region_.ready_queue_header(ready_queue_id_),
+                             region_.ready_queue_cells(ready_queue_id_),
                              static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
@@ -307,8 +325,8 @@ int LocalShmPSClient::InitEmbeddingTable(const std::string& table_name,
   cursor += sizeof(config.num_embeddings);
   std::memcpy(cursor, &config.embedding_dim, sizeof(config.embedding_dim));
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
-  CHECK(LocalShmQueueEnqueue(region_.queue_header(LocalQueueKind::kReady),
-                             region_.queue_cells(LocalQueueKind::kReady),
+  CHECK(LocalShmQueueEnqueue(region_.ready_queue_header(ready_queue_id_),
+                             region_.ready_queue_cells(ready_queue_id_),
                              static_cast<uint32_t>(slot)));
   region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
   FutexWakeAll(&region_.control()->request_doorbell);
@@ -417,6 +435,12 @@ bool LocalShmPSClient::WaitForSlot(uint32_t slot_id, uint64_t request_id) {
 
 uint64_t LocalShmPSClient::NextRequestId() {
   return region_.control()->next_request_id.fetch_add(1);
+}
+
+uint32_t LocalShmPSClient::ResolveReadyQueueId(const json& config) const {
+  const uint32_t queue_count = region_.ready_queue_count();
+  CHECK_GT(queue_count, 0U);
+  return ReadQueueSelector(config, client_id_) % queue_count;
 }
 
 FACTORY_REGISTER(BasePSClient, local_shm, LocalShmPSClient, json);

@@ -9,11 +9,9 @@ namespace recstore {
 constexpr uint64_t kLocalShmMagic         = 0x52454353544F5245ULL; // "RECSTORE"
 constexpr uint32_t kLocalShmVersion       = 1;
 constexpr uint32_t kLocalShmReservedBytes = 64;
-constexpr uint32_t kLocalShmQueueCount    = 2;
 
 enum class LocalQueueKind : uint32_t {
-  kFree  = 0,
-  kReady = 1,
+  kFree = 0,
 };
 
 enum class LocalOpcode : uint32_t {
@@ -53,6 +51,8 @@ struct alignas(64) LocalShmControlBlock {
 
   uint32_t slot_count;
   uint32_t slot_buffer_bytes;
+  uint32_t ready_queue_count;
+  uint32_t reserved1;
 
   std::atomic<uint64_t> next_request_id;
   std::atomic<uint32_t> fatal_status;

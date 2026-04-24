@@ -19,16 +19,19 @@ public:
 
   bool Create(const std::string& region_name,
               uint32_t slot_count,
-              uint32_t slot_buffer_bytes);
+              uint32_t slot_buffer_bytes,
+              uint32_t ready_queue_count = 1);
   bool Attach(const std::string& region_name,
               uint32_t expected_slot_count        = 0,
-              uint32_t expected_slot_buffer_bytes = 0);
+              uint32_t expected_slot_buffer_bytes = 0,
+              uint32_t expected_ready_queue_count = 0);
   void Close();
 
   bool IsOpen() const { return base_ != nullptr; }
   const std::string& region_name() const { return region_name_; }
   uint32_t slot_count() const { return slot_count_; }
   uint32_t slot_buffer_bytes() const { return slot_buffer_bytes_; }
+  uint32_t ready_queue_count() const { return ready_queue_count_; }
   std::size_t mapped_size() const { return mapped_size_; }
 
   LocalShmControlBlock* control();
@@ -37,6 +40,10 @@ public:
   const LocalShmQueueHeader* queue_header(LocalQueueKind kind) const;
   LocalShmQueueCell* queue_cells(LocalQueueKind kind);
   const LocalShmQueueCell* queue_cells(LocalQueueKind kind) const;
+  LocalShmQueueHeader* ready_queue_header(uint32_t ready_queue_id);
+  const LocalShmQueueHeader* ready_queue_header(uint32_t ready_queue_id) const;
+  LocalShmQueueCell* ready_queue_cells(uint32_t ready_queue_id);
+  const LocalShmQueueCell* ready_queue_cells(uint32_t ready_queue_id) const;
   LocalShmSlotHeader* slot_header(uint32_t slot_id);
   const LocalShmSlotHeader* slot_header(uint32_t slot_id) const;
   uint8_t* slot_payload(uint32_t slot_id);
@@ -45,7 +52,8 @@ public:
 private:
   bool MapRegion(int fd, std::size_t mapped_size);
   bool ValidateGeometry(uint32_t expected_slot_count,
-                        uint32_t expected_slot_buffer_bytes) const;
+                        uint32_t expected_slot_buffer_bytes,
+                        uint32_t expected_ready_queue_count) const;
 
 private:
   std::string region_name_;
@@ -54,6 +62,7 @@ private:
   std::size_t mapped_size_    = 0;
   uint32_t slot_count_        = 0;
   uint32_t slot_buffer_bytes_ = 0;
+  uint32_t ready_queue_count_ = 0;
 };
 
 } // namespace recstore

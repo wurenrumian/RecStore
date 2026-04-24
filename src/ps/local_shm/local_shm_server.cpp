@@ -34,22 +34,18 @@ LocalShmStoreRuntime::LocalShmStoreRuntime(LocalShmRegion* region,
 void LocalShmStoreRuntime::Run() {
   while (!stop_.load()) {
     auto* control = region_->control();
-    auto* ready_header = region_->queue_header(LocalQueueKind::kReady);
-    auto* ready_cells  = region_->queue_cells(LocalQueueKind::kReady);
     const uint32_t observed_before_wait =
         control->request_doorbell.load(std::memory_order_acquire);
-    uint32_t slot_id = 0;
-    bool found_work = false;
-    while (LocalShmQueueDequeue(ready_header, ready_cells, &slot_id)) {
-      auto* header      = region_->slot_header(slot_id);
-      uint32_t expected = static_cast<uint32_t>(LocalSlotState::kReady);
-      if (header->state.compare_exchange_strong(
-              expected, static_cast<uint32_t>(LocalSlotState::kRunning))) {
-        ProcessSlot(slot_id);
-        found_work = true;
+    const uint32_t ready_queue_count = region_->ready_queue_count();
+    uint32_t processed = 0;
+    for (uint32_t step = 0; step < ready_queue_count; ++step) {
+      const uint32_t ready_queue_id =
+          (next_ready_queue_id_ + step) % ready_queue_count;
+      if (DrainReadyQueue(ready_queue_id, &processed)) {
+        next_ready_queue_id_ = (ready_queue_id + 1) % ready_queue_count;
       }
     }
-    if (!found_work) {
+    if (processed == 0) {
       if (!stop_.load(std::memory_order_acquire)) {
         FutexWaitUntilValueChange(
             &control->request_doorbell,
@@ -58,6 +54,25 @@ void LocalShmStoreRuntime::Run() {
       }
     }
   }
+}
+
+bool LocalShmStoreRuntime::DrainReadyQueue(
+    uint32_t ready_queue_id, uint32_t* processed) {
+  auto* ready_header = region_->ready_queue_header(ready_queue_id);
+  auto* ready_cells  = region_->ready_queue_cells(ready_queue_id);
+  uint32_t slot_id   = 0;
+  bool found_work    = false;
+  while (LocalShmQueueDequeue(ready_header, ready_cells, &slot_id)) {
+    auto* header      = region_->slot_header(slot_id);
+    uint32_t expected = static_cast<uint32_t>(LocalSlotState::kReady);
+    if (header->state.compare_exchange_strong(
+            expected, static_cast<uint32_t>(LocalSlotState::kRunning))) {
+      ProcessSlot(slot_id);
+      ++(*processed);
+      found_work = true;
+    }
+  }
+  return found_work;
 }
 
 void LocalShmStoreRuntime::Stop() {
@@ -171,11 +186,14 @@ void LocalShmParameterServer::Init(const json& config) {
   const uint32_t slot_count = local_config_.value("slot_count", 64);
   const uint32_t slot_buffer_bytes =
       local_config_.value("slot_buffer_bytes", 8 * 1024 * 1024);
+  const uint32_t ready_queue_count =
+      local_config_.value("ready_queue_count", 1);
   const std::string region_name =
       local_config_.value("region_name", "recstore_local_ps");
 
   region_ = std::make_unique<LocalShmRegion>();
-  CHECK(region_->Create(region_name, slot_count, slot_buffer_bytes));
+  CHECK(region_->Create(
+      region_name, slot_count, slot_buffer_bytes, ready_queue_count));
   cache_ps_ = std::make_shared<CachePS>(config_["cache_ps"]);
   runtime_ =
       std::make_unique<LocalShmStoreRuntime>(region_.get(), cache_ps_.get());
