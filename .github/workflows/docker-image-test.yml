@@ -7,6 +7,9 @@ on:
   pull_request:
     branches:
       - '**'
+  pull_request_target:
+    branches:
+      - '**'
   workflow_run:
     workflows: ["Docker Publish"]
     types: [completed]
@@ -26,7 +29,10 @@ permissions:
 jobs:
   test-image:
     name: Pull image and run tests
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository }}/recstore-devel
@@ -36,24 +42,33 @@ jobs:
         uses: actions/checkout@v4
         with:
           # workflow_run 触发时固定拉取默认分支最新代码，镜像仅提供构建环境。
-          ref: ${{ github.event_name == 'workflow_run' && format('refs/heads/{0}', github.event.repository.default_branch) || github.ref }}
+          # pull_request_target 触发时显式检出 PR merge ref，避免回到基线分支代码。
+          ref: ${{ github.event_name == 'workflow_run' && format('refs/heads/{0}', github.event.repository.default_branch) || (github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number)) || github.ref }}
           # third_party 已在发布镜像阶段缓存并在测试容器中恢复，这里仅拉取主仓库代码。
           submodules: false
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve image reference
         id: image
         env:
           INPUT_IMAGE_TAG: ${{ github.event.inputs.image_tag || '' }}
           EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          CURRENT_REPO: ${{ github.repository }}
           WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha || '' }}
           CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           REPO_LOWER="$(echo "${IMAGE_REPO}" | tr '[:upper:]' '[:lower:]')"
 
-          if [ "${EVENT_NAME}" = "workflow_run" ] && [ -n "${WORKFLOW_RUN_HEAD_SHA}" ]; then
+          if { [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "pull_request_target" ]; } && [ "${PR_HEAD_REPO}" != "${CURRENT_REPO}" ]; then
+            PRIMARY_SHA_TAG="latest"
+          elif [ "${EVENT_NAME}" = "workflow_run" ] && [ -n "${WORKFLOW_RUN_HEAD_SHA}" ]; then
             PRIMARY_SHA_TAG="sha-$(echo "${WORKFLOW_RUN_HEAD_SHA}" | cut -c1-7)"
+          elif { [ "${EVENT_NAME}" = "pull_request" ] || [ "${EVENT_NAME}" = "pull_request_target" ]; } && [ -n "${PR_HEAD_SHA}" ]; then
+            PRIMARY_SHA_TAG="sha-$(echo "${PR_HEAD_SHA}" | cut -c1-7)"
           else
             PRIMARY_SHA_TAG="sha-$(echo "${CURRENT_SHA}" | cut -c1-7)"
           fi
@@ -96,12 +111,12 @@ jobs:
             exit 0
           fi
 
-          # 自动流程优先与触发提交对应的 sha 标签。
+          # 外部 fork PR 没有同提交镜像时，primary_sha_tag 会被预先解析为 latest。
           if try_pull "${PRIMARY_SHA_TAG}"; then
             exit 0
           fi
 
-          if try_pull "latest"; then
+          if [ "${PRIMARY_SHA_TAG}" != "latest" ] && try_pull "latest"; then
             exit 0
           fi
 
