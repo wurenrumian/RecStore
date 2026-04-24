@@ -1,0 +1,218 @@
+#include "local_shm_region.h"
+
+#include <cerrno>
+#include <cstring>
+
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+namespace recstore {
+
+namespace {
+
+std::string NormalizeRegionName(const std::string& region_name) {
+  if (!region_name.empty() && region_name.front() == '/') {
+    return region_name;
+  }
+  return "/" + region_name;
+}
+
+} // namespace
+
+LocalShmRegion::~LocalShmRegion() { Close(); }
+
+bool LocalShmRegion::Create(const std::string& region_name,
+                            uint32_t slot_count,
+                            uint32_t slot_buffer_bytes) {
+  Close();
+  if (slot_count == 0 || slot_buffer_bytes == 0) {
+    LOG(ERROR) << "LocalShmRegion::Create invalid geometry";
+    return false;
+  }
+
+  region_name_       = NormalizeRegionName(region_name);
+  slot_count_        = slot_count;
+  slot_buffer_bytes_ = slot_buffer_bytes;
+  mapped_size_       = TotalRegionBytes(slot_count_, slot_buffer_bytes_);
+
+  fd_ = shm_open(region_name_.c_str(), O_CREAT | O_RDWR, 0666);
+  if (fd_ < 0) {
+    LOG(ERROR) << "shm_open create failed for " << region_name_
+               << ": " << std::strerror(errno);
+    return false;
+  }
+  if (ftruncate(fd_, static_cast<off_t>(mapped_size_)) != 0) {
+    LOG(ERROR) << "ftruncate failed for " << region_name_
+               << ": " << std::strerror(errno);
+    Close();
+    return false;
+  }
+  if (!MapRegion(fd_, mapped_size_)) {
+    Close();
+    return false;
+  }
+
+  auto* ctrl                = control();
+  ctrl->magic               = kLocalShmMagic;
+  ctrl->version             = kLocalShmVersion;
+  ctrl->reserved0           = 0;
+  ctrl->server_epoch        = 1;
+  ctrl->server_pid          = static_cast<int64_t>(getpid());
+  ctrl->slot_count          = slot_count_;
+  ctrl->slot_buffer_bytes   = slot_buffer_bytes_;
+  ctrl->next_request_id     = 1;
+  ctrl->fatal_status        = 0;
+  ctrl->request_doorbell    = 0;
+  ctrl->active_clients      = 0;
+  std::memset(ctrl->reserved, 0, sizeof(ctrl->reserved));
+
+  for (uint32_t slot_id = 0; slot_id < slot_count_; ++slot_id) {
+    auto* header               = slot_header(slot_id);
+    header->state              = static_cast<uint32_t>(LocalSlotState::kFree);
+    header->opcode             = static_cast<uint32_t>(LocalOpcode::kInvalid);
+    header->status_code        = static_cast<uint32_t>(LocalStatusCode::kOk);
+    header->client_id          = 0;
+    header->request_id         = 0;
+    header->client_pid         = 0;
+    header->table_name_len     = 0;
+    header->key_count          = 0;
+    header->embedding_dim      = 0;
+    header->reserved0          = 0;
+    header->input_bytes        = 0;
+    header->output_bytes       = 0;
+    header->server_seen_epoch  = ctrl->server_epoch;
+    header->user_tag           = 0;
+    header->completion_doorbell = 0;
+    header->error_message_len  = 0;
+    std::memset(header->reserved, 0, sizeof(header->reserved));
+    std::memset(slot_payload(slot_id), 0, slot_buffer_bytes_);
+  }
+
+  return true;
+}
+
+bool LocalShmRegion::Attach(const std::string& region_name,
+                            uint32_t expected_slot_count,
+                            uint32_t expected_slot_buffer_bytes) {
+  Close();
+  region_name_ = NormalizeRegionName(region_name);
+  fd_          = shm_open(region_name_.c_str(), O_RDWR, 0666);
+  if (fd_ < 0) {
+    LOG(ERROR) << "shm_open attach failed for " << region_name_
+               << ": " << std::strerror(errno);
+    return false;
+  }
+
+  struct stat st {};
+  if (fstat(fd_, &st) != 0) {
+    LOG(ERROR) << "fstat failed for " << region_name_
+               << ": " << std::strerror(errno);
+    Close();
+    return false;
+  }
+  if (!MapRegion(fd_, static_cast<std::size_t>(st.st_size))) {
+    Close();
+    return false;
+  }
+  const auto* ctrl = control();
+  slot_count_ = ctrl->slot_count;
+  slot_buffer_bytes_ = ctrl->slot_buffer_bytes;
+  if (ctrl->magic != kLocalShmMagic || ctrl->version != kLocalShmVersion) {
+    LOG(ERROR) << "LocalShmRegion attach validation failed for " << region_name_;
+    Close();
+    return false;
+  }
+  if (!ValidateGeometry(expected_slot_count, expected_slot_buffer_bytes)) {
+    Close();
+    return false;
+  }
+  return true;
+}
+
+void LocalShmRegion::Close() {
+  if (base_ != nullptr && mapped_size_ > 0) {
+    munmap(base_, mapped_size_);
+  }
+  if (fd_ >= 0) {
+    close(fd_);
+  }
+  base_ = nullptr;
+  fd_ = -1;
+  mapped_size_ = 0;
+  slot_count_ = 0;
+  slot_buffer_bytes_ = 0;
+  region_name_.clear();
+}
+
+LocalShmControlBlock* LocalShmRegion::control() {
+  return reinterpret_cast<LocalShmControlBlock*>(base_);
+}
+
+const LocalShmControlBlock* LocalShmRegion::control() const {
+  return reinterpret_cast<const LocalShmControlBlock*>(base_);
+}
+
+LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) {
+  CHECK_LT(slot_id, slot_count_);
+  auto* bytes = reinterpret_cast<uint8_t*>(base_) + SlotHeadersOffset() +
+                sizeof(LocalShmSlotHeader) * static_cast<std::size_t>(slot_id);
+  return reinterpret_cast<LocalShmSlotHeader*>(bytes);
+}
+
+const LocalShmSlotHeader* LocalShmRegion::slot_header(uint32_t slot_id) const {
+  CHECK_LT(slot_id, slot_count_);
+  const auto* bytes =
+      reinterpret_cast<const uint8_t*>(base_) + SlotHeadersOffset() +
+      sizeof(LocalShmSlotHeader) * static_cast<std::size_t>(slot_id);
+  return reinterpret_cast<const LocalShmSlotHeader*>(bytes);
+}
+
+uint8_t* LocalShmRegion::slot_payload(uint32_t slot_id) {
+  CHECK_LT(slot_id, slot_count_);
+  return reinterpret_cast<uint8_t*>(base_) +
+         SlotPayloadOffset(slot_count_, slot_buffer_bytes_, slot_id);
+}
+
+const uint8_t* LocalShmRegion::slot_payload(uint32_t slot_id) const {
+  CHECK_LT(slot_id, slot_count_);
+  return reinterpret_cast<const uint8_t*>(base_) +
+         SlotPayloadOffset(slot_count_, slot_buffer_bytes_, slot_id);
+}
+
+bool LocalShmRegion::MapRegion(int fd, std::size_t mapped_size) {
+  void* mapped = mmap(nullptr,
+                      mapped_size,
+                      PROT_READ | PROT_WRITE,
+                      MAP_SHARED,
+                      fd,
+                      0);
+  if (mapped == MAP_FAILED) {
+    LOG(ERROR) << "mmap failed: " << std::strerror(errno);
+    base_ = nullptr;
+    return false;
+  }
+  base_ = mapped;
+  mapped_size_ = mapped_size;
+  return true;
+}
+
+bool LocalShmRegion::ValidateGeometry(uint32_t expected_slot_count,
+                                      uint32_t expected_slot_buffer_bytes) const {
+  if (expected_slot_count != 0 && expected_slot_count != slot_count_) {
+    LOG(ERROR) << "slot_count mismatch: expected " << expected_slot_count
+               << " actual " << slot_count_;
+    return false;
+  }
+  if (expected_slot_buffer_bytes != 0 &&
+      expected_slot_buffer_bytes != slot_buffer_bytes_) {
+    LOG(ERROR) << "slot_buffer_bytes mismatch: expected "
+               << expected_slot_buffer_bytes << " actual "
+               << slot_buffer_bytes_;
+    return false;
+  }
+  return true;
+}
+
+} // namespace recstore
