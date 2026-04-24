@@ -119,6 +119,23 @@ void PrintSummary(const std::string& transport,
             << " key_ops_per_sec=" << key_ops_per_sec << std::endl;
 }
 
+void PrintInitSummary(const std::string& transport,
+                      int64_t num_embeddings,
+                      int init_chunk_size,
+                      int64_t elapsed_us) {
+  const double elapsed_s = static_cast<double>(elapsed_us) / 1e6;
+  const double embeddings_per_sec =
+      elapsed_s > 0.0 ? static_cast<double>(num_embeddings) / elapsed_s : 0.0;
+  std::cout << "system=RecStore transport=" << transport
+            << " phase=init summary rounds=1 iterations=1 batch_keys=0"
+            << " num_embeddings=" << num_embeddings << " elapsed_us_mean="
+            << elapsed_us << " elapsed_us_p50=" << elapsed_us
+            << " elapsed_us_p95=" << elapsed_us << " elapsed_us_p99="
+            << elapsed_us << " ops_per_sec=" << embeddings_per_sec
+            << " key_ops_per_sec=" << embeddings_per_sec
+            << " init_chunk_size=" << init_chunk_size << std::endl;
+}
+
 std::vector<uint64_t> MakeSequentialKeys(int64_t begin, int key_count) {
   CHECK_GE(begin, 0) << "key begin must be non-negative";
   CHECK_GT(key_count, 0) << "sequential key count must be positive";
@@ -202,6 +219,7 @@ int main(int argc, char** argv) {
            0)
       << transport << " InitEmbeddingTable failed";
 
+  const auto init_start = std::chrono::steady_clock::now();
   for (int64_t begin = 0; begin < FLAGS_num_embeddings;
        begin += FLAGS_init_chunk_size) {
     const int chunk_size = static_cast<int>(
@@ -215,6 +233,11 @@ int main(int argc, char** argv) {
         << transport
         << " PutParameter failed during initialization at begin=" << begin;
   }
+  const auto init_end = std::chrono::steady_clock::now();
+  const int64_t init_elapsed_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          init_end - init_start)
+          .count();
 
   std::vector<int64_t> warmup_samples_us;
   std::vector<int64_t> measure_samples_us;
@@ -271,6 +294,10 @@ int main(int argc, char** argv) {
   }
 
   if (ShouldPrintSummary(report_mode)) {
+    PrintInitSummary(transport,
+                     FLAGS_num_embeddings,
+                     FLAGS_init_chunk_size,
+                     init_elapsed_us);
     PrintSummary(
         transport,
         "warmup",
