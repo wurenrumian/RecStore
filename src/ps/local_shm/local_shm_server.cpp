@@ -28,8 +28,12 @@ void FinishWithStatus(LocalShmSlotHeader* header, LocalStatusCode code) {
 } // namespace
 
 LocalShmStoreRuntime::LocalShmStoreRuntime(LocalShmRegion* region,
-                                           ::CachePS* cache_ps)
-    : region_(region), cache_ps_(cache_ps) {}
+                                           ::CachePS* cache_ps,
+                                           uint32_t ready_queue_burst_limit)
+    : region_(region),
+      cache_ps_(cache_ps),
+      ready_queue_burst_limit_(std::max<uint32_t>(1, ready_queue_burst_limit)) {
+}
 
 void LocalShmStoreRuntime::Run() {
   while (!stop_.load()) {
@@ -58,17 +62,20 @@ void LocalShmStoreRuntime::Run() {
 
 bool LocalShmStoreRuntime::DrainReadyQueue(uint32_t ready_queue_id,
                                            uint32_t* processed) {
-  auto* ready_header = region_->ready_queue_header(ready_queue_id);
-  auto* ready_cells  = region_->ready_queue_cells(ready_queue_id);
-  uint32_t slot_id   = 0;
-  bool found_work    = false;
-  while (LocalShmQueueDequeue(ready_header, ready_cells, &slot_id)) {
+  auto* ready_header   = region_->ready_queue_header(ready_queue_id);
+  auto* ready_cells    = region_->ready_queue_cells(ready_queue_id);
+  uint32_t slot_id     = 0;
+  bool found_work      = false;
+  uint32_t burst_count = 0;
+  while (burst_count < ready_queue_burst_limit_ &&
+         LocalShmQueueDequeue(ready_header, ready_cells, &slot_id)) {
     auto* header      = region_->slot_header(slot_id);
     uint32_t expected = static_cast<uint32_t>(LocalSlotState::kReady);
     if (header->state.compare_exchange_strong(
             expected, static_cast<uint32_t>(LocalSlotState::kRunning))) {
       ProcessSlot(slot_id);
       ++(*processed);
+      ++burst_count;
       found_work = true;
     }
   }
@@ -188,6 +195,8 @@ void LocalShmParameterServer::Init(const json& config) {
       local_config_.value("slot_buffer_bytes", 8 * 1024 * 1024);
   const uint32_t ready_queue_count =
       local_config_.value("ready_queue_count", 1);
+  const uint32_t ready_queue_burst_limit =
+      std::max<uint32_t>(1, local_config_.value("ready_queue_burst_limit", 8));
   const std::string region_name =
       local_config_.value("region_name", "recstore_local_ps");
 
@@ -195,8 +204,8 @@ void LocalShmParameterServer::Init(const json& config) {
   CHECK(region_->Create(
       region_name, slot_count, slot_buffer_bytes, ready_queue_count));
   cache_ps_ = std::make_shared<CachePS>(config_["cache_ps"]);
-  runtime_ =
-      std::make_unique<LocalShmStoreRuntime>(region_.get(), cache_ps_.get());
+  runtime_  = std::make_unique<LocalShmStoreRuntime>(
+      region_.get(), cache_ps_.get(), ready_queue_burst_limit);
 }
 
 LocalShmParameterServer::~LocalShmParameterServer() = default;

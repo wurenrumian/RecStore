@@ -14,7 +14,9 @@ namespace recstore {
 
 class LocalShmStoreRuntime {
 public:
-  LocalShmStoreRuntime(LocalShmRegion* region, ::CachePS* cache_ps);
+  LocalShmStoreRuntime(LocalShmRegion* region,
+                       ::CachePS* cache_ps,
+                       uint32_t ready_queue_burst_limit = 8);
 
   void Run();
   void Stop();
@@ -27,7 +29,8 @@ private:
   LocalShmRegion* region_;
   ::CachePS* cache_ps_;
   std::atomic<bool> stop_{false};
-  uint32_t next_ready_queue_id_ = 0;
+  uint32_t next_ready_queue_id_     = 0;
+  uint32_t ready_queue_burst_limit_ = 8;
 };
 
 class LocalShmParameterServer : public BaseParameterServer {

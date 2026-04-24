@@ -3,6 +3,7 @@
 #include "ps/local_shm/local_shm_queue.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 #include <unistd.h>
@@ -49,6 +50,15 @@ uint32_t ReadQueueSelector(const json& config, uint32_t fallback) {
   }
   if (config.contains("local_rank")) {
     return config["local_rank"].get<uint32_t>();
+  }
+  if (const char* env = std::getenv("RECSTORE_LOCAL_SHM_READY_QUEUE_INDEX")) {
+    return static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
+  }
+  if (const char* env = std::getenv("LOCAL_RANK")) {
+    return static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
+  }
+  if (const char* env = std::getenv("RANK")) {
+    return static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
   }
   return fallback;
 }
