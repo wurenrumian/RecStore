@@ -100,6 +100,7 @@ class PetPSClusterRunner:
         self.rdma_wait_timeout_ms = rdma_wait_timeout_ms
         self.validate_routing = validate_routing
         self.processes = []
+        self.process_logs = {}
         self.memcached_process = None
         self.ready = set()
         self.ready_threads = {}
@@ -257,6 +258,7 @@ class PetPSClusterRunner:
     def _monitor(self, global_id, pipe):
         for raw_line in iter(pipe.readline, ""):
             line = raw_line.rstrip()
+            self.process_logs.setdefault(global_id, []).append(line)
             if self.verbose:
                 print(f"[petps_server:{global_id}] {line}")
             if self.is_ready_line(line):
@@ -264,6 +266,15 @@ class PetPSClusterRunner:
                 ready.add(line.rsplit(" ", 1)[-1])
                 if len(ready) >= self.thread_num:
                     self.ready.add(global_id)
+
+    def _format_captured_process_output(self, global_id):
+        lines = self.process_logs.get(global_id, [])
+        if not lines:
+            return ""
+        return (
+            f"\nCaptured output from petps_server[{global_id}] "
+            f"(last {len(lines)} lines):\n" + "\n".join(lines)
+        )
 
     def _start_memcached(self):
         cmd = self.build_memcached_cmd()
@@ -489,9 +500,11 @@ class PetPSClusterRunner:
                         "startup-crash",
                         f"exit_code={process.returncode}",
                     )
+                    crash_details = self._format_captured_process_output(global_id)
                     self.stop()
                     raise RuntimeError(
-                        f"petps_server exited early with code {process.returncode}"
+                        "petps_server exited early with code "
+                        f"{process.returncode}{crash_details}"
                     )
             if (
                 self.status_refresh_interval > 0
@@ -589,6 +602,7 @@ class PetPSClusterRunner:
                     process.wait(timeout=5)
             thread.join(timeout=1)
         self.processes.clear()
+        self.process_logs.clear()
         if self.memcached_process is not None and self.memcached_process.poll() is None:
             self.memcached_process.terminate()
             try:
