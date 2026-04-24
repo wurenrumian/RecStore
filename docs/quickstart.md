@@ -1,8 +1,8 @@
 # 快速开始
 
-本指南将帮助你搭建 RecStore 的开发和运行环境，相关步骤出现错误可以查看 [FAQ](./faq.md)。
+本指南将帮助你搭建 RecStore 的开发和运行环境，相关步骤出现错误可以查看 [常见问题](./faq.md)。
 
-## 1. 环境准备
+## 0. 环境准备
 
 RecStore 推荐使用 Docker 进行环境配置。在开始之前，请确保你的系统已安装以下工具：
 
@@ -27,9 +27,7 @@ RecStore 推荐使用 Docker 进行环境配置。在开始之前，请确保你
     sudo apt-get install -y nvidia-container-toolkit
     ```
 
-## 2. 获取代码
-
-克隆 RecStore 仓库并更新子模块：
+然后获取 RecStore 仓库并更新子模块（取决于网络状况，首次执行拉取子模块可能耗时较长，请耐心等待）：
 
 ```bash
 git clone https://github.com/RecStore/RecStore.git
@@ -37,9 +35,7 @@ cd RecStore
 git submodule update --init --recursive
 ```
 
-???+ note "更新子模块"
-    首次执行拉取子模块可能耗时较长（取决于网络状况），请耐心等待。
-
+??? note "下载打包后的子模块"
     如果你希望一次性下载第三方依赖，也可以访问 [Release](https://github.com/RecStore/RecStore/releases) 页面，下载发布产物中的 `recstore-<version>-linux-x86_64-third_party.tar.gz`。该压缩包是对 `third_party` 目录的完整打包，解压到 RecStore 根目录即可：
 
     ```bash
@@ -48,7 +44,7 @@ git submodule update --init --recursive
     ```
 
 
-## 3. 构建 Docker 镜像
+## 1. 构建 Docker 镜像
 
 进入 `dockerfiles` 目录并构建镜像：
 
@@ -58,30 +54,34 @@ sudo docker build -f Dockerfile.recstore --build-arg uid=$UID  -t recstore .
 cd -
 ```
 
-## 4. 启动容器
+## 2. 启动容器
 
-你可以使用以下命令启动容器。**请务必根据你的实际环境修改路径映射 ( `-v` 选项)**。
+=== "一键启动"
 
-```bash linenums="1" hl_lines="5-8"
-RECSTORE_PATH="$(cd .. && pwd)" \
-sudo docker run --cap-add=SYS_ADMIN --privileged \
-    --security-opt seccomp=unconfined --runtime=nvidia \
-    --name recstore --net=host \
-    -v ${RECSTORE_PATH}:${RECSTORE_PATH} \
-    -v /dev/shm:/dev/shm \
-    -v /dev/hugepages:/dev/hugepages \
-    -v /dev:/dev \
-    -w ${RECSTORE_PATH} \
-    --rm -it --gpus all -d recstore
-```
+    你可以使用使用我们提供的脚本（按照需要修改脚本内的变量）：
 
-或者使用我们提供的脚本（需修改脚本内的变量）：
+    ```bash
+    cd dockerfiles
+    bash start_docker.sh
+    cd -
+    ```
 
-```bash
-cd dockerfiles
-bash start_docker.sh
-cd -
-```
+=== "手动启动"
+
+    **请务必根据你的实际环境修改路径映射 ( `-v` 选项)**。
+
+    ```bash linenums="1" hl_lines="5-8"
+    RECSTORE_PATH="$(cd .. && pwd)" \
+    sudo docker run --cap-add=SYS_ADMIN --privileged \
+        --security-opt seccomp=unconfined --runtime=nvidia \
+        --name recstore --net=host \
+        -v ${RECSTORE_PATH}:${RECSTORE_PATH} \
+        -v /dev/shm:/dev/shm \
+        -v /dev/hugepages:/dev/hugepages \
+        -v /dev:/dev \
+        -w ${RECSTORE_PATH} \
+        --rm -it --gpus all -d recstore
+    ```
 
 进入容器：
 
@@ -89,19 +89,38 @@ cd -
 sudo docker exec -it recstore /bin/bash
 ```
 
-## 5. 容器内环境初始化
+## 3. 容器内环境初始化
 
 进入容器后，运行以下脚本进行一键初始化：
 
 ```bash title="初始化环境依赖"
 cd dockerfiles
 bash init_env_inside_docker.sh > init_env.log 2>&1
+```
 
-# 安装计算层开发依赖
+```bash title="初始化 PyTorch 依赖"
+# in RecStore/dockerfiles directory
 bash init_dlrm.sh --mirror=0
 ```
 
-??? note "默认 GPU 开发版本"
+## 4. 编译 RecStore
+
+最后，编译项目：
+
+```bash
+# in RecStore root directory
+mkdir -p build && cd build
+```
+
+```bash title="编译 RecStore"
+# in RecStore/build directory
+cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.10 ..
+make -j
+```
+
+## 环境信息
+
+??? note "PyTorch 开发版本"
     当前推荐的 GPU 开发环境版本为：
 
     - `torch==2.7.1+cu118`
@@ -120,19 +139,3 @@ bash init_dlrm.sh --mirror=0
 
 ??? note "CI 环境说明"
     CI 当前仍以 CPU-only 为主，用于构建与基础验证。CI 中会继续安装 CPU 版 `torch` 和 `libtorch`，但在无 CUDA toolkit 或 CPU-only `torch` 环境下，`dockerfiles/init_dlrm.sh` 会自动跳过 TorchRec/FBGEMM GPU 依赖安装。
-
-## 6. 编译 RecStore
-
-最后，编译项目：
-
-```bash
-cd ..
-# in RecStore root directory
-mkdir -p build && cd build
-```
-
-```bash title="编译 RecStore"
-# in RecStore/build directory
-cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.10 ..
-make -j
-```
