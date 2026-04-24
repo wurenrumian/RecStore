@@ -10,13 +10,6 @@
 // Log level: 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG
 #include <glog/logging.h>
 
-namespace {
-struct LogInit {
-  LogInit() { recstore::ConfigureLogging(); }
-};
-static LogInit log_init_instance;
-} // namespace
-
 namespace recstore {
 namespace framework {
 

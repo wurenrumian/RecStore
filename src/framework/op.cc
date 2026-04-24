@@ -24,6 +24,16 @@
 
 namespace recstore {
 
+namespace {
+bool IsReadWriteSuccess(BasePSClient* client, int ret) {
+  if (dynamic_cast<RDMAPSClientAdapter*>(client) != nullptr) {
+    return ret == 0;
+  }
+  // Legacy GRPC/BRPC read/write methods return bool-like int values.
+  return ret != 0;
+}
+} // namespace
+
 json load_config_from_file(const std::string& config_path) {
   std::ifstream file(config_path);
   if (!file.is_open()) {
@@ -118,17 +128,34 @@ BasePSClient* create_ps_client_from_config(const json& config) {
 json GetGlobalConfig() {
   try {
     auto current_path = std::filesystem::current_path();
-    LOG(INFO) << "Current working directory: " << current_path.string();
+    std::cerr << "[Config] Current working directory: " << current_path.string()
+              << std::endl;
 
     std::filesystem::path config_path;
     bool config_found = false;
 
-    for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
-      if (std::filesystem::exists(p / "recstore_config.json")) {
-        config_path  = p / "recstore_config.json";
+    if (const char* env_config = std::getenv("RECSTORE_CONFIG");
+        env_config != nullptr && env_config[0] != '\0') {
+      config_path = env_config;
+      if (std::filesystem::exists(config_path)) {
         config_found = true;
-        LOG(INFO) << "Found config file at: " << config_path.string();
-        break;
+        std::cerr << "[Config] Using config file from RECSTORE_CONFIG: "
+                  << config_path.string() << std::endl;
+      } else {
+        throw std::runtime_error("RECSTORE_CONFIG points to a missing file: " +
+                                 config_path.string());
+      }
+    }
+
+    if (!config_found) {
+      for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
+        if (std::filesystem::exists(p / "recstore_config.json")) {
+          config_path  = p / "recstore_config.json";
+          config_found = true;
+          std::cerr << "[Config] Found config file at: " << config_path.string()
+                    << std::endl;
+          break;
+        }
       }
     }
 
@@ -150,14 +177,14 @@ json GetGlobalConfig() {
 
     return load_config_from_file(config_path);
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to load config: " << std::string(e.what());
+    std::cerr << "Failed to load config: " << e.what() << std::endl;
     return json::object();
   }
 }
 
-void ConfigureLogging() {
+void ConfigureLogging(bool initialize_google_logging) {
   static std::once_flag log_init_flag;
-  std::call_once(log_init_flag, []() {
+  std::call_once(log_init_flag, [initialize_google_logging]() {
     std::cerr << "[Debug] ConfigureLogging called. Setting flags." << std::endl;
     FLAGS_log_dir         = "/tmp";
     FLAGS_alsologtostderr = false;
@@ -169,17 +196,35 @@ void ConfigureLogging() {
         google::WARNING, "/tmp/recstore_op_layer_WARNING_");
     google::SetLogDestination(google::ERROR, "/tmp/recstore_op_layer_ERROR_");
 
-    google::InitGoogleLogging("recstore_op_layer");
+    if (initialize_google_logging) {
+      google::InitGoogleLogging("recstore_op_layer");
+    }
   });
 }
 
 KVClientOp::KVClientOp() {
-  ConfigureLogging();
-
   if (!ps_client_) {
     try {
-      json config = GetGlobalConfig();
-      ps_client_  = create_ps_client_from_config(config);
+      json config   = GetGlobalConfig();
+      bool use_rdma = false;
+      try {
+        use_rdma = ResolveFrameworkPSType(config) == "RDMA";
+      } catch (...) {
+        use_rdma = false;
+      }
+      std::cerr << "[RDMA-DBG] KVClientOp ctor use_rdma="
+                << (use_rdma ? "true" : "false") << std::endl;
+
+      if (use_rdma) {
+        std::cerr << "[RDMA-DBG] InitializeRdmaProcessRuntime before "
+                     "ConfigureLogging"
+                  << std::endl;
+        InitializeRdmaProcessRuntime();
+        ConfigureLogging(false);
+      } else {
+        ConfigureLogging();
+      }
+      ps_client_ = create_ps_client_from_config(config);
 
       LOG(INFO) << "PS client initialized successfully.";
     } catch (const std::exception& e) {
@@ -289,8 +334,8 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   const size_t total = static_cast<size_t>(L) * static_cast<size_t>(D);
   std::fill_n(values_data, total, 0.0f);
 
-  bool success = ps_client_->GetParameter(keys_array, values_data);
-  if (!success) {
+  int ret = ps_client_->GetParameter(keys_array, values_data);
+  if (!IsReadWriteSuccess(ps_client_, ret)) {
     throw std::runtime_error("Failed to read embeddings from PS client.");
   }
 
@@ -537,8 +582,8 @@ void KVClientOp::EmbWrite(const RecTensor& keys, const RecTensor& values) {
     LOG(INFO) << values_stream.str();
   }
 
-  bool success = ps_client_->PutParameter(keys_array, values_vector);
-  if (!success) {
+  int ret = ps_client_->PutParameter(keys_array, values_vector);
+  if (!IsReadWriteSuccess(ps_client_, ret)) {
     throw std::runtime_error("Failed to write embeddings to PS client.");
   }
 

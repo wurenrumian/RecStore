@@ -16,7 +16,10 @@ add_executable(benchmark_client benchmark_client.cc)
 target_link_libraries(benchmark_client PUBLIC ${warp_wq_ps_client} base)
 target_link_libraries(benchmark_client PUBLIC OpenMP::OpenMP_CXX)
 
-add_executable(ps_transport_benchmark ps_transport_benchmark.cc)
+add_executable(ps_transport_benchmark
+    ps_transport_benchmark.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
+)
 target_link_libraries(ps_transport_benchmark PUBLIC
     base
     grpc_ps_client

@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "base/hash.h"
@@ -54,22 +56,44 @@ AllShardsParameterClientWrapper::BuildChunks(
   return chunks;
 }
 
-void AllShardsParameterClientWrapper::AssembleIfNeeded(BatchRequest* batch) {
+bool AllShardsParameterClientWrapper::FinalizeBatchIfNeeded(
+    BatchRequest* batch) {
   if (batch->assembled) {
-    return;
+    return batch->status_code ==
+           static_cast<std::int32_t>(petps::RpcStatus::kOk);
+  }
+
+  batch->status_code = static_cast<std::int32_t>(petps::RpcStatus::kOk);
+  for (const auto& pending : batch->shard_rpcs) {
+    const auto* status_word = reinterpret_cast<const std::int32_t*>(
+        reinterpret_cast<const char*>(pending.recv_buffer) +
+        pending.key_count * static_cast<std::size_t>(FLAGS_value_size));
+    if (*status_word != static_cast<std::int32_t>(petps::RpcStatus::kOk)) {
+      batch->status_code = *status_word;
+      break;
+    }
   }
 
   const int embedding_dim = FLAGS_value_size / sizeof(float);
-  for (const auto& pending : batch->shard_rpcs) {
-    const float* shard_values = static_cast<const float*>(pending.recv_buffer);
-    for (std::size_t i = 0; i < pending.original_positions.size(); ++i) {
-      std::memcpy(
-          batch->user_buffer + pending.original_positions[i] * embedding_dim,
-          shard_values + i * embedding_dim,
-          FLAGS_value_size);
+  if (batch->status_code == static_cast<std::int32_t>(petps::RpcStatus::kOk)) {
+    for (const auto& pending : batch->shard_rpcs) {
+      const float* shard_values =
+          static_cast<const float*>(pending.recv_buffer);
+      for (std::size_t i = 0; i < pending.original_positions.size(); ++i) {
+        std::memcpy(
+            batch->user_buffer + pending.original_positions[i] * embedding_dim,
+            shard_values + i * embedding_dim,
+            FLAGS_value_size);
+      }
     }
   }
-  batch->assembled = true;
+
+  auto* batch_status_word = reinterpret_cast<std::int32_t*>(
+      reinterpret_cast<char*>(batch->user_buffer) +
+      batch->total_key_count * static_cast<std::size_t>(FLAGS_value_size));
+  *batch_status_word = batch->status_code;
+  batch->assembled   = true;
+  return batch->status_code == static_cast<std::int32_t>(petps::RpcStatus::kOk);
 }
 
 int AllShardsParameterClientWrapper::GetParameter(
@@ -83,6 +107,13 @@ int AllShardsParameterClientWrapper::GetParameter(
   std::vector<float> flat(keys.Size() * embedding_dim + 1, 0.0f);
   int rpc_id = GetParameter(keys, flat.data(), false, 0);
   WaitRPCFinish(rpc_id);
+  const auto* status_word = reinterpret_cast<const std::int32_t*>(
+      reinterpret_cast<const char*>(flat.data()) +
+      keys.Size() * static_cast<std::size_t>(FLAGS_value_size));
+  if (*status_word != static_cast<std::int32_t>(petps::RpcStatus::kOk)) {
+    RevokeRPCResource(rpc_id);
+    return -1;
+  }
 
   values->reserve(keys.Size());
   for (int i = 0; i < keys.Size(); ++i) {
@@ -100,7 +131,12 @@ int AllShardsParameterClientWrapper::GetParameter(
     bool isAsync,
     int async_req_id) {
   BatchRequest batch;
-  batch.user_buffer = values;
+  batch.user_buffer       = values;
+  batch.total_key_count   = keys.Size();
+  auto* batch_status_word = reinterpret_cast<std::int32_t*>(
+      reinterpret_cast<char*>(values) +
+      keys.Size() * static_cast<std::size_t>(FLAGS_value_size));
+  *batch_status_word = static_cast<std::int32_t>(petps::RpcStatus::kPending);
 
   for (const auto& chunk : BuildChunks(keys)) {
     void* recv = clients_[chunk.shard]->GetReceiveBuffer(
@@ -119,8 +155,17 @@ int AllShardsParameterClientWrapper::GetParameter(
     });
   }
 
-  const std::uint64_t batch_id = batch_rpc_id_acc_++;
-  batches_[batch_id]           = std::move(batch);
+  std::uint64_t batch_id = 0;
+  {
+    std::lock_guard<std::mutex> guard(batches_mu_);
+    batch_id = batch_rpc_id_acc_++;
+    if (batch_id >
+        static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+      throw std::runtime_error("allshards batch rpc id overflow int range: " +
+                               std::to_string(batch_id));
+    }
+    batches_[batch_id] = std::move(batch);
+  }
   if (!isAsync) {
     WaitRPCFinish(static_cast<int>(batch_id));
   }
@@ -143,6 +188,7 @@ void* AllShardsParameterClientWrapper::GetReceiveBuffer(size_t size) {
 }
 
 bool AllShardsParameterClientWrapper::QueryRPCFinished(int rpc_id) {
+  std::lock_guard<std::mutex> guard(batches_mu_);
   auto it = batches_.find(rpc_id);
   CHECK(it != batches_.end());
 
@@ -152,11 +198,11 @@ bool AllShardsParameterClientWrapper::QueryRPCFinished(int rpc_id) {
     }
   }
 
-  AssembleIfNeeded(&it->second);
-  return true;
+  return FinalizeBatchIfNeeded(&it->second);
 }
 
 void AllShardsParameterClientWrapper::WaitRPCFinish(int rpc_id) {
+  std::lock_guard<std::mutex> guard(batches_mu_);
   auto it = batches_.find(rpc_id);
   CHECK(it != batches_.end());
 
@@ -164,10 +210,11 @@ void AllShardsParameterClientWrapper::WaitRPCFinish(int rpc_id) {
     clients_[pending.shard]->WaitRPCFinish(pending.rpc_id);
   }
 
-  AssembleIfNeeded(&it->second);
+  FinalizeBatchIfNeeded(&it->second);
 }
 
 void AllShardsParameterClientWrapper::RevokeRPCResource(int rpc_id) {
+  std::lock_guard<std::mutex> guard(batches_mu_);
   auto it = batches_.find(rpc_id);
   CHECK(it != batches_.end());
 

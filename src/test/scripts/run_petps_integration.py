@@ -3,20 +3,43 @@
 import argparse
 
 from petps_cluster_runner import PetPSClusterRunner
+from ps_server_helpers import RDMA_SKIP_EXIT_CODE, get_rdma_skip_reason
 from ps_test_config import (
     DEFAULT_RDMA_MULTI_SHARD_CONFIG,
     DEFAULT_RDMA_SINGLE_SHARD_CONFIG,
     resolve_rdma_integration_config,
 )
+MEMCACHED_NOISE_PATTERNS = (
+    "[petps-memcached]",
+    "[petps-status] phase=memcached",
+    "[memcached-endpoint]",
+    "use memcached in ",
+)
 
-MAX_TIMEOUT_SECONDS = 15
+
+def normalize_timeout(timeout_seconds, field_name):
+    if timeout_seconds <= 0:
+        raise ValueError(f"{field_name} must be > 0, got {timeout_seconds}")
+    return timeout_seconds
 
 
-def normalize_timeout(timeout_seconds):
-    return min(timeout_seconds, MAX_TIMEOUT_SECONDS)
+def is_memcached_noise_line(line):
+    return any(pattern in line for pattern in MEMCACHED_NOISE_PATTERNS)
+
+
+def print_filtered_output(text, show_runner_logs):
+    for line in text.splitlines():
+        if not show_runner_logs and is_memcached_noise_line(line):
+            continue
+        print(line)
 
 
 def main():
+    skip_reason = get_rdma_skip_reason()
+    if skip_reason:
+        print(f"[petps-skip] {skip_reason}")
+        return RDMA_SKIP_EXIT_CODE
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-count", type=int, required=True)
     parser.add_argument("--test-binary", required=True)
@@ -35,10 +58,20 @@ def main():
     )
     parser.add_argument("--memcached-host", default="127.0.0.1")
     parser.add_argument("--memcached-port", type=int, default=21211)
+    parser.add_argument("--rdma-per-thread-response-limit-bytes", type=int)
+    parser.add_argument("--rdma-server-ready-timeout-sec", type=int)
+    parser.add_argument("--rdma-server-ready-poll-ms", type=int)
+    parser.add_argument("--rdma-client-receive-arena-bytes", type=int)
+    parser.add_argument("--validate-routing", action="store_true")
+    parser.add_argument(
+        "--show-runner-logs",
+        action="store_true",
+        help="show memcached/status logs from runner and integration binary",
+    )
     args = parser.parse_args()
     config_path = resolve_rdma_integration_config(args.server_count, args.config_path)
-    client_timeout = normalize_timeout(args.client_timeout)
-    cluster_timeout = normalize_timeout(args.cluster_timeout)
+    client_timeout = normalize_timeout(args.client_timeout, "client-timeout")
+    cluster_timeout = normalize_timeout(args.cluster_timeout, "cluster-timeout")
 
     runner = PetPSClusterRunner(
         config_path=config_path,
@@ -52,13 +85,23 @@ def main():
         memcached_port=args.memcached_port,
         timeout=cluster_timeout,
         status_refresh_interval=args.status_refresh_interval,
+        show_status_logs=args.show_runner_logs,
+        show_memcached_logs=args.show_runner_logs,
+        rdma_per_thread_response_limit_bytes=args.rdma_per_thread_response_limit_bytes,
+        rdma_server_ready_timeout_sec=args.rdma_server_ready_timeout_sec,
+        rdma_server_ready_poll_ms=args.rdma_server_ready_poll_ms,
+        rdma_client_receive_arena_bytes=args.rdma_client_receive_arena_bytes,
+        validate_routing=args.validate_routing,
     )
 
     with runner.run():
         completed = runner.run_client(
             [args.test_binary, f"--gtest_filter={args.gtest_filter}"],
             timeout=client_timeout,
+            stream_output=False,
         )
+        print_filtered_output(completed.stdout, args.show_runner_logs)
+        print_filtered_output(completed.stderr, args.show_runner_logs)
     return completed.returncode
 
 
