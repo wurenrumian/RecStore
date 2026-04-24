@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import shutil
 import socket
 import subprocess
 import threading
@@ -9,7 +10,14 @@ from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-LOCAL_MEMCACHED_SERVER = REPO_ROOT / "src/test/scripts/local_memcached_server.py"
+
+
+def _to_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 class PetPSClusterRunner:
@@ -32,6 +40,22 @@ class PetPSClusterRunner:
         memcached_check_timeout=2.0,
         memcached_check_retries=3,
         status_refresh_interval=2.0,
+        show_status_logs=True,
+        show_memcached_logs=True,
+        memcached_namespace="auto",
+        rdma_per_thread_response_limit_bytes=None,
+        rdma_server_ready_timeout_sec=None,
+        rdma_server_ready_poll_ms=None,
+        rdma_client_receive_arena_bytes=None,
+        rdma_put_protocol_version=None,
+        rdma_put_v2_transfer_mode=None,
+        rdma_put_v2_push_slot_bytes=None,
+        rdma_put_v2_push_slots_per_client=None,
+        rdma_put_v2_push_region_offset=None,
+        rdma_put_client_send_arena_bytes=None,
+        rdma_put_server_scratch_bytes=None,
+        rdma_wait_timeout_ms=None,
+        validate_routing=False,
     ):
         self.server_path = Path(server_path)
         if not self.server_path.is_absolute():
@@ -55,11 +79,40 @@ class PetPSClusterRunner:
         self.memcached_check_timeout = memcached_check_timeout
         self.memcached_check_retries = memcached_check_retries
         self.status_refresh_interval = status_refresh_interval
+        self.show_status_logs = show_status_logs
+        self.show_memcached_logs = show_memcached_logs
+        if memcached_namespace == "auto":
+            memcached_namespace = f"recstore-{os.getpid()}-{time.time_ns()}"
+        self.memcached_namespace = memcached_namespace
+        self.rdma_per_thread_response_limit_bytes = (
+            rdma_per_thread_response_limit_bytes
+        )
+        self.rdma_server_ready_timeout_sec = rdma_server_ready_timeout_sec
+        self.rdma_server_ready_poll_ms = rdma_server_ready_poll_ms
+        self.rdma_client_receive_arena_bytes = rdma_client_receive_arena_bytes
+        self.rdma_put_protocol_version = rdma_put_protocol_version
+        self.rdma_put_v2_transfer_mode = rdma_put_v2_transfer_mode
+        self.rdma_put_v2_push_slot_bytes = rdma_put_v2_push_slot_bytes
+        self.rdma_put_v2_push_slots_per_client = rdma_put_v2_push_slots_per_client
+        self.rdma_put_v2_push_region_offset = rdma_put_v2_push_region_offset
+        self.rdma_put_client_send_arena_bytes = rdma_put_client_send_arena_bytes
+        self.rdma_put_server_scratch_bytes = rdma_put_server_scratch_bytes
+        self.rdma_wait_timeout_ms = rdma_wait_timeout_ms
+        self.validate_routing = validate_routing
         self.processes = []
+        self.process_logs = {}
         self.memcached_process = None
         self.ready = set()
+        self.ready_threads = {}
+
+    def _allocate_local_memcached_port(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((self.memcached_host, 0))
+            return sock.getsockname()[1]
 
     def emit_status(self, phase, extra=""):
+        if not self.show_status_logs:
+            return
         running_pids = [
             str(process.pid)
             for process, _thread in self.processes
@@ -78,20 +131,36 @@ class PetPSClusterRunner:
         env["RECSTORE_MEMCACHED_HOST"] = self.memcached_host
         env["RECSTORE_MEMCACHED_PORT"] = str(self.memcached_port)
         env["RECSTORE_MEMCACHED_TEXT_PROTOCOL"] = "1"
+        if self.memcached_namespace:
+            env["RECSTORE_MEMCACHED_NAMESPACE"] = self.memcached_namespace
+        if self.validate_routing:
+            env["RECSTORE_RDMA_VALIDATE_ROUTING"] = "1"
         return env
 
     def build_memcached_cmd(self):
-        return [
-            "python3",
-            str(LOCAL_MEMCACHED_SERVER),
-            "--host",
+        memcached_bin = shutil.which("memcached")
+        if memcached_bin is None:
+            raise RuntimeError(
+                "memcached binary not found in PATH; install memcached or use "
+                "--use-local-memcached=never with an external memcached "
+                "instance"
+            )
+        cmd = [memcached_bin]
+        # Only pass -u root when actually running as root.
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            cmd.extend(["-u", "root"])
+        cmd.extend([
+            "-l",
             self.memcached_host,
-            "--port",
+            "-p",
             str(self.memcached_port),
-        ]
+            "-c",
+            "10000",
+        ])
+        return cmd
 
     def build_server_cmd(self, global_id):
-        return [
+        cmd = [
             str(self.server_path),
             f"--config_path={self.config_path}",
             f"--global_id={global_id}",
@@ -101,43 +170,127 @@ class PetPSClusterRunner:
             f"--value_size={self.value_size}",
             f"--max_kv_num_per_request={self.max_kv_num_per_request}",
         ]
+        if self.rdma_per_thread_response_limit_bytes is not None:
+            cmd.append(
+                "--rdma_per_thread_response_limit_bytes="
+                f"{self.rdma_per_thread_response_limit_bytes}"
+            )
+        if self.rdma_put_server_scratch_bytes is not None:
+            cmd.append(
+                "--rdma_put_server_scratch_bytes="
+                f"{self.rdma_put_server_scratch_bytes}"
+            )
+        if self.rdma_put_v2_push_slot_bytes is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slot_bytes="
+                f"{self.rdma_put_v2_push_slot_bytes}"
+            )
+        if self.rdma_put_v2_push_slots_per_client is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slots_per_client="
+                f"{self.rdma_put_v2_push_slots_per_client}"
+            )
+        if self.rdma_put_v2_push_region_offset is not None:
+            cmd.append(
+                "--rdma_put_v2_push_region_offset="
+                f"{self.rdma_put_v2_push_region_offset}"
+            )
+        return cmd
 
     def build_client_cmd(self, argv, client_index=0):
         client_global_id = self.num_servers + client_index
-        return list(argv) + [
+        cmd = list(argv) + [
             f"--global_id={client_global_id}",
             f"--num_server_processes={self.num_servers}",
             f"--num_client_processes={self.num_clients}",
             f"--value_size={self.value_size}",
             f"--max_kv_num_per_request={self.max_kv_num_per_request}",
         ]
+        if self.rdma_server_ready_timeout_sec is not None:
+            cmd.append(
+                "--rdma_server_ready_timeout_sec="
+                f"{self.rdma_server_ready_timeout_sec}"
+            )
+        if self.rdma_server_ready_poll_ms is not None:
+            cmd.append(f"--rdma_server_ready_poll_ms={self.rdma_server_ready_poll_ms}")
+        if self.rdma_client_receive_arena_bytes is not None:
+            cmd.append(
+                "--rdma_client_receive_arena_bytes="
+                f"{self.rdma_client_receive_arena_bytes}"
+            )
+        if self.rdma_put_protocol_version is not None:
+            cmd.append(
+                "--rdma_put_protocol_version="
+                f"{self.rdma_put_protocol_version}"
+            )
+        if self.rdma_put_v2_transfer_mode is not None:
+            cmd.append(
+                "--rdma_put_v2_transfer_mode="
+                f"{self.rdma_put_v2_transfer_mode}"
+            )
+        if self.rdma_put_v2_push_slot_bytes is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slot_bytes="
+                f"{self.rdma_put_v2_push_slot_bytes}"
+            )
+        if self.rdma_put_v2_push_slots_per_client is not None:
+            cmd.append(
+                "--rdma_put_v2_push_slots_per_client="
+                f"{self.rdma_put_v2_push_slots_per_client}"
+            )
+        if self.rdma_put_v2_push_region_offset is not None:
+            cmd.append(
+                "--rdma_put_v2_push_region_offset="
+                f"{self.rdma_put_v2_push_region_offset}"
+            )
+        if self.rdma_put_client_send_arena_bytes is not None:
+            cmd.append(
+                "--rdma_put_client_send_arena_bytes="
+                f"{self.rdma_put_client_send_arena_bytes}"
+            )
+        if self.rdma_wait_timeout_ms is not None:
+            cmd.append(f"--rdma_wait_timeout_ms={self.rdma_wait_timeout_ms}")
+        return cmd
 
     def is_ready_line(self, line):
-        return "Starts PS polling thread" in line or "xmh: finish construct DSM" in line
+        return "[RDMA-DBG] Server polling thread ready" in line
 
     def _monitor(self, global_id, pipe):
         for raw_line in iter(pipe.readline, ""):
             line = raw_line.rstrip()
+            self.process_logs.setdefault(global_id, []).append(line)
             if self.verbose:
                 print(f"[petps_server:{global_id}] {line}")
             if self.is_ready_line(line):
-                self.ready.add(global_id)
+                ready = self.ready_threads.setdefault(global_id, set())
+                ready.add(line.rsplit(" ", 1)[-1])
+                if len(ready) >= self.thread_num:
+                    self.ready.add(global_id)
+
+    def _format_captured_process_output(self, global_id):
+        lines = self.process_logs.get(global_id, [])
+        if not lines:
+            return ""
+        return (
+            f"\nCaptured output from petps_server[{global_id}] "
+            f"(last {len(lines)} lines):\n" + "\n".join(lines)
+        )
 
     def _start_memcached(self):
-        try:
-            self.memcached_process = subprocess.Popen(
-                self.build_memcached_cmd(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=str(REPO_ROOT),
+        cmd = self.build_memcached_cmd()
+        self.memcached_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=str(REPO_ROOT),
+        )
+        if self.show_memcached_logs:
+            print(
+                f"[petps-memcached] started with pid={self.memcached_process.pid} "
+                f"host={self.memcached_host} port={self.memcached_port}"
             )
-        except Exception as exc:
-            if self.use_local_memcached == "always":
-                raise RuntimeError(f"failed to launch local memcached helper: {exc}") from exc
-            self.memcached_process = None
-            return
 
         time.sleep(0.2)
         if self.memcached_process.poll() is not None:
@@ -145,13 +298,11 @@ class PetPSClusterRunner:
             if self.memcached_process.stdout is not None:
                 log = self.memcached_process.stdout.read()
             err = (
-                f"local memcached helper exited early with code {self.memcached_process.returncode}"
+                f"memcached exited early with code {self.memcached_process.returncode}"
             )
             if log:
-                err += f"\nhelper output:\n{log}"
-            if self.use_local_memcached == "always":
-                raise RuntimeError(err)
-            self.memcached_process = None
+                err += f"\nmemcached output:\n{log}"
+            raise RuntimeError(err)
 
     def check_memcached_ready(self):
         last_error = None
@@ -190,16 +341,34 @@ class PetPSClusterRunner:
         ) from last_error
 
     def reset_memcached_state(self):
-        payload = (
-            b"flush_all\r\n"
-            b"set serverNum 0 0 1\r\n0\r\n"
-            b"set clientNum 0 0 1\r\n0\r\n"
-            b"set xmh-consistent-dsm 0 0 1\r\n1\r\n"
-            b"get serverNum\r\n"
-            b"get clientNum\r\n"
-            b"get xmh-consistent-dsm\r\n"
-            b"quit\r\n"
+        def key(name):
+            if self.memcached_namespace:
+                return f"{self.memcached_namespace}:{name}"
+            return name
+
+        server_num_key = key("serverNum")
+        client_num_key = key("clientNum")
+        dsm_key = key("xmh-consistent-dsm")
+
+        payload_lines = []
+        # Namespace mode isolates keys per run, so no global flush_all is needed.
+        if not self.memcached_namespace:
+            payload_lines.append("flush_all")
+        payload_lines.extend(
+            [
+                f"set {server_num_key} 0 0 1",
+                "0",
+                f"set {client_num_key} 0 0 1",
+                "0",
+                f"set {dsm_key} 0 0 1",
+                "1",
+                f"get {server_num_key}",
+                f"get {client_num_key}",
+                f"get {dsm_key}",
+                "quit",
+            ]
         )
+        payload = ("\r\n".join(payload_lines) + "\r\n").encode("ascii")
         with socket.create_connection(
             (self.memcached_host, self.memcached_port),
             timeout=self.memcached_check_timeout,
@@ -216,11 +385,14 @@ class PetPSClusterRunner:
                     break
                 response += chunk
             if (
-                b"OK\r\n" not in response
+                (not self.memcached_namespace and b"OK\r\n" not in response)
                 or response.count(b"STORED\r\n") < 3
-                or b"VALUE serverNum 0 1\r\n0\r\n" not in response
-                or b"VALUE clientNum 0 1\r\n0\r\n" not in response
-                or b"VALUE xmh-consistent-dsm 0 1\r\n1\r\n" not in response
+                or f"VALUE {server_num_key} 0 1\r\n0\r\n".encode("ascii")
+                not in response
+                or f"VALUE {client_num_key} 0 1\r\n0\r\n".encode("ascii")
+                not in response
+                or f"VALUE {dsm_key} 0 1\r\n1\r\n".encode("ascii")
+                not in response
             ):
                 raise RuntimeError(
                     "failed to initialize memcached state; "
@@ -231,19 +403,59 @@ class PetPSClusterRunner:
                 f"host={self.memcached_host}:{self.memcached_port}",
             )
 
-    def start(self):
-        if not self.server_path.exists():
-            raise FileNotFoundError(f"Server binary not found: {self.server_path}")
-
+    def _prepare_memcached(self):
         if self.use_local_memcached not in {"always", "auto", "never"}:
             raise ValueError(
                 "use_local_memcached must be one of: always, auto, never"
             )
-        if self.use_local_memcached in {"always", "auto"}:
+
+        if self.use_local_memcached == "always":
+            self._start_memcached()
+            self.check_memcached_ready()
+            self.reset_memcached_state()
+            return
+
+        try:
+            self.check_memcached_ready()
+            self.reset_memcached_state()
+            return
+        except RuntimeError:
+            if self.use_local_memcached != "auto":
+                raise
+
+        # Existing memcached may be unreachable or incompatible with the reset
+        # sequence we require. In auto mode, prefer starting local memcached on
+        # the requested endpoint (typically 127.0.0.1:21211) so legacy code
+        # paths that still read memcached.conf continue to work.
+        self.memcached_host = "127.0.0.1"
+        requested_port = self.memcached_port
+        try:
+            self._start_memcached()
+        except RuntimeError:
+            self.memcached_port = self._allocate_local_memcached_port()
+            self.emit_status(
+                "memcached-auto-port-fallback",
+                (
+                    f"requested={self.memcached_host}:{requested_port} "
+                    f"fallback={self.memcached_host}:{self.memcached_port}"
+                ),
+            )
             self._start_memcached()
         self.check_memcached_ready()
         self.reset_memcached_state()
+
+    def start(self):
+        if not self.server_path.exists():
+            raise FileNotFoundError(f"Server binary not found: {self.server_path}")
+
+        self._prepare_memcached()
         env = self.build_env()
+        if self.show_memcached_logs:
+            print(
+                "[petps-memcached] server env "
+                f"host={env['RECSTORE_MEMCACHED_HOST']} "
+                f"port={env['RECSTORE_MEMCACHED_PORT']}"
+            )
 
         for global_id in range(self.num_servers):
             process = subprocess.Popen(
@@ -264,6 +476,10 @@ class PetPSClusterRunner:
         if self.startup_delay > 0:
             time.sleep(self.startup_delay)
 
+        # PetPS servers cannot reach polling-ready until the client joins the
+        # DSM-init barrier. If no post-barrier ready line appears yet, let the
+        # client proceed as long as the server process is still alive; the RDMA
+        # client waits on a memcached server-ready key before sending RPCs.
         if not self.ready:
             for global_id, (process, _thread) in enumerate(self.processes):
                 if process.poll() is None:
@@ -284,9 +500,11 @@ class PetPSClusterRunner:
                         "startup-crash",
                         f"exit_code={process.returncode}",
                     )
+                    crash_details = self._format_captured_process_output(global_id)
                     self.stop()
                     raise RuntimeError(
-                        f"petps_server exited early with code {process.returncode}"
+                        "petps_server exited early with code "
+                        f"{process.returncode}{crash_details}"
                     )
             if (
                 self.status_refresh_interval > 0
@@ -298,16 +516,38 @@ class PetPSClusterRunner:
 
     def run_client(self, argv, client_index=0, stream_output=True, timeout=None):
         cmd = self.build_client_cmd(argv, client_index=client_index)
-        if not stream_output:
-            completed = subprocess.run(
-                cmd,
-                cwd=str(REPO_ROOT),
-                text=True,
-                capture_output=True,
-                check=False,
-                env=self.build_env(),
-                timeout=timeout,
+        env = self.build_env()
+        if self.show_memcached_logs:
+            print(
+                "[petps-memcached] client env "
+                f"host={env['RECSTORE_MEMCACHED_HOST']} "
+                f"port={env['RECSTORE_MEMCACHED_PORT']} "
+                f"client_index={client_index}"
             )
+        if not stream_output:
+            try:
+                completed = subprocess.run(
+                    cmd,
+                    cwd=str(REPO_ROOT),
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env=env,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                class Completed:
+                    def __init__(self, stdout, stderr):
+                        self.returncode = 124
+                        self.stdout = stdout
+                        self.stderr = stderr
+
+                timeout_text = (
+                    f"\n[petps-client] timed out after {timeout} seconds\n"
+                )
+                stdout = _to_text(exc.stdout) + timeout_text
+                stderr = _to_text(exc.stderr)
+                return Completed(stdout, stderr)
             if self.verbose:
                 print(completed.stdout)
                 print(completed.stderr)
@@ -320,7 +560,7 @@ class PetPSClusterRunner:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             bufsize=1,
-            env=self.build_env(),
+            env=env,
         )
 
         output_lines = []
@@ -362,6 +602,7 @@ class PetPSClusterRunner:
                     process.wait(timeout=5)
             thread.join(timeout=1)
         self.processes.clear()
+        self.process_logs.clear()
         if self.memcached_process is not None and self.memcached_process.poll() is None:
             self.memcached_process.terminate()
             try:

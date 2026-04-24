@@ -3,118 +3,26 @@
 ## 概述
 
 !!! warning "边界说明"
-    RDMA 当前是 `BaseParameterClient` 路线，不是 `BasePSClient` 路线，不能直接通过 `KVClientOp` 的 `ps_type` 切换进去。
+    本仓库当前同时存在两条 RDMA 使用路径：
+    1) PetPS 直连路径：`BaseParameterClient`（`PetPSClient` / `AllShardsParameterClientWrapper`）
+    2) Framework Op-layer 路径：`BasePSClient`（`RDMAPSClientAdapter`，通过 `cache_ps.ps_type=RDMA` 进入）
+    两条路径复用同一套 PetPS/RDMA 数据面，但初始化与调用入口不同。
 
-RDMA 模块基于 Mayfly / DSM (Distributed Shared Memory)，提供独立的高性能 `Get/Put` 数据面。
+RDMA 模块基于 Mayfly/DSM，提供独立 `petps_server` 数据面。  
+本页聚焦“怎么启动、怎么测、怎么排障”，不展开实现细节。
 
-它与 GRPC / BRPC 的"靠齐"主要体现在：
+## 路径选择
 
-- 配置角色清晰
-- 测试入口清晰
-- runbook 清晰
+| 路径 | 入口 | 典型用途 |
+|------|------|----------|
+| PetPS 直连 | `src/ps/rdma/petps_client.cc`、`src/ps/rdma/allshards_ps_client.cc` | RDMA 协议/传输专项验证、integration 测试 |
+| Op-layer RDMA | `src/ps/rdma/rdma_ps_client_adapter.cc` + `KVClientOp` | 通过统一框架接口验证 init/write/read/update/prefetch |
 
-而不体现在强行接入主框架抽象。
-
-## 核心组件
-
-### BaseParameterClient
-
-抽象基类，定义 RDMA 客户端接口：
-
-| 方法 | 说明 |
-|------|------|
-| `GetParameter(keys, values)` | 同步获取参数 |
-| `GetParameter(keys, values, isAsync, async_req_id)` | 同步/异步获取参数 |
-| `PutParameter(keys, values)` | 写入参数 |
-| `FakePutParameter(keys, values)` | 快速写入（不等待响应） |
-| `InitThread()` | 初始化线程上下文 |
-| `Barrier(ss, k)` | 栅栏同步 |
-| `GetReceiveBuffer(size)` | 获取接收缓冲区 |
-| `QueryRPCFinished(rpc_id)` | 查询 RPC 是否完成 |
-| `WaitRPCFinish(rpc_id)` | 等待 RPC 完成 |
-| `RevokeRPCResource(rpc_id)` | 释放 RPC 资源 |
-
-### PetPSClient
-
-单分片 RDMA 客户端，继承自 `BaseParameterClient`，使用 Mayfly DSM 与服务器通信。
-
-关键实现细节：
-- 使用 RDMA 快速读写路径
-- 支持异步 RPC 调用
-- 线程本地消息复用
-
-### AllShardsParameterClientWrapper
-
-多分片路由封装器，将请求按 key hash 路由到不同分片：
-
-| 成员 | 说明 |
-|------|------|
-| `clients_` | 分片客户端列表 |
-| `PartitionKey(key)` | 按 hash(key) % num_shards 分片 |
-| `BuildChunks(keys)` | 将 keys 按分片分组 |
-| `AssembleIfNeeded(batch)` | 合并多分片结果 |
-
-### PetPSServer
-
-RDMA 参数服务器，实现 `BaseParameterServer`：
-
-| RPC 类型 | 说明 |
-|----------|------|
-| `GET` | 获取参数值 |
-| `PUT` | 写入参数 |
-| `GET_SERVER_THREADIDS` | 获取服务线程 ID |
-
-响应状态码 (`RpcStatus`)：
-
-| 状态 | 值 | 说明 |
-|------|-----|------|
-| kPending | 123456789 | 请求Pending |
-| kOk | 0 | 成功 |
-| kInvalidPayload | -1 | 无效载荷 |
-| kWrongShard | -2 | 分片错误 |
-| kBatchTooLarge | -3 | 批量过大 |
-| kValueSizeMismatch | -4 | 值大小不匹配 |
-
-## 与其他后端的差异
-
-| 方面 | gRPC | bRPC | RDMA |
-|------|------|------|------|
-| 协议 | HTTP/2 | 自定义二进制协议 | RDMA 直接内存访问 |
-| 底层框架 | gRPC | bRPC | Mayfly/DSM |
-| 延迟 | 较高 | 中等 | 极低 |
-| 吞吐量 | 中等 | 高 | 极高 |
-| 部署复杂度 | 低 | 低 | 高（需要 RDMA 硬件） |
-| 适用场景 | 跨机房/通用 | 同机房通用 | 超低延迟场景 |
-
-## 协议格式
-
-### Put 载荷格式
-
-```
-+-------------------+------------------+------------------+
-| PutPayloadHeader  | keys (uint64[])  | values (float[])|
-+-------------------+------------------+------------------+
-| 12 bytes          | key_count * 8    | key_count * dim * 4 |
-+-------------------+------------------+------------------+
-```
-
-`PutPayloadHeader` 结构：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| magic | uint32 | 0x50545053 ("PTPS") |
-| version | uint16 | 协议版本 (1) |
-| reserved | uint16 | 保留字段 |
-| key_count | uint32 | key 数量 |
-| embedding_dim | uint32 | 嵌入维度 |
-
-### Get 响应格式
-
-每个 key 的响应槽位大小 = `value_size`，整个响应末尾追加一个全局状态码 `int32_t`。
-
-总响应字节数：
-
-`key_count * value_size + sizeof(int32_t)`
+!!! note
+    若目标是验证 framework 侧切换，请使用 `cache_ps.ps_type=RDMA` 与
+    `src/test/configs/recstore_config.op_rdma.json`。
+    若目标是验证 PetPS 传输链路本身，请优先使用 `recstore_config.rdma_test.json`
+    或 `recstore_config.rdma_multishard_test.json`。
 
 ## 配置
 
@@ -126,36 +34,56 @@ RDMA 专项配置位于：
 | `src/test/configs/recstore_config.rdma_multishard_test.json` | 多分片测试 |
 
 !!! note
-    这些配置只服务 RDMA 专项验证，不应回落到根目录默认 `recstore_config.json`。
+    `recstore_config.rdma_test.json` / `recstore_config.rdma_multishard_test.json`
+    主要用于 PetPS 专项链路测试；Op-layer 验证请使用
+    `recstore_config.op_rdma.json`（其中 `cache_ps.ps_type` 为 `RDMA`）。
 
-配置示例 (`recstore_config.rdma_test.json`)：
+## 快速验证
 
-```json
-{
-  "cache_ps": {
-    "ps_type": "GRPC",
-    "max_batch_keys_size": 65536,
-    "num_threads": 32,
-    "num_shards": 1,
-    "servers": [{"host": "127.0.0.1", "port": 25000, "shard": 0}],
-    "base_kv_config": {
-      "path": "/tmp/recstore_data_rdma_test",
-      "capacity": 1000000,
-      "value_size": 16,
-      "value_type": "DRAM",
-      "value_memory_management": "PersistLoopShmMalloc"
-    }
-  },
-  "distributed_client": {
-    "num_shards": 1,
-    "hash_method": "city_hash",
-    "max_keys_per_request": 500,
-    "servers": [{"host": "127.0.0.1", "port": 25000, "shard": 0}]
-  }
-}
+!!! note
+    本节命令默认在仓库根目录（`/app/RecStore`）执行。
+
+### memcached
+
+```bash
+memcached -l 127.0.0.1 -p 21211 -c 10000 -vv
 ```
 
-## 测试入口
+`--use-local-memcached` 控制 memcached 来源：
+
+| 参数值 | 行为 |
+|--------|------|
+| `auto` | 先尝试外部 memcached；如果不可用或 reset 失败，则启动系统 `memcached` 二进制（推荐默认模式） |
+| `never` | 只使用已在 `127.0.0.1:21211` 启动的外部 memcached，适用于你需要严格绑定外部 memcached 的场景 |
+| `always` | 直接启动系统 `memcached` 二进制 |
+
+!!! note
+    推荐优先使用 `--use-local-memcached=auto`，由脚本统一管理 memcached 生命周期。
+    如需完整 runner 日志，可追加 `--show-runner-logs`。
+
+### 启动 RDMA Server
+
+为降低 `petps_server` 直接启动时的参数复杂度（`global_id` /
+`num_server_processes` / `num_client_processes` 等），推荐使用：
+
+```bash
+python3 src/test/scripts/run_petps_server.py \
+  --config-path ./src/test/configs/recstore_config.rdma_test.json \
+  --use-local-memcached=auto
+```
+
+当前脚本实际支持的常用调优参数只有：
+`--rdma-per-thread-response-limit-bytes`、
+`--rdma-server-ready-timeout-sec`、
+`--rdma-server-ready-poll-ms`、
+`--rdma-client-receive-arena-bytes`、
+`--validate-routing`。
+
+该入口会：
+
+- 根据配置推断 `server-count`（也可显式传 `--server-count`）
+- 自动注入 RDMA 所需运行参数
+- 统一处理 memcached（`auto/always/never`）
 
 ### 单分片 integration
 
@@ -166,8 +94,11 @@ python3 src/test/scripts/run_petps_integration.py \
   --test-binary ./build/bin/petps_integration_test \
   --gtest-filter=PetPSIntegrationTest.PutGetRoundTripSingleShard:PetPSIntegrationTest.MissingKeysReturnZeroSlots \
   --client-timeout 15 \
-  --use-local-memcached=never
+  --use-local-memcached=auto
 ```
+
+!!! note
+    这条命令已经按当前代码实际验证通过。
 
 ### 多分片 integration
 
@@ -177,117 +108,136 @@ python3 src/test/scripts/run_petps_integration.py \
   --config-path ./src/test/configs/recstore_config.rdma_multishard_test.json \
   --test-binary ./build/bin/petps_integration_test \
   --gtest-filter=PetPSIntegrationTest.PutGetRoundTripMultiShard \
-  --client-timeout 15 \
-  --use-local-memcached=never
+  --client-timeout 30 \
+  --use-local-memcached=auto
 ```
 
-### transport benchmark
+### RDMA transport benchmark
 
 ```bash
 python3 src/test/scripts/run_rdma_transport_benchmarks.py \
   --benchmark-binary ./build/bin/ps_transport_benchmark \
+  --iterations 300 \
+  --batch-keys 500 \
+  --rounds 10 \
+  --rdma-warmup-rounds 2 \
+  --report-mode summary \
+  --rdma-only \
+  --rdma-thread-num 1 \
+  --rdma-put-protocol-version 2 \
+  --rdma-put-v2-transfer-mode read \
+  --rdma-wait-timeout-ms 10000 \
+  --rdma-client-timeout-sec 60 \
   --use-local-memcached=auto
 ```
 
 !!! note
-    `run_petps_integration.py` 对 `client-timeout` 与 `cluster-timeout` 采用 15 秒硬上限；超过 15 秒会自动终止并清理进程。
+    `run_petps_integration.py` 中 `--client-timeout` 与 `--cluster-timeout`
+    会按你传入的值生效（要求 > 0）。
+    `--report-mode` 支持：
+    `summary`（默认，输出聚合延迟与吞吐，日志最少）、
+    `per_round`（逐轮延迟）、
+    `both`（逐轮 + 聚合）。
+    `run_rdma_transport_benchmarks.py` 在三种 transport 全部完成后，
+    会额外打印一张 `measure` 阶段汇总表（包含延迟与吞吐）。
+    仅关注 RDMA 时可加 `--rdma-only`，跳过 GRPC/BRPC 阶段。
+    当前默认 PUT 协议为 v2，benchmark 脚本默认 `--rdma-put-v2-transfer-mode=push`。
+    但按当前实现的稳定性，建议优先使用 `read` 模式做基线压测。
 
-### ctest 入口（可选）
+### 建议基线
 
-当构建时启用 `ENABLE_RDMA_INTEGRATION_TESTS=ON`，可直接运行：
+推荐先固定以下组合：
+
+- `--batch-keys=500`
+- `--rdma-thread-num=4`
+- `--rdma-put-protocol-version=2`
+- `--rdma-put-v2-transfer-mode=read`
+
+已知现象（`value_size=16`）：
+
+- 将 `batch-keys` 提升到 `1000` 时，可能触发 Mayfly `MESSAGE_SIZE` 上限并报错
+  `messeage size too large`。
+- 建议在默认消息大小配置下，将 `batch-keys` 控制在 `500` 附近进行稳定压测。
+
+### benchmark 输出解读
+
+`report-mode=summary` 或 `both` 时，脚本末尾会输出：
+
+- `mean_us / p50_us / p95_us / p99_us`：单轮（一个 round）总耗时统计
+- `batch_keys`：单个 Put/Get RPC 内携带的 key 数
+- `ops/s`：每秒完成的请求对数量（`Put + Get` 合并统计）
+- `key_ops/s`：每秒处理的 key 数量（按每次请求 key 数折算）
+
+当前 `ps_transport_benchmark` 的单轮工作量是：
+
+- 每轮执行 `iterations` 次循环
+- 每次循环执行 `1 Put + 1 Get`
+- 每次请求处理 `batch_keys` 个 key（默认 4，可通过 `--batch-keys` 调整）
+
+因此吞吐计算可写为：
+
+```text
+ops/s = (iterations * 2) / (mean_us / 1e6)
+key_ops/s = (iterations * 2 * batch_keys) / (mean_us / 1e6)
+```
+
+### ctest 入口
+
+推荐按“冒烟 -> 集成”顺序执行：
+
+```bash
+# 1) RDMA 单测冒烟（快）
+ctest --test-dir ./build -R "^test_rdma_protocol$|^test_allshards_ps_client$" -VV
+
+# 2) Op-layer RDMA 集成（当前 CI 默认覆盖的核心）
+ctest --test-dir ./build -L rdma_integration -VV
+```
+
+!!! note
+    `rdma_integration` 标签当前至少包含：
+    `pytorch_client_test_rdma_basic`、
+    `pytorch_client_test_rdma`、
+    `pytorch_client_test_rdma_auto`。
+
+若构建时额外启用 `ENABLE_RDMA_INTEGRATION_TESTS=ON`，还可以运行 PetPS 专项集成：
 
 ```bash
 ctest --test-dir ./build -R "petps_single_shard_test|petps_multi_shard_test" -VV
 ```
 
-## 稳定性机制（当前默认行为）
+### Op-layer 验证
 
-`run_petps_integration.py` / `PetPSClusterRunner` 已内置以下稳定性机制：
+当 `cache_ps.ps_type` 设置为 `RDMA` 时，framework op layer 会通过
+`RDMAPSClientAdapter` 复用 PetPS/RDMA 数据面。可使用现有 PyTorch client
+测试验证该配置切换路径：
 
-1. 每次测试启动前自动重置 memcached 状态：
-   - `flush_all`
-   - 重建 `serverNum=0`、`clientNum=0`、`xmh-consistent-dsm=1`
-   - 通过 `get` 回读校验三项键值
-2. 对 memcached 就绪进行重试探测，失败会报明确错误。
-3. 启动阶段周期打印状态刷新日志（`[petps-status]`）。
-4. `client-timeout` 与 `cluster-timeout` 统一受 15 秒硬上限保护，超时自动清理子进程。
+```bash
+ctest --test-dir ./build -R "^pytorch_client_test_rdma_auto$" -VV
+```
 
-典型状态日志：
+上述测试使用 `src/test/configs/recstore_config.op_rdma.json`，覆盖
+init、write、read、update 与 prefetch 正确性。
 
-- `phase=memcached-ready`
-- `phase=memcached-reset`
-- `phase=startup-wait`
-- `phase=startup-timeout`
-- `phase=startup-crash`
+如需手工指定 memcached 策略：
 
-## 排障 Runbook
+```bash
+export RECSTORE_USE_LOCAL_MEMCACHED=auto   # 或 always / never
+ctest --test-dir ./build -R "^pytorch_client_test_rdma$" -VV
+```
 
-### 常见症状：偶发卡住（非持续高频连接）
+## 排障
 
-建议按以下顺序排查：
+常见问题优先看这几项：
 
-1. 先看状态日志停在什么阶段：
-   - 若停在 `memcached-wait`：优先检查 memcached 可达性。
-   - 若停在 `startup-wait`：优先检查 `petps_server` 是否已启动且未崩溃。
-2. 检查 21211 端口连接关系：
+- 如果卡在 `memcached-wait`，先检查 `127.0.0.1:21211` 是否可达。
+- 如果卡在 `startup-wait`，优先看 `petps_server` 是否已启动、是否有残留旧进程。
+- 多分片失败时，先核对 `recstore_config.rdma_multishard_test.json` 中的 `num_shards/servers` 与测试参数是否一致。
+- 如需看完整 runner 状态日志，可在命令后追加 `--show-runner-logs`。
+
+常用检查命令：
 
 ```bash
 ss -tnp | grep ':21211'
 lsof -nP -iTCP:21211
 fuser -v 21211/tcp
 ```
-
-3. 如需手工验证 memcached 重置，可执行（与脚本内置逻辑一致）：
-
-```bash
-printf 'flush_all\r\nset serverNum 0 0 1\r\n0\r\nset clientNum 0 0 1\r\n0\r\nset xmh-consistent-dsm 0 0 1\r\n1\r\nget serverNum\r\nget clientNum\r\nget xmh-consistent-dsm\r\nquit\r\n' | nc -q 1 127.0.0.1 21211
-```
-
-4. 多分片场景优先确认：
-   - `recstore_config.rdma_multishard_test.json` 中 `num_shards/servers` 与测试参数一致。
-   - 本地没有残留旧 `petps_server` 进程占用同一组资源。
-
-## 明确非目标
-
-| 非目标 | 说明 |
-|--------|------|
-| 不直接并入统一 ps_server | 独立部署架构 |
-| 不直接实现 BasePSClient | 走独立数据面 |
-| 不通过 KVClientOp 自动切到 RDMA | 需要显式配置 |
-
-## 与 gRPC 对齐说明
-
-如果要让 RDMA 达到 gRPC 同等可用度，至少要做到：
-
-1. 接口能力对齐（读/写/更新/初始化/命令）
-2. 与主框架 `KVClientOp` 调用语义可衔接
-3. 具备完整测试入口（单机+分片）
-
-详见 [gRPC 文档](./grpc.md)。
-
-## 文件组织
-
-| 文件 | 说明 |
-|------|------|
-| `src/ps/rdma/base_client.h` | 抽象基类定义 |
-| `src/ps/rdma/petps_client.h` / `.cc` | 单分片客户端实现 |
-| `src/ps/rdma/allshards_ps_client.h` / `.cc` | 多分片路由封装 |
-| `src/ps/rdma/petps_server.cc` | 服务器实现 |
-| `src/ps/rdma/rdma_protocol.h` | 协议编解码 |
-| `src/ps/rdma/rdma_status.h` | 状态码定义 |
-| `src/ps/rdma/petps_magic.h` | RPC 类型常量 |
-| `src/ps/rdma/petps_integration_test.cpp` | 集成测试 |
-| `src/ps/rdma/CMakeLists.txt` | 构建配置 |
-| `src/test/scripts/run_petps_integration.py` | 集成测试驱动 |
-| `src/test/scripts/run_rdma_transport_benchmarks.py` | 传输基准测试 |
-| `src/test/scripts/ps_test_config.py` | 配置路径常量 |
-| `src/test/configs/recstore_config.rdma_test.json` | 单分片测试配置 |
-| `src/test/configs/recstore_config.rdma_multishard_test.json` | 多分片测试配置 |
-
-## 构建目标
-
-| 目标 | 说明 |
-|------|------|
-| `wq_ps_client` | 静态库，包含 petps_client 和 allshards_ps_client |
-| `petps_server` | RDMA 服务器可执行文件 |
-| `petps_integration_test` | 集成测试可执行文件 |

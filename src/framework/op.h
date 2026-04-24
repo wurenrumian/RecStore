@@ -10,7 +10,7 @@
 using base::RecTensor;
 
 namespace recstore {
-void ConfigureLogging();
+void ConfigureLogging(bool initialize_google_logging = true);
 enum class InitStrategyType { Normal, Uniform, Xavier, Zero };
 
 struct InitStrategy {

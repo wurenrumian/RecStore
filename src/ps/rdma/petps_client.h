@@ -2,7 +2,10 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "base/array.h"
 #include "base/factory.h"
@@ -27,6 +30,7 @@ public:
   void InitThread() override {
     LOG(INFO) << "dsm_->registerThread()";
     dsm_->registerThread();
+    WaitForServerReady();
     serverThreadIdsRoutedTo_ = GetServerThreadIDs();
   }
 
@@ -42,6 +46,7 @@ public:
   std::size_t ResponseBufferBytes(std::size_t key_count) const;
 
   void* GetReceiveBuffer(size_t size) override;
+  void* GetSendBuffer(size_t size);
 
   inline int shard() const { return shard_; }
 
@@ -57,12 +62,17 @@ public:
   int FakePutParameter(base::ConstArray<uint64_t> keys, float* values) override;
 
 private:
+  void WaitForServerReady();
   std::vector<int> GetServerThreadIDs();
   int SelectServerThreadID() const;
+  std::atomic<int32_t>* GetPollSlot(uint64_t rpc_id) const;
   void Init();
   DSM* dsm_;
 
-  uint64_t rpcIDAcc_ = 0;
+  mutable std::mutex rpc_mu_;
+  mutable std::mutex put_mu_;
+  std::atomic<uint64_t> rpcIDAcc_{0};
+  mutable std::atomic<uint32_t> round_robin_{0};
 
   std::vector<int> serverThreadIdsRoutedTo_;
   std::unordered_map<uint64_t, std::atomic<int32_t>*> rpcId2PollMap_;
