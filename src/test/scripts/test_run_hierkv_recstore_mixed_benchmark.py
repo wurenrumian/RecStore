@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from run_hierkv_recstore_mixed_benchmark import (  # noqa: E402
+    build_recstore_server_cmd,
     build_hierkv_cmd,
     build_recstore_cmd,
     collect_summary_rows,
@@ -18,11 +19,11 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
     def test_collect_summary_rows_parses_recstore_and_hierkv(self):
         sample = (
             "system=RecStore transport=GRPC phase=measure summary rounds=3 "
-            "iterations=100 batch_keys=128 elapsed_us_mean=1000 "
+            "iterations=100 batch_keys=128 num_embeddings=1000000 elapsed_us_mean=1000 "
             "elapsed_us_p50=900 elapsed_us_p95=1200 elapsed_us_p99=1300 "
             "ops_per_sec=200000 key_ops_per_sec=25600000\n"
             "system=HierKV transport=LOCAL_GPU phase=measure summary rounds=3 "
-            "iterations=100 batch_keys=128 elapsed_us_mean=200 "
+            "iterations=100 batch_keys=128 num_embeddings=1000000 elapsed_us_mean=200 "
             "elapsed_us_p50=180 elapsed_us_p95=240 elapsed_us_p99=260 "
             "ops_per_sec=1000000 key_ops_per_sec=128000000\n"
         )
@@ -30,6 +31,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["system"], "RecStore")
         self.assertEqual(rows[1]["system"], "HierKV")
+        self.assertEqual(rows[0]["num_embeddings"], 1000000)
 
     def test_print_summary_table_renders_both_systems(self):
         rows = [
@@ -39,6 +41,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
                 "rounds": 3,
                 "iterations": 100,
                 "batch_keys": 128,
+                "num_embeddings": 1000000,
                 "mean": 1000.0,
                 "p50": 900.0,
                 "p95": 1200.0,
@@ -52,6 +55,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
                 "rounds": 3,
                 "iterations": 100,
                 "batch_keys": 128,
+                "num_embeddings": 1000000,
                 "mean": 200.0,
                 "p50": 180.0,
                 "p95": 240.0,
@@ -75,7 +79,7 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
             (),
             {
                 "recstore_binary": "/tmp/recstore_mixed_benchmark",
-                "transport": "grpc",
+                "transport": "brpc",
                 "host": "127.0.0.1",
                 "port": 15000,
                 "iterations": 100,
@@ -83,14 +87,35 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
                 "warmup_rounds": 1,
                 "batch_keys": 128,
                 "embedding_dim": 64,
+                "num_embeddings": 1000000,
+                "init_chunk_size": 8192,
                 "report_mode": "summary",
                 "update_scale": 0.001,
+                "brpc_timeout_ms": 20000,
             },
         )()
         cmd = build_recstore_cmd(args)
         self.assertIn("--embedding_dim=64", cmd)
         self.assertIn("--batch_keys=128", cmd)
         self.assertIn("--update_scale=0.001", cmd)
+        self.assertIn("--num_embeddings=1000000", cmd)
+        self.assertIn("--init_chunk_size=8192", cmd)
+        self.assertIn("--brpc_timeout_ms=20000", cmd)
+
+    def test_build_recstore_server_cmd_uses_brpc_binary_and_flag(self):
+        args = type(
+            "Args",
+            (),
+            {
+                "recstore_server_binary": "/tmp/brpc_ps_server",
+                "recstore_config": "recstore_config.json",
+                "transport": "brpc",
+            },
+        )()
+        cmd = build_recstore_server_cmd(args, Path("/app/RecStore"))
+        self.assertEqual(cmd[0], "/tmp/brpc_ps_server")
+        self.assertEqual(cmd[1], "--brpc_config_path")
+        self.assertTrue(cmd[2].endswith("/app/RecStore/recstore_config.json"))
 
     def test_build_hierkv_cmd_contains_capacity_parameters(self):
         args = type(
@@ -103,17 +128,20 @@ class TestRunHierKVRecStoreMixedBenchmark(unittest.TestCase):
                 "warmup_rounds": 1,
                 "batch_keys": 128,
                 "embedding_dim": 64,
+                "num_embeddings": 1000000,
+                "init_chunk_size": 8192,
                 "report_mode": "summary",
                 "update_scale": 0.001,
-                "init_capacity": 1024,
-                "max_capacity": 2048,
+                "init_capacity": 0,
+                "max_capacity": 0,
                 "max_hbm_for_vectors": 4096,
             },
         )()
         cmd = build_hierkv_cmd(args)
-        self.assertIn("--init_capacity=1024", cmd)
-        self.assertIn("--max_capacity=2048", cmd)
+        self.assertIn("--init_capacity=1000000", cmd)
+        self.assertIn("--max_capacity=1000000", cmd)
         self.assertIn("--max_hbm_for_vectors=4096", cmd)
+        self.assertIn("--num_embeddings=1000000", cmd)
 
 
 if __name__ == "__main__":

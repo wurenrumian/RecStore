@@ -13,7 +13,8 @@ inline std::string NormalizeBenchmarkTransport(std::string transport) {
       transport.end(),
       transport.begin(),
       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-  if (transport == "RDMA" || transport == "GRPC" || transport == "BRPC") {
+  if (transport == "RDMA" || transport == "GRPC" || transport == "BRPC" ||
+      transport == "LOCAL_SHM") {
     return transport;
   }
   throw std::invalid_argument("Unsupported transport: " + transport);
@@ -34,4 +35,23 @@ inline bool BenchmarkRequiresManagedReceiveBuffer(const std::string& transport,
 
 inline bool BenchmarkUsesVectorGet(const std::string& transport) {
   return NormalizeBenchmarkTransport(transport) == "BRPC";
+}
+
+inline bool BenchmarkWriteReturnsZeroOnSuccess(const std::string& transport) {
+  const auto normalized = NormalizeBenchmarkTransport(transport);
+  return normalized == "RDMA" || normalized == "LOCAL_SHM";
+}
+
+inline bool BenchmarkWriteSucceeded(const std::string& transport, int ret) {
+  return BenchmarkWriteReturnsZeroOnSuccess(transport)
+           ? (ret == 0)
+           : (ret != 0);
+}
+
+inline bool BenchmarkReadReturnsZeroOnSuccess(const std::string& transport) {
+  return BenchmarkWriteReturnsZeroOnSuccess(transport);
+}
+
+inline bool BenchmarkReadSucceeded(const std::string& transport, int ret) {
+  return BenchmarkReadReturnsZeroOnSuccess(transport) ? (ret == 0) : (ret != 0);
 }

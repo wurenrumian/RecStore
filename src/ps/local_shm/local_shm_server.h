@@ -20,12 +20,14 @@ public:
   void Stop();
 
 private:
+  bool DrainReadyQueue(uint32_t ready_queue_id, uint32_t* processed);
   void ProcessSlot(uint32_t slot_id);
 
 private:
   LocalShmRegion* region_;
   ::CachePS* cache_ps_;
   std::atomic<bool> stop_{false};
+  uint32_t next_ready_queue_id_ = 0;
 };
 
 class LocalShmParameterServer : public BaseParameterServer {
