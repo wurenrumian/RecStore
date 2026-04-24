@@ -12,7 +12,7 @@
 namespace recstore {
 void EmbRead(const base::RecTensor& keys, base::RecTensor& values);
 void EmbUpdate(const base::RecTensor& keys, const base::RecTensor& grads);
-}
+} // namespace recstore
 
 static void check_cuda_error(cudaError_t err) {
   if (err != cudaSuccess) {
@@ -191,8 +191,7 @@ HugeCTRBackendKind ParseHugeCTRBackendKind(const json& config) {
   if (backend == "hierkv") {
     return HugeCTRBackendKind::HierKV;
   }
-  throw std::invalid_argument(
-      "Unsupported hugectr.backend value: " + backend);
+  throw std::invalid_argument("Unsupported hugectr.backend value: " + backend);
 }
 
 void emb_read_hugectr(const HugeCTR::Tensor2<long long>& keys,

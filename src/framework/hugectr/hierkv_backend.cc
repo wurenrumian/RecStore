@@ -52,7 +52,8 @@ void HugeCTRHierKVBackend::ValidateConfig(const json& config) {
     throw std::invalid_argument(
         "'hierkv.max_hbm_for_vectors' must be an integer.");
   }
-  if (!hierkv["dim"].is_number_unsigned() && !hierkv["dim"].is_number_integer()) {
+  if (!hierkv["dim"].is_number_unsigned() &&
+      !hierkv["dim"].is_number_integer()) {
     throw std::invalid_argument("'hierkv.dim' must be an integer.");
   }
   if (hierkv["max_capacity"].get<int64_t>() <= 0) {

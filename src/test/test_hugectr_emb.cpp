@@ -38,8 +38,8 @@ struct ScopedConfigOverride {
     std::ifstream input(path_);
     if (input.good()) {
       restore_ = true;
-      original_.assign(
-          std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+      original_.assign(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
     }
     input.close();
 
@@ -64,22 +64,17 @@ static void test_backend_parser() {
   using recstore::framework::HugeCTRBackendKind;
   using recstore::framework::ParseHugeCTRBackendKind;
 
+  assert(ParseHugeCTRBackendKind(json::object()) ==
+         HugeCTRBackendKind::RecStore);
   assert(
-      ParseHugeCTRBackendKind(json::object()) ==
+      ParseHugeCTRBackendKind(json{{"hugectr", {{"backend", "recstore"}}}}) ==
       HugeCTRBackendKind::RecStore);
-  assert(
-      ParseHugeCTRBackendKind(json{
-          {"hugectr", {{"backend", "recstore"}}}}) ==
-      HugeCTRBackendKind::RecStore);
-  assert(
-      ParseHugeCTRBackendKind(json{
-          {"hugectr", {{"backend", "hierkv"}}}}) ==
-      HugeCTRBackendKind::HierKV);
+  assert(ParseHugeCTRBackendKind(json{{"hugectr", {{"backend", "hierkv"}}}}) ==
+         HugeCTRBackendKind::HierKV);
 
   bool invalid_backend_throws = false;
   try {
-    (void)ParseHugeCTRBackendKind(
-        json{{"hugectr", {{"backend", "invalid"}}}});
+    (void)ParseHugeCTRBackendKind(json{{"hugectr", {{"backend", "invalid"}}}});
   } catch (const std::invalid_argument&) {
     invalid_backend_throws = true;
   }
@@ -170,13 +165,9 @@ static void maybe_test_hierkv_selection() {
     std::vector<float> h_grads(batch_size * base::EMBEDDING_DIMENSION_D, 0.1f);
 
     check_cuda_error(cudaMalloc(&d_keys_ptr, sizeof(long long)));
-    check_cuda_error(
-        cudaMalloc(&d_grads_ptr, sizeof(float) * h_grads.size()));
+    check_cuda_error(cudaMalloc(&d_grads_ptr, sizeof(float) * h_grads.size()));
     check_cuda_error(cudaMemcpy(
-        d_keys_ptr,
-        h_keys.data(),
-        sizeof(long long),
-        cudaMemcpyHostToDevice));
+        d_keys_ptr, h_keys.data(), sizeof(long long), cudaMemcpyHostToDevice));
     check_cuda_error(cudaMemcpy(
         d_grads_ptr,
         h_grads.data(),
