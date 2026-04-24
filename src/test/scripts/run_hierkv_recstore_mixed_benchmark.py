@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 import argparse
+import csv
 import re
 import subprocess
+import time
 from pathlib import Path
-
-from ps_server_runner import PSServerRunner
 
 
 SUMMARY_RE = re.compile(
@@ -16,6 +16,7 @@ SUMMARY_RE = re.compile(
     r"rounds=(?P<rounds>\d+) "
     r"iterations=(?P<iterations>\d+) "
     r"batch_keys=(?P<batch_keys>\d+) "
+    r"num_embeddings=(?P<num_embeddings>\d+) "
     r"elapsed_us_mean=(?P<mean>[0-9.eE+-]+) "
     r"elapsed_us_p50=(?P<p50>[0-9.eE+-]+) "
     r"elapsed_us_p95=(?P<p95>[0-9.eE+-]+) "
@@ -38,6 +39,7 @@ def collect_summary_rows(text: str) -> list[dict[str, str | int | float]]:
                 "rounds": int(m.group("rounds")),
                 "iterations": int(m.group("iterations")),
                 "batch_keys": int(m.group("batch_keys")),
+                "num_embeddings": int(m.group("num_embeddings")),
                 "mean": float(m.group("mean")),
                 "p50": float(m.group("p50")),
                 "p95": float(m.group("p95")),
@@ -59,6 +61,7 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
         "rounds",
         "iterations",
         "batch_keys",
+        "num_embeddings",
         "mean_us",
         "p50_us",
         "p95_us",
@@ -76,6 +79,7 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
                 str(row["rounds"]),
                 str(row["iterations"]),
                 str(row["batch_keys"]),
+                str(row["num_embeddings"]),
                 f"{row['mean']:,.2f}",
                 f"{row['p50']:,.2f}",
                 f"{row['p95']:,.2f}",
@@ -109,12 +113,20 @@ def build_recstore_cmd(args: argparse.Namespace) -> list[str]:
         f"--warmup_rounds={args.warmup_rounds}",
         f"--batch_keys={args.batch_keys}",
         f"--embedding_dim={args.embedding_dim}",
+        f"--num_embeddings={args.num_embeddings}",
+        f"--init_chunk_size={args.init_chunk_size}",
         f"--report_mode={args.report_mode}",
         f"--update_scale={args.update_scale}",
     ]
 
 
 def build_hierkv_cmd(args: argparse.Namespace) -> list[str]:
+    init_capacity = (
+        args.init_capacity if args.init_capacity > 0 else args.num_embeddings
+    )
+    max_capacity = (
+        args.max_capacity if args.max_capacity > 0 else args.num_embeddings
+    )
     return [
         str(args.hierkv_binary),
         f"--iterations={args.iterations}",
@@ -122,12 +134,22 @@ def build_hierkv_cmd(args: argparse.Namespace) -> list[str]:
         f"--warmup_rounds={args.warmup_rounds}",
         f"--batch_keys={args.batch_keys}",
         f"--embedding_dim={args.embedding_dim}",
+        f"--num_embeddings={args.num_embeddings}",
+        f"--init_chunk_size={args.init_chunk_size}",
         f"--report_mode={args.report_mode}",
         f"--update_scale={args.update_scale}",
-        f"--init_capacity={args.init_capacity}",
-        f"--max_capacity={args.max_capacity}",
+        f"--init_capacity={init_capacity}",
+        f"--max_capacity={max_capacity}",
         f"--max_hbm_for_vectors={args.max_hbm_for_vectors}",
     ]
+
+
+def build_recstore_server_cmd(args: argparse.Namespace, repo_root: Path) -> list[str]:
+    server_binary = Path(args.recstore_server_binary)
+    config_path = (repo_root / args.recstore_config).resolve()
+    if args.transport.lower() == "brpc":
+        return [str(server_binary), "--brpc_config_path", str(config_path)]
+    return [str(server_binary), "--config_path", str(config_path)]
 
 
 def run_cmd(cmd: list[str], cwd: Path) -> str:
@@ -148,6 +170,51 @@ def run_cmd(cmd: list[str], cwd: Path) -> str:
     return completed.stdout
 
 
+def wait_for_recstore_server_ready(
+    transport: str, process: subprocess.Popen[str], server_log_path: Path
+) -> None:
+    ready_pattern = (
+        "bRPC Server shard 0 listening on"
+        if transport.lower() == "brpc"
+        else "listening on"
+    )
+    for _ in range(80):
+        time.sleep(0.5)
+        text = server_log_path.read_text(encoding="utf-8", errors="ignore")
+        if ready_pattern in text:
+            return
+        if process.poll() is not None:
+            raise RuntimeError(
+                f"recstore server exited early with code {process.returncode}; "
+                f"log: {server_log_path}"
+            )
+    raise RuntimeError(f"timed out waiting for recstore server; log: {server_log_path}")
+
+
+def write_csv(path: Path, rows: list[dict[str, str | int | float]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "system",
+        "transport",
+        "rounds",
+        "iterations",
+        "batch_keys",
+        "num_embeddings",
+        "mean",
+        "p50",
+        "p95",
+        "p99",
+        "ops",
+        "key_ops",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", default="/app/RecStore")
@@ -159,7 +226,11 @@ def main() -> int:
         "--hierkv-binary",
         default="/app/RecStore/third_party/HierarchicalKV/build/mixed_benchmark",
     )
-    parser.add_argument("--transport", default="grpc")
+    parser.add_argument(
+        "--recstore-server-binary",
+        default="/app/RecStore/build/bin/brpc_ps_server",
+    )
+    parser.add_argument("--transport", default="brpc")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=15000)
     parser.add_argument("--iterations", type=int, default=100)
@@ -167,36 +238,69 @@ def main() -> int:
     parser.add_argument("--warmup-rounds", type=int, default=1)
     parser.add_argument("--batch-keys", type=int, default=128)
     parser.add_argument("--embedding-dim", type=int, default=128)
+    parser.add_argument("--num-embeddings", type=int, default=1024)
+    parser.add_argument(
+        "--sweep-num-embeddings", type=int, nargs="*", default=[]
+    )
+    parser.add_argument("--init-chunk-size", type=int, default=4096)
     parser.add_argument("--report-mode", choices=["summary", "per_round", "both"], default="summary")
     parser.add_argument("--update-scale", type=float, default=0.001)
-    parser.add_argument("--init-capacity", type=int, default=1024)
-    parser.add_argument("--max-capacity", type=int, default=1024)
+    parser.add_argument("--init-capacity", type=int, default=0)
+    parser.add_argument("--max-capacity", type=int, default=0)
     parser.add_argument("--max-hbm-for-vectors", type=int, default=1073741824)
     parser.add_argument("--recstore-config", default="recstore_config.json")
     parser.add_argument("--server-log-dir", default="/tmp/recstore_mixed_benchmark_logs")
     parser.add_argument("--skip-recstore-server", action="store_true", default=False)
+    parser.add_argument("--output-csv", default="")
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
     all_rows: list[dict[str, str | int | float]] = []
+    sweep_values = args.sweep_num_embeddings or [args.num_embeddings]
 
-    if args.skip_recstore_server:
-        recstore_output = run_cmd(build_recstore_cmd(args), repo_root)
-    else:
-        runner = PSServerRunner(
-            config_path=str((repo_root / args.recstore_config).resolve()),
-            log_dir=args.server_log_dir,
-        )
-        with runner.run():
+    for num_embeddings in sweep_values:
+        args.num_embeddings = num_embeddings
+        if args.skip_recstore_server:
             recstore_output = run_cmd(build_recstore_cmd(args), repo_root)
-    print(recstore_output, end="" if recstore_output.endswith("\n") else "\n")
-    all_rows.extend(collect_summary_rows(recstore_output))
+        else:
+            log_dir = Path(args.server_log_dir)
+            log_dir.mkdir(parents=True, exist_ok=True)
+            server_log_path = log_dir / f"recstore_server_{num_embeddings}.log"
+            with server_log_path.open("w", encoding="utf-8") as server_log:
+                server = subprocess.Popen(
+                    build_recstore_server_cmd(args, repo_root),
+                    cwd=str(repo_root),
+                    stdout=server_log,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                wait_for_recstore_server_ready(
+                    args.transport, server, server_log_path
+                )
+                recstore_output = run_cmd(build_recstore_cmd(args), repo_root)
+                server.terminate()
+                try:
+                    server.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    server.wait()
+                if server.returncode not in (0, -15):
+                    raise RuntimeError(
+                        f"recstore server exited with code {server.returncode}; "
+                        f"log: {server_log_path}"
+                    )
+        print(recstore_output, end="" if recstore_output.endswith("\n") else "\n")
+        all_rows.extend(collect_summary_rows(recstore_output))
 
-    hierkv_output = run_cmd(build_hierkv_cmd(args), repo_root)
-    print(hierkv_output, end="" if hierkv_output.endswith("\n") else "\n")
-    all_rows.extend(collect_summary_rows(hierkv_output))
+        hierkv_output = run_cmd(build_hierkv_cmd(args), repo_root)
+        print(hierkv_output, end="" if hierkv_output.endswith("\n") else "\n")
+        all_rows.extend(collect_summary_rows(hierkv_output))
 
     print_summary_table(all_rows)
+    if args.output_csv:
+        csv_path = Path(args.output_csv)
+        write_csv(csv_path, all_rows)
+        print(f"[mixed-benchmark] csv: {csv_path}")
     return 0
 
 
