@@ -36,9 +36,7 @@ TEST(LocalShmPSClientTest, FactoryClientTypeCanBeConstructed) {
   LocalShmParameterServer server;
   server.Init(config);
 
-  std::thread server_thread([&]() {
-    server.Run();
-  });
+  std::thread server_thread([&]() { server.Run(); });
 
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
@@ -55,17 +53,15 @@ TEST(LocalShmPSClientTest, PutGetAndUpdateFlatRoundTrip) {
   LocalShmParameterServer server;
   server.Init(config);
 
-  std::thread server_thread([&]() {
-    server.Run();
-  });
+  std::thread server_thread([&]() { server.Run(); });
   std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
   LocalShmPSClient client(config["local_shm"]);
   ASSERT_EQ(client.InitEmbeddingTable("table_b", {128, 4}), 0);
 
-  std::vector<uint64_t> keys = {1, 5};
-  std::vector<std::vector<float>> values = {{1.0f, 2.0f, 3.0f, 4.0f},
-                                            {5.0f, 6.0f, 7.0f, 8.0f}};
+  std::vector<uint64_t> keys             = {1, 5};
+  std::vector<std::vector<float>> values = {
+      {1.0f, 2.0f, 3.0f, 4.0f}, {5.0f, 6.0f, 7.0f, 8.0f}};
   base::ConstArray<uint64_t> key_array(keys);
   ASSERT_EQ(client.PutParameter(key_array, values), 0);
 
@@ -76,8 +72,7 @@ TEST(LocalShmPSClientTest, PutGetAndUpdateFlatRoundTrip) {
   EXPECT_EQ(readback[4], 5.0f);
   EXPECT_EQ(readback[7], 8.0f);
 
-  std::vector<float> grads = {1.0f, 1.0f, 1.0f, 1.0f,
-                              2.0f, 2.0f, 2.0f, 2.0f};
+  std::vector<float> grads = {1.0f, 1.0f, 1.0f, 1.0f, 2.0f, 2.0f, 2.0f, 2.0f};
   ASSERT_EQ(
       client.UpdateParameterFlat("table_b", key_array, grads.data(), 2, 4), 0);
   ASSERT_EQ(client.GetParameter(key_array, readback.data()), 0);

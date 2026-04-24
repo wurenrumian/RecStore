@@ -31,3 +31,37 @@ TEST(PSTransportBenchmarkConfigTest, UsesVectorGetForBrpcOnly) {
   EXPECT_FALSE(BenchmarkUsesVectorGet("grpc"));
   EXPECT_FALSE(BenchmarkUsesVectorGet("rdma"));
 }
+
+TEST(PSTransportBenchmarkConfigTest, WriteReturnSemanticsMatchTransport) {
+  EXPECT_FALSE(BenchmarkWriteReturnsZeroOnSuccess("grpc"));
+  EXPECT_FALSE(BenchmarkWriteReturnsZeroOnSuccess("brpc"));
+  EXPECT_TRUE(BenchmarkWriteReturnsZeroOnSuccess("rdma"));
+  EXPECT_TRUE(BenchmarkWriteReturnsZeroOnSuccess("local_shm"));
+
+  EXPECT_TRUE(BenchmarkWriteSucceeded("grpc", 1));
+  EXPECT_TRUE(BenchmarkWriteSucceeded("brpc", 1));
+  EXPECT_TRUE(BenchmarkWriteSucceeded("rdma", 0));
+  EXPECT_TRUE(BenchmarkWriteSucceeded("local_shm", 0));
+
+  EXPECT_FALSE(BenchmarkWriteSucceeded("grpc", 0));
+  EXPECT_FALSE(BenchmarkWriteSucceeded("brpc", 0));
+  EXPECT_FALSE(BenchmarkWriteSucceeded("rdma", 1));
+  EXPECT_FALSE(BenchmarkWriteSucceeded("local_shm", 1));
+}
+
+TEST(PSTransportBenchmarkConfigTest, ReadReturnSemanticsMatchTransport) {
+  EXPECT_FALSE(BenchmarkReadReturnsZeroOnSuccess("grpc"));
+  EXPECT_FALSE(BenchmarkReadReturnsZeroOnSuccess("brpc"));
+  EXPECT_TRUE(BenchmarkReadReturnsZeroOnSuccess("rdma"));
+  EXPECT_TRUE(BenchmarkReadReturnsZeroOnSuccess("local_shm"));
+
+  EXPECT_TRUE(BenchmarkReadSucceeded("grpc", 1));
+  EXPECT_TRUE(BenchmarkReadSucceeded("brpc", 1));
+  EXPECT_TRUE(BenchmarkReadSucceeded("rdma", 0));
+  EXPECT_TRUE(BenchmarkReadSucceeded("local_shm", 0));
+
+  EXPECT_FALSE(BenchmarkReadSucceeded("grpc", 0));
+  EXPECT_FALSE(BenchmarkReadSucceeded("brpc", 0));
+  EXPECT_FALSE(BenchmarkReadSucceeded("rdma", 1));
+  EXPECT_FALSE(BenchmarkReadSucceeded("local_shm", 1));
+}

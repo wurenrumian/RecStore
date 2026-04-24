@@ -157,6 +157,15 @@ target_link_libraries(test_local_shm_region PUBLIC
 )
 add_test(NAME test_local_shm_region COMMAND test_local_shm_region)
 
+add_executable(test_local_shm_futex test_local_shm_futex.cpp)
+target_link_libraries(test_local_shm_futex PUBLIC
+    local_shm_common
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_local_shm_futex COMMAND test_local_shm_futex)
+
 add_executable(test_local_shm_ps_client test_local_shm_ps_client.cpp)
 target_link_libraries(test_local_shm_ps_client PUBLIC
     base
