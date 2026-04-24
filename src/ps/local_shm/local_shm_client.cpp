@@ -1,4 +1,5 @@
 #include "ps/local_shm/local_shm_client.h"
+#include "ps/local_shm/local_shm_futex.h"
 
 #include <chrono>
 #include <cstring>
@@ -83,6 +84,8 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
     std::memcpy(payload, keys.Data(), input_bytes);
   }
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&region_.control()->request_doorbell);
 
   if (!WaitForSlot(static_cast<uint32_t>(slot), request_id) ||
       header->status_code != static_cast<uint32_t>(LocalStatusCode::kOk)) {
@@ -151,6 +154,8 @@ int LocalShmPSClient::PutParameter(const base::ConstArray<uint64_t>& keys,
     }
   }
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&region_.control()->request_doorbell);
 
   const bool ok = WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
                   header->status_code ==
@@ -236,6 +241,8 @@ int LocalShmPSClient::UpdateParameterFlat(const std::string& table_name,
               grads,
               sizeof(float) * keys.Size() * static_cast<size_t>(embedding_dim));
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&region_.control()->request_doorbell);
 
   const bool ok = WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
                   header->status_code ==
@@ -286,6 +293,8 @@ int LocalShmPSClient::InitEmbeddingTable(const std::string& table_name,
   cursor += sizeof(config.num_embeddings);
   std::memcpy(cursor, &config.embedding_dim, sizeof(config.embedding_dim));
   header->state.store(static_cast<uint32_t>(LocalSlotState::kReady));
+  region_.control()->request_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&region_.control()->request_doorbell);
 
   const bool ok = WaitForSlot(static_cast<uint32_t>(slot), request_id) &&
                   header->status_code ==
@@ -350,7 +359,16 @@ bool LocalShmPSClient::WaitForSlot(uint32_t slot_id, uint64_t request_id) {
          state == static_cast<uint32_t>(LocalSlotState::kError))) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    const uint32_t observed =
+        header->completion_doorbell.load(std::memory_order_acquire);
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      break;
+    }
+    const auto remaining =
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+    FutexWaitUntilValueChange(&header->completion_doorbell, observed, remaining);
   }
   header->status_code = static_cast<uint32_t>(LocalStatusCode::kTimeout);
   return false;

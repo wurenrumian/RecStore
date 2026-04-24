@@ -1,4 +1,5 @@
 #include "ps/local_shm/local_shm_server.h"
+#include "ps/local_shm/local_shm_futex.h"
 
 #include <cstring>
 #include <thread>
@@ -16,7 +17,10 @@ void FinishWithStatus(LocalShmSlotHeader* header, LocalStatusCode code) {
   header->status_code = static_cast<uint32_t>(code);
   header->state.store(code == LocalStatusCode::kOk
                           ? static_cast<uint32_t>(LocalSlotState::kDone)
-                          : static_cast<uint32_t>(LocalSlotState::kError));
+                          : static_cast<uint32_t>(LocalSlotState::kError),
+                      std::memory_order_release);
+  header->completion_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&header->completion_doorbell);
 }
 
 } // namespace
@@ -27,6 +31,9 @@ LocalShmStoreRuntime::LocalShmStoreRuntime(LocalShmRegion* region,
 
 void LocalShmStoreRuntime::Run() {
   while (!stop_.load()) {
+    auto* control = region_->control();
+    const uint32_t observed_before_scan =
+        control->request_doorbell.load(std::memory_order_acquire);
     bool found_work = false;
     for (uint32_t slot_id = 0; slot_id < region_->slot_count(); ++slot_id) {
       auto* header = region_->slot_header(slot_id);
@@ -38,12 +45,22 @@ void LocalShmStoreRuntime::Run() {
       }
     }
     if (!found_work) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      if (!stop_.load(std::memory_order_acquire)) {
+        FutexWaitUntilValueChange(
+            &control->request_doorbell,
+            observed_before_scan,
+            std::chrono::milliseconds(100));
+      }
     }
   }
 }
 
-void LocalShmStoreRuntime::Stop() { stop_.store(true); }
+void LocalShmStoreRuntime::Stop() {
+  stop_.store(true, std::memory_order_release);
+  auto* control = region_->control();
+  control->request_doorbell.fetch_add(1, std::memory_order_release);
+  FutexWakeAll(&control->request_doorbell);
+}
 
 void LocalShmStoreRuntime::ProcessSlot(uint32_t slot_id) {
   auto* header = region_->slot_header(slot_id);
