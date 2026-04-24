@@ -1,18 +1,23 @@
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <chrono>
 #include <thread>
 #include <vector>
 
 #include "base/json.h"
 #include "ps/local_shm/local_shm_client.h"
+#include "ps/local_shm/local_shm_queue.h"
+#define private public
 #include "ps/local_shm/local_shm_server.h"
+#undef private
 
 namespace recstore {
 namespace {
 
 json MakeLocalShmConfig(const std::string& region_name,
-                        uint32_t ready_queue_count = 1) {
+                        uint32_t ready_queue_count       = 1,
+                        uint32_t ready_queue_burst_limit = 8) {
   return {
       {"cache_ps",
        {{"num_threads", 1},
@@ -27,6 +32,7 @@ json MakeLocalShmConfig(const std::string& region_name,
        {{"region_name", region_name},
         {"slot_count", 8},
         {"ready_queue_count", ready_queue_count},
+        {"ready_queue_burst_limit", ready_queue_burst_limit},
         {"slot_buffer_bytes", 1 << 20},
         {"client_timeout_ms", 1000}}},
   };
@@ -130,6 +136,69 @@ TEST(LocalShmPSClientTest, MultiClientUsesIndependentReadyQueues) {
 
   server.Stop();
   server_thread.join();
+}
+
+TEST(LocalShmPSClientTest, LocalRankEnvironmentSelectsReadyQueue) {
+  auto config = MakeLocalShmConfig(
+      "recstore_local_shm_ps_client_env_" + std::to_string(::getpid()), 2);
+  config["local_shm"]["client_timeout_ms"] = 100;
+  LocalShmRegion region;
+  ASSERT_TRUE(region.Create(
+      config["local_shm"]["region_name"].get<std::string>(), 8, 1 << 20, 2));
+
+  ASSERT_EQ(::setenv("LOCAL_RANK", "1", 1), 0);
+  int init_ret = 0;
+  std::thread worker([&]() {
+    LocalShmPSClient client(config["local_shm"]);
+    init_ret = client.InitEmbeddingTable("table_env", {128, 4});
+  });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  uint32_t slot_id = 0;
+  EXPECT_FALSE(LocalShmQueueDequeue(
+      region.ready_queue_header(0), region.ready_queue_cells(0), &slot_id));
+  EXPECT_TRUE(LocalShmQueueDequeue(
+      region.ready_queue_header(1), region.ready_queue_cells(1), &slot_id));
+
+  worker.join();
+  EXPECT_EQ(init_ret, -1);
+  ::unsetenv("LOCAL_RANK");
+}
+
+TEST(LocalShmPSClientTest, ServerDrainReadyQueueHonorsBurstLimit) {
+  const auto config = MakeLocalShmConfig(
+      "recstore_local_shm_server_burst_" + std::to_string(::getpid()), 2, 2);
+  LocalShmRegion region;
+  ASSERT_TRUE(region.Create(
+      config["local_shm"]["region_name"].get<std::string>(), 8, 1 << 20, 2));
+
+  for (uint32_t slot_id = 0; slot_id < 3; ++slot_id) {
+    auto* header   = region.slot_header(slot_id);
+    header->opcode = static_cast<uint32_t>(LocalOpcode::kInvalid);
+    header->state.store(static_cast<uint32_t>(LocalSlotState::kReady),
+                        std::memory_order_release);
+    ASSERT_TRUE(LocalShmQueueEnqueue(
+        region.ready_queue_header(0), region.ready_queue_cells(0), slot_id));
+  }
+
+  LocalShmStoreRuntime runtime(&region, nullptr, 2);
+  uint32_t processed = 0;
+  EXPECT_TRUE(runtime.DrainReadyQueue(0, &processed));
+  EXPECT_EQ(processed, 2U);
+
+  EXPECT_EQ(region.slot_header(0)->state.load(std::memory_order_acquire),
+            static_cast<uint32_t>(LocalSlotState::kError));
+  EXPECT_EQ(region.slot_header(1)->state.load(std::memory_order_acquire),
+            static_cast<uint32_t>(LocalSlotState::kError));
+  EXPECT_EQ(region.slot_header(2)->state.load(std::memory_order_acquire),
+            static_cast<uint32_t>(LocalSlotState::kReady));
+
+  uint32_t remaining_slot_id = 0;
+  EXPECT_TRUE(LocalShmQueueDequeue(
+      region.ready_queue_header(0),
+      region.ready_queue_cells(0),
+      &remaining_slot_id));
+  EXPECT_EQ(remaining_slot_id, 2U);
 }
 
 } // namespace
