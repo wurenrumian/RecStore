@@ -30,12 +30,13 @@ def collect_summary_rows(text: str) -> list[dict[str, str | int | float]]:
     rows = []
     for line in text.splitlines():
         m = SUMMARY_RE.search(line)
-        if m is None or m.group("phase") != "measure":
+        if m is None:
             continue
         rows.append(
             {
                 "system": m.group("system"),
                 "transport": m.group("transport"),
+                "phase": m.group("phase"),
                 "rounds": int(m.group("rounds")),
                 "iterations": int(m.group("iterations")),
                 "batch_keys": int(m.group("batch_keys")),
@@ -58,6 +59,7 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
     header = [
         "system",
         "transport",
+        "phase",
         "rounds",
         "iterations",
         "batch_keys",
@@ -70,12 +72,21 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
         "key_ops/s",
     ]
     table = [header]
-    sorted_rows = sorted(rows, key=lambda row: (str(row["system"]), str(row["transport"])))
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: (
+            str(row["system"]),
+            str(row["phase"]),
+            str(row["transport"]),
+            int(row["num_embeddings"]),
+        ),
+    )
     for row in sorted_rows:
         table.append(
             [
                 str(row["system"]),
                 str(row["transport"]),
+                str(row["phase"]),
                 str(row["rounds"]),
                 str(row["iterations"]),
                 str(row["batch_keys"]),
@@ -95,7 +106,7 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
         return "| " + " | ".join(r[i].ljust(widths[i]) for i in range(len(r))) + " |"
 
     sep = "|-" + "-|-".join("-" * widths[i] for i in range(len(widths))) + "-|"
-    print("\n=== Mixed Benchmark Summary (measure phase) ===")
+    print("\n=== Mixed Benchmark Summary ===")
     print(render(table[0]))
     print(sep)
     for row in table[1:]:
@@ -201,6 +212,7 @@ def write_csv(path: Path, rows: list[dict[str, str | int | float]]) -> None:
     fieldnames = [
         "system",
         "transport",
+        "phase",
         "rounds",
         "iterations",
         "batch_keys",

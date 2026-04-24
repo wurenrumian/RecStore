@@ -18,6 +18,7 @@ SUMMARY_RE = re.compile(
     r"rounds=(?P<rounds>\d+) "
     r"iterations=(?P<iterations>\d+) "
     r"batch_keys=(?P<batch_keys>\d+) "
+    r"num_embeddings=(?P<num_embeddings>\d+) "
     r"elapsed_us_mean=(?P<mean>[0-9.eE+-]+) "
     r"elapsed_us_p50=(?P<p50>[0-9.eE+-]+) "
     r"elapsed_us_p95=(?P<p95>[0-9.eE+-]+) "
@@ -30,6 +31,8 @@ SUMMARY_RE = re.compile(
 def build_runtime_config(
     region_name: str,
     slot_count: int,
+    ready_queue_count: int,
+    ready_queue_burst_limit: int,
     slot_buffer_bytes: int,
     client_timeout_ms: int,
     kv_path: str,
@@ -51,6 +54,8 @@ def build_runtime_config(
         "local_shm": {
             "region_name": region_name,
             "slot_count": slot_count,
+            "ready_queue_count": ready_queue_count,
+            "ready_queue_burst_limit": ready_queue_burst_limit,
             "slot_buffer_bytes": slot_buffer_bytes,
             "client_timeout_ms": client_timeout_ms,
         },
@@ -70,6 +75,7 @@ def build_benchmark_cmd(
     warmup_rounds: int,
     batch_keys: int,
     embedding_dim: int,
+    num_embeddings: int,
     report_mode: str,
     update_scale: float,
     table_name: str,
@@ -82,6 +88,7 @@ def build_benchmark_cmd(
         f"--warmup_rounds={warmup_rounds}",
         f"--batch_keys={batch_keys}",
         f"--embedding_dim={embedding_dim}",
+        f"--num_embeddings={num_embeddings}",
         f"--report_mode={report_mode}",
         f"--update_scale={update_scale}",
         f"--table_name={table_name}",
@@ -92,15 +99,17 @@ def collect_summary_rows(text: str) -> list[dict[str, str | int | float]]:
     rows = []
     for line in text.splitlines():
         match = SUMMARY_RE.search(line)
-        if match is None or match.group("phase") != "measure":
+        if match is None:
             continue
         rows.append(
             {
                 "system": match.group("system"),
                 "transport": match.group("transport"),
+                "phase": match.group("phase"),
                 "rounds": int(match.group("rounds")),
                 "iterations": int(match.group("iterations")),
                 "batch_keys": int(match.group("batch_keys")),
+                "num_embeddings": int(match.group("num_embeddings")),
                 "mean": float(match.group("mean")),
                 "p50": float(match.group("p50")),
                 "p95": float(match.group("p95")),
@@ -114,15 +123,17 @@ def collect_summary_rows(text: str) -> list[dict[str, str | int | float]]:
 
 def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
     if not rows:
-        print("[summary] no parsed measure summary rows found")
+        print("[summary] no parsed summary rows found")
         return
 
     header = [
         "system",
         "transport",
+        "phase",
         "rounds",
         "iterations",
         "batch_keys",
+        "num_embeddings",
         "mean_us",
         "p50_us",
         "p95_us",
@@ -136,9 +147,11 @@ def print_summary_table(rows: list[dict[str, str | int | float]]) -> None:
             [
                 str(row["system"]),
                 str(row["transport"]),
+                str(row["phase"]),
                 str(row["rounds"]),
                 str(row["iterations"]),
                 str(row["batch_keys"]),
+                str(row["num_embeddings"]),
                 f"{row['mean']:,.2f}",
                 f"{row['p50']:,.2f}",
                 f"{row['p95']:,.2f}",
@@ -203,6 +216,7 @@ def main() -> int:
     parser.add_argument("--warmup-rounds", type=int, default=1)
     parser.add_argument("--batch-keys", type=int, default=128)
     parser.add_argument("--embedding-dim", type=int, default=128)
+    parser.add_argument("--num-embeddings", type=int, default=1024)
     parser.add_argument(
         "--report-mode", choices=["summary", "per_round", "both"], default="summary"
     )
@@ -210,6 +224,8 @@ def main() -> int:
     parser.add_argument("--table-name", default="default")
     parser.add_argument("--region-name", default="recstore_local_ps")
     parser.add_argument("--slot-count", type=int, default=64)
+    parser.add_argument("--ready-queue-count", type=int, default=1)
+    parser.add_argument("--ready-queue-burst-limit", type=int, default=8)
     parser.add_argument("--slot-buffer-bytes", type=int, default=8 * 1024 * 1024)
     parser.add_argument("--client-timeout-ms", type=int, default=30000)
     parser.add_argument("--capacity", type=int, default=4096)
@@ -259,6 +275,8 @@ def main() -> int:
     config = build_runtime_config(
         region_name=args.region_name,
         slot_count=args.slot_count,
+        ready_queue_count=args.ready_queue_count,
+        ready_queue_burst_limit=args.ready_queue_burst_limit,
         slot_buffer_bytes=args.slot_buffer_bytes,
         client_timeout_ms=args.client_timeout_ms,
         kv_path=str(kv_path),
@@ -285,6 +303,7 @@ def main() -> int:
                 warmup_rounds=args.warmup_rounds,
                 batch_keys=args.batch_keys,
                 embedding_dim=args.embedding_dim,
+                num_embeddings=args.num_embeddings,
                 report_mode=args.report_mode,
                 update_scale=args.update_scale,
                 table_name=args.table_name,
