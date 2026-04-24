@@ -1,5 +1,6 @@
 find_package(folly REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_subdirectory(small_tests)
 add_subdirectory(server_mgr)
@@ -185,6 +186,30 @@ target_link_libraries(test_local_shm_ps_client PUBLIC
     pthread
 )
 add_test(NAME test_local_shm_ps_client COMMAND test_local_shm_ps_client)
+
+add_test(
+    NAME test_run_local_shm_mixed_benchmark_py
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            src/test/scripts/test_run_local_shm_mixed_benchmark.py
+)
+set_tests_properties(
+    test_run_local_shm_mixed_benchmark_py
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS "local_shm;python"
+)
+
+add_test(
+    NAME test_run_local_shm_multi_process_benchmark_py
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            src/test/scripts/test_run_local_shm_multi_process_benchmark.py
+)
+set_tests_properties(
+    test_run_local_shm_multi_process_benchmark_py
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS "local_shm;python"
+)
 
 add_executable(brpc_ps_server_unit_test
     test_brpc_ps_server.cpp
