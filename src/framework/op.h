@@ -2,6 +2,7 @@
 
 #include "base/tensor.h"
 #include "ps/base/base_client.h"
+#include <memory>
 #include <string>
 #include <mutex>
 #include <unordered_map>
@@ -153,6 +154,7 @@ public:
 private:
   int64_t embedding_dim_;
   static BasePSClient* ps_client_;
+  static std::unique_ptr<BasePSClient> ps_client_holder_;
 
 #ifdef USE_FAKE_KVCLIENT
   std::unordered_map<uint64_t, std::vector<float>> store_;

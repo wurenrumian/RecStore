@@ -11,7 +11,7 @@
 
 #include "base/array.h"
 #include "benchmark/ps_transport_benchmark_config.h"
-#include "framework/ps_client_config_adapter.h"
+#include "framework/common/ps_client_config_adapter.h"
 #include "ps/client_factory.h"
 #include "ps/brpc/brpc_ps_client.h"
 #include "ps/rdma/allshards_ps_client.h"
