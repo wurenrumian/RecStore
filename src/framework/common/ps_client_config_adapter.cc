@@ -55,12 +55,12 @@ json ResolveFrameworkPSClientTransportConfig(const json& config) {
   return json{{"host", "127.0.0.1"}, {"port", 15000}, {"shard", 0}};
 }
 
-PSClientCreateOptions ResolvePSClientOptionsFromFrameworkConfig(
-    const json& config) {
+PSClientCreateOptions
+ResolvePSClientOptionsFromFrameworkConfig(const json& config) {
   return PSClientCreateOptions{
-      .type = ResolveFrameworkPSClientType(config),
+      .type             = ResolveFrameworkPSClientType(config),
       .transport_config = ResolveFrameworkPSClientTransportConfig(config),
-      .raw_config = config,
+      .raw_config       = config,
   };
 }
 

@@ -209,9 +209,8 @@ int main(int argc, char** argv) {
   const int total_rounds = FLAGS_warmup_rounds + FLAGS_rounds;
 
   auto config = BuildMixedBenchmarkConfig(transport, FLAGS_host, FLAGS_port);
-  std::unique_ptr<recstore::BasePSClient> client(
-      recstore::CreatePSClient(
-          recstore::ResolvePSClientOptionsFromFrameworkConfig(config)));
+  std::unique_ptr<recstore::BasePSClient> client(recstore::CreatePSClient(
+      recstore::ResolvePSClientOptionsFromFrameworkConfig(config)));
 
   CHECK_EQ(client->InitEmbeddingTable(
                FLAGS_table_name,

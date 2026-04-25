@@ -239,9 +239,8 @@ int main(int argc, char** argv) {
   }
 
   auto config = BuildRpcBenchmarkConfig(transport, FLAGS_host, FLAGS_port);
-  std::unique_ptr<recstore::BasePSClient> client(
-      recstore::CreatePSClient(
-          recstore::ResolvePSClientOptionsFromFrameworkConfig(config)));
+  std::unique_ptr<recstore::BasePSClient> client(recstore::CreatePSClient(
+      recstore::ResolvePSClientOptionsFromFrameworkConfig(config)));
 
   for (int round = 0; round < total_rounds; ++round) {
     const bool is_warmup = round < FLAGS_warmup_rounds;

@@ -208,8 +208,7 @@ KVClientOp::KVClientOp() {
       json config   = GetGlobalConfig();
       bool use_rdma = false;
       try {
-        use_rdma =
-            ResolveFrameworkPSClientType(config) == PSClientType::kRdma;
+        use_rdma = ResolveFrameworkPSClientType(config) == PSClientType::kRdma;
       } catch (...) {
         use_rdma = false;
       }
