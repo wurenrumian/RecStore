@@ -18,6 +18,8 @@ target_link_libraries(benchmark_client PUBLIC OpenMP::OpenMP_CXX)
 
 add_executable(ps_transport_benchmark
     ps_transport_benchmark.cc
+    ${PROJECT_SOURCE_DIR}/src/framework/ps_client_config_adapter.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/client_factory.cc
     ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
 )
 target_link_libraries(ps_transport_benchmark PUBLIC
@@ -31,6 +33,8 @@ target_link_libraries(ps_transport_benchmark PUBLIC
 
 add_executable(recstore_mixed_benchmark
     recstore_mixed_benchmark.cc
+    ${PROJECT_SOURCE_DIR}/src/framework/ps_client_config_adapter.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/client_factory.cc
     ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
 )
 target_link_libraries(recstore_mixed_benchmark PUBLIC
