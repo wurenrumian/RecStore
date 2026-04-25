@@ -1,7 +1,9 @@
 #include "framework/op.h"
-#include "framework/ps_client_factory.h"
-#include "ps/grpc/grpc_ps_client.h"
+#include "framework/common/ps_client_config_adapter.h"
+#include "ps/client_factory.h"
+#include "ps/rdma/rdma_ps_client_adapter.h"
 #include "base/factory.h"
+#include <immintrin.h>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -16,7 +18,6 @@
 #include <fstream>
 
 #include "base/tensor.h"
-#include "op.h"
 #include <glog/logging.h>
 #ifdef ENABLE_PERF_REPORT
 #  include "base/report/report_client.h"
@@ -118,11 +119,10 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 
 #ifndef USE_FAKE_KVCLIENT
 
-#  include "ps/grpc/grpc_ps_client.h"
 namespace recstore {
 
-BasePSClient* create_ps_client_from_config(const json& config) {
-  return CreateFrameworkPSClient(config);
+std::unique_ptr<BasePSClient> create_ps_client_from_config(const json& config) {
+  return CreatePSClient(ResolvePSClientOptionsFromFrameworkConfig(config));
 }
 
 json GetGlobalConfig() {
@@ -208,7 +208,7 @@ KVClientOp::KVClientOp() {
       json config   = GetGlobalConfig();
       bool use_rdma = false;
       try {
-        use_rdma = ResolveFrameworkPSType(config) == "RDMA";
+        use_rdma = ResolveFrameworkPSClientType(config) == PSClientType::kRdma;
       } catch (...) {
         use_rdma = false;
       }
@@ -224,7 +224,8 @@ KVClientOp::KVClientOp() {
       } else {
         ConfigureLogging();
       }
-      ps_client_ = create_ps_client_from_config(config);
+      ps_client_holder_ = create_ps_client_from_config(config);
+      ps_client_        = ps_client_holder_.get();
 
       LOG(INFO) << "PS client initialized successfully.";
     } catch (const std::exception& e) {
@@ -235,12 +236,11 @@ KVClientOp::KVClientOp() {
 }
 
 BasePSClient* KVClientOp::ps_client_ = nullptr;
+std::unique_ptr<BasePSClient> KVClientOp::ps_client_holder_;
 
 void KVClientOp::SetPSConfig(const std::string& host, int port) {
-  if (ps_client_) {
-    delete ps_client_;
-    ps_client_ = nullptr;
-  }
+  ps_client_holder_.reset();
+  ps_client_ = nullptr;
 
   json file_config = GetGlobalConfig();
   int final_port   = port;
@@ -271,7 +271,8 @@ void KVClientOp::SetPSConfig(const std::string& host, int port) {
   config["client"]["port"]  = final_port;
   config["client"]["shard"] = 0;
 
-  ps_client_ = create_ps_client_from_config(config);
+  ps_client_holder_ = create_ps_client_from_config(config);
+  ps_client_        = ps_client_holder_.get();
   LOG(INFO) << "Re-initialized PS client with host=" << final_host
             << " port=" << final_port;
 }
@@ -652,6 +653,6 @@ namespace testing {} // namespace testing
 
 #else
 
-#  include "op_mock.cc"
+#  include "common/op_mock.cc"
 
 #endif // USE_FAKE_KVCLIENT

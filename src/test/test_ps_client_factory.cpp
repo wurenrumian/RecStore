@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "framework/ps_client_factory.h"
+#include "framework/common/ps_client_config_adapter.h"
+#include "ps/client_factory.h"
 #include "ps/brpc/brpc_ps_client.h"
 #include "ps/local_shm/local_shm_client.h"
 
@@ -18,9 +19,10 @@ TEST(PSClientFactoryTest, AllowsRdmaForFrameworkUsage) {
              {{{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}})}}},
   };
 
-  EXPECT_EQ(ResolveFrameworkPSType(config), "RDMA");
+  EXPECT_EQ(ResolveFrameworkPSClientType(config), PSClientType::kRdma);
 
-  std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
+  std::unique_ptr<BasePSClient> client =
+      CreatePSClient(ResolvePSClientOptionsFromFrameworkConfig(config));
   ASSERT_NE(client, nullptr);
 }
 
@@ -29,7 +31,7 @@ TEST(PSClientFactoryTest, RejectsUnknownType) {
 
   EXPECT_THROW(
       {
-        const auto type = ResolveFrameworkPSType(config);
+        const auto type = ResolveFrameworkPSClientType(config);
         (void)type;
       },
       std::invalid_argument);
@@ -38,9 +40,9 @@ TEST(PSClientFactoryTest, RejectsUnknownType) {
 TEST(PSClientFactoryTest, UsesDefaultGrpcClientConfig) {
   json config = {{"cache_ps", {{"ps_type", "grpc"}}}};
 
-  EXPECT_EQ(ResolveFrameworkPSType(config), "GRPC");
+  EXPECT_EQ(ResolveFrameworkPSClientType(config), PSClientType::kGrpc);
 
-  json client_config = ResolveFrameworkClientConfig(config);
+  json client_config = ResolveFrameworkPSClientTransportConfig(config);
   EXPECT_EQ(client_config["host"], "127.0.0.1");
   EXPECT_EQ(client_config["port"], 15000);
   EXPECT_EQ(client_config["shard"], 0);
@@ -52,9 +54,9 @@ TEST(PSClientFactoryTest, PreservesExplicitBrpcClientConfig) {
       {"client", {{"host", "10.0.0.5"}, {"port", 25123}, {"shard", 1}}},
   };
 
-  EXPECT_EQ(ResolveFrameworkPSType(config), "BRPC");
+  EXPECT_EQ(ResolveFrameworkPSClientType(config), PSClientType::kBrpc);
 
-  json client_config = ResolveFrameworkClientConfig(config);
+  json client_config = ResolveFrameworkPSClientTransportConfig(config);
   EXPECT_EQ(client_config["host"], "10.0.0.5");
   EXPECT_EQ(client_config["port"], 25123);
   EXPECT_EQ(client_config["shard"], 1);
@@ -66,7 +68,8 @@ TEST(PSClientFactoryTest, CreatesBrpcClientWithoutFactoryRegistration) {
       {"client", {{"host", "127.0.0.1"}, {"port", 25000}, {"shard", 0}}},
   };
 
-  std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
+  std::unique_ptr<BasePSClient> client =
+      CreatePSClient(ResolvePSClientOptionsFromFrameworkConfig(config));
   ASSERT_NE(client, nullptr);
   EXPECT_NE(dynamic_cast<BRPCParameterClient*>(client.get()), nullptr);
 }
@@ -81,14 +84,15 @@ TEST(PSClientFactoryTest, CreatesLocalShmClientFromConfig) {
         {"client_timeout_ms", 1000}}},
   };
 
-  EXPECT_EQ(ResolveFrameworkPSType(config), "LOCAL_SHM");
+  EXPECT_EQ(ResolveFrameworkPSClientType(config), PSClientType::kLocalShm);
 
-  json client_config = ResolveFrameworkClientConfig(config);
+  json client_config = ResolveFrameworkPSClientTransportConfig(config);
   EXPECT_EQ(client_config["region_name"], "recstore_local_ps_factory_test");
   EXPECT_EQ(client_config["slot_count"], 4);
   EXPECT_EQ(client_config["slot_buffer_bytes"], 4096);
 
-  std::unique_ptr<BasePSClient> client(CreateFrameworkPSClient(config));
+  std::unique_ptr<BasePSClient> client =
+      CreatePSClient(ResolvePSClientOptionsFromFrameworkConfig(config));
   ASSERT_NE(client, nullptr);
   EXPECT_NE(dynamic_cast<LocalShmPSClient*>(client.get()), nullptr);
 }

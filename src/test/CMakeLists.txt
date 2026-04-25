@@ -1,5 +1,6 @@
 find_package(folly REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 add_subdirectory(small_tests)
 add_subdirectory(server_mgr)
@@ -95,6 +96,15 @@ target_link_libraries(test_io_backend PUBLIC
 )
 add_test(NAME test_io_backend COMMAND test_io_backend)
 
+add_executable(test_io_uring_test_utils test_io_uring_test_utils.cpp)
+target_link_libraries(test_io_uring_test_utils PUBLIC
+    gtest
+    gtest_main
+    uring
+    pthread
+)
+add_test(NAME test_io_uring_test_utils COMMAND test_io_uring_test_utils)
+
 add_executable(test_factory test_factory.cpp)
 target_link_libraries(test_factory PUBLIC
     extendible_hash
@@ -121,6 +131,8 @@ add_test(NAME test_index COMMAND test_index)
 
 add_executable(test_ps_client_factory test_ps_client_factory.cpp)
 target_sources(test_ps_client_factory PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/framework/common/ps_client_config_adapter.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/client_factory.cc
     ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
 )
 target_link_libraries(test_ps_client_factory PUBLIC
@@ -185,6 +197,30 @@ target_link_libraries(test_local_shm_ps_client PUBLIC
     pthread
 )
 add_test(NAME test_local_shm_ps_client COMMAND test_local_shm_ps_client)
+
+add_test(
+    NAME test_run_local_shm_mixed_benchmark_py
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            src/test/scripts/test_run_local_shm_mixed_benchmark.py
+)
+set_tests_properties(
+    test_run_local_shm_mixed_benchmark_py
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS "local_shm;python"
+)
+
+add_test(
+    NAME test_run_local_shm_multi_process_benchmark_py
+    COMMAND ${Python3_EXECUTABLE} -m unittest
+            src/test/scripts/test_run_local_shm_multi_process_benchmark.py
+)
+set_tests_properties(
+    test_run_local_shm_multi_process_benchmark_py
+    PROPERTIES
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+    LABELS "local_shm;python"
+)
 
 add_executable(brpc_ps_server_unit_test
     test_brpc_ps_server.cpp

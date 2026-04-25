@@ -1,10 +1,8 @@
 #include <chrono>
 #include <cctype>
-#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <liburing.h>
 #include <memory>
 #include <string>
 #include <sstream>
@@ -12,6 +10,7 @@
 #include <gtest/gtest.h>
 #include "base/factory.h"
 #include "storage/io_backend/io_backend.h"
+#include "test_io_uring_helper.h"
 
 namespace {
 constexpr const char* kSpdkPcieAddress = "0000:c2:00.0";
@@ -52,21 +51,6 @@ bool CanUseSpdkBackend(std::string* reason) {
     return false;
   }
   return true;
-}
-
-bool CanUseIoUring(std::string* reason) {
-  io_uring ring{};
-  const int ret = io_uring_queue_init(2, &ring, 0);
-  if (ret == 0) {
-    io_uring_queue_exit(&ring);
-    return true;
-  }
-  if (reason != nullptr) {
-    const int err = -ret;
-    *reason       = "io_uring unavailable: " + std::string(std::strerror(err)) +
-              " (errno=" + std::to_string(err) + ")";
-  }
-  return false;
 }
 
 bool HasRegisteredBackend(const std::string& backend, std::string* reason) {
@@ -128,7 +112,7 @@ protected:
 
     if (backend_ == "IOURING") {
       std::string io_uring_unavailable_reason;
-      if (!CanUseIoUring(&io_uring_unavailable_reason))
+      if (!test_utils::CanUseIoUring(&io_uring_unavailable_reason))
         GTEST_SKIP() << io_uring_unavailable_reason;
     }
 

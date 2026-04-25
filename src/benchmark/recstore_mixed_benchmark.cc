@@ -12,7 +12,8 @@
 
 #include "base/array.h"
 #include "benchmark/ps_transport_benchmark_config.h"
-#include "framework/ps_client_factory.h"
+#include "framework/common/ps_client_config_adapter.h"
+#include "ps/client_factory.h"
 #include "ps/brpc/brpc_ps_client.h"
 
 DEFINE_string(transport, "grpc", "grpc|brpc|rdma|local_shm");
@@ -208,8 +209,8 @@ int main(int argc, char** argv) {
   const int total_rounds = FLAGS_warmup_rounds + FLAGS_rounds;
 
   auto config = BuildMixedBenchmarkConfig(transport, FLAGS_host, FLAGS_port);
-  std::unique_ptr<recstore::BasePSClient> client(
-      recstore::CreateFrameworkPSClient(config));
+  std::unique_ptr<recstore::BasePSClient> client(recstore::CreatePSClient(
+      recstore::ResolvePSClientOptionsFromFrameworkConfig(config)));
 
   CHECK_EQ(client->InitEmbeddingTable(
                FLAGS_table_name,
