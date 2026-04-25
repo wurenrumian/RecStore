@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "framework/ps_client_config_adapter.h"
+#include "framework/common/ps_client_config_adapter.h"
 #include "ps/client_factory.h"
 #include "ps/brpc/brpc_ps_client.h"
 #include "ps/local_shm/local_shm_client.h"

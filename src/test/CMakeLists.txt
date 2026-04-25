@@ -131,7 +131,7 @@ add_test(NAME test_index COMMAND test_index)
 
 add_executable(test_ps_client_factory test_ps_client_factory.cpp)
 target_sources(test_ps_client_factory PRIVATE
-    ${PROJECT_SOURCE_DIR}/src/framework/ps_client_config_adapter.cc
+    ${PROJECT_SOURCE_DIR}/src/framework/common/ps_client_config_adapter.cc
     ${PROJECT_SOURCE_DIR}/src/ps/client_factory.cc
     ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
 )
