@@ -1,8 +1,7 @@
 #include "storage/index/ssd_cceh/CCEH.h"
+#include "test_io_uring_helper.h"
 #include "gtest/gtest.h"
-#include <cerrno>
 #include <filesystem>
-#include <liburing.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -12,21 +11,6 @@ std::string GetDirectIOTestFilePath() {
   const std::filesystem::path dir =
       std::filesystem::current_path() / "test_cceh_data";
   return (dir / "test_cceh.db").string();
-}
-
-bool CanUseIoUring(std::string* reason) {
-  io_uring ring{};
-  const int ret = io_uring_queue_init(2, &ring, 0);
-  if (ret == 0) {
-    io_uring_queue_exit(&ring);
-    return true;
-  }
-  if (reason != nullptr) {
-    const int err = -ret;
-    *reason       = "io_uring unavailable: " + std::string(std::strerror(err)) +
-              " (errno=" + std::to_string(err) + ")";
-  }
-  return false;
 }
 } // namespace
 
@@ -41,7 +25,7 @@ class CCEHTest : public ::testing::Test {
 protected:
   void SetUp() override {
     std::string reason;
-    if (!CanUseIoUring(&reason))
+    if (!test_utils::CanUseIoUring(&reason))
       GTEST_SKIP() << reason;
 
     const std::filesystem::path file_path =
