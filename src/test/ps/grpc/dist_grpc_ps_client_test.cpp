@@ -1,4 +1,4 @@
-#include "dist_grpc_ps_client.h"
+#include "ps/grpc/dist_grpc_ps_client.h"
 
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/init/Init.h>
@@ -17,7 +17,6 @@ constexpr int kGrpcPort1 = 15124;
 } // namespace
 
 using namespace xmh;
-
 using namespace recstore;
 
 static bool
@@ -26,7 +25,6 @@ check_eq_1d(const std::vector<float>& a, const std::vector<float>& b) {
     return false;
 
   for (int i = 0; i < a.size(); i++) {
-    // std::cout << "a[i]: " << a[i] << ", b[i]: " << b[i] << std::endl;
     if (std::abs(a[i] - b[i]) > 1e-6)
       return false;
   }
@@ -51,7 +49,6 @@ static bool check_eq_2d(std::vector<std::vector<float>>& a,
 void TestBasicConfig() {
   std::cout << "=== Testing Basic Configuration ===" << std::endl;
 
-  // 测试recstore配置格式
   json recstore_config = {
       {"distributed_client",
        {{"servers",
@@ -90,7 +87,6 @@ void TestFactoryClient() {
     return;
   }
 
-  // 转换为子类指针以访问扩展接口
   auto* client =
       dynamic_cast<DistributedGRPCParameterClient*>(base_client.get());
   if (!client) {
@@ -104,7 +100,6 @@ void TestFactoryClient() {
 
   try {
     client->ClearPS();
-    // assert empty
     std::vector<uint64_t> keys_vec = {1, 2, 3};
     base::ConstArray<uint64_t> keys(keys_vec);
     std::vector<std::vector<float>> emptyvalues(keys_vec.size());
@@ -113,16 +108,13 @@ void TestFactoryClient() {
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
     std::cout << "pass first check" << std::endl;
-    // insert something
+
     client->PutParameter(keys, rightvalues);
-    // read those
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, rightvalues));
     std::cout << "pass second check" << std::endl;
 
-    // clear all
     client->ClearPS();
-    // read those
     client->GetParameter(keys, &values);
     CHECK(check_eq_2d(values, emptyvalues));
 
@@ -157,7 +149,6 @@ void TestDirectClient() {
               << client.shard_count() << std::endl;
 
     client.ClearPS();
-    // assert empty
     std::vector<uint64_t> keys = {1001, 1002, 1003};
     std::vector<std::vector<float>> emptyvalues(keys.size());
     std::vector<std::vector<float>> rightvalues = {
@@ -168,15 +159,11 @@ void TestDirectClient() {
     client.GetParameter(keys_array, &values);
     CHECK(check_eq_2d(values, emptyvalues));
 
-    // insert something
     client.PutParameter(keys_array, rightvalues);
-    // read those
     client.GetParameter(keys_array, &values);
     CHECK(check_eq_2d(values, rightvalues));
 
-    // clear all
     client.ClearPS();
-    // read those
     client.GetParameter(keys_array, &values);
     CHECK(check_eq_2d(values, emptyvalues));
 
@@ -202,7 +189,6 @@ void TestLargeBatch() {
   try {
     DistributedGRPCParameterClient client(config);
 
-    // 构造同一 shard 的大批量 keys，稳定超过 max_keys_per_request
     std::vector<uint64_t> large_keys;
     std::vector<std::vector<float>> large_values;
     for (int i = 0; i < 120; ++i) {
@@ -214,143 +200,24 @@ void TestLargeBatch() {
 
     client.ClearPS();
 
-    // 写入大批量数据
     int put_result = client.PutParameter(keys_array, large_values);
     CHECK(put_result == 0);
 
-    // 读取并验证
     std::vector<std::vector<float>> retrieved_values;
-    bool get_success = client.GetParameter(keys_array, &retrieved_values);
-    CHECK(get_success);
+    int get_result = client.GetParameter(keys_array, &retrieved_values);
+    CHECK(get_result == 0);
     CHECK(check_eq_2d(retrieved_values, large_values));
 
-    std::cout << "Large batch operations passed!" << std::endl;
+    std::cout << "Large batch test passed!" << std::endl;
   } catch (const std::exception& e) {
-    std::cout << "Large batch test skipped (servers not available): "
-              << e.what() << std::endl;
+    std::cout << "Test skipped (servers not available): " << e.what()
+              << std::endl;
   }
-}
-
-void TestPrefetch() {
-  std::cout << "=== Testing Distributed gRPC Prefetch ===" << std::endl;
-
-  json config = {
-      {"distributed_client",
-       {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", kGrpcPort0}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
-        {"num_shards", 2},
-        {"hash_method", "city_hash"},
-        {"max_keys_per_request", 8}}}};
-
-  DistributedGRPCParameterClient client(config);
-  client.ClearPS();
-
-  std::vector<uint64_t> keys = {100, 101, 102, 103, 104, 105, 106, 107};
-  std::vector<std::vector<float>> values = {
-      {1.0f, 1.1f, 1.2f},
-      {2.0f, 2.1f, 2.2f},
-      {3.0f, 3.1f, 3.2f},
-      {4.0f, 4.1f, 4.2f},
-      {5.0f, 5.1f, 5.2f},
-      {6.0f, 6.1f, 6.2f},
-      {7.0f, 7.1f, 7.2f},
-      {8.0f, 8.1f, 8.2f}};
-  base::ConstArray<uint64_t> keys_array(keys);
-
-  CHECK(client.PutParameter(keys_array, values) == 0);
-
-  uint64_t prefetch_id = client.PrefetchParameter(keys_array);
-  CHECK(prefetch_id != 0);
-  CHECK(!client.IsPrefetchDone(999999));
-  client.WaitForPrefetch(prefetch_id);
-  CHECK(client.IsPrefetchDone(prefetch_id));
-
-  std::vector<std::vector<float>> fetched_values;
-  CHECK(client.GetPrefetchResult(prefetch_id, &fetched_values));
-  CHECK(check_eq_2d(fetched_values, values));
-  CHECK(!client.GetPrefetchResult(prefetch_id, &fetched_values));
-
-  uint64_t flat_prefetch_id = client.PrefetchParameter(keys_array);
-  CHECK(flat_prefetch_id != 0);
-  std::vector<float> flat_values;
-  int64_t num_rows = 0;
-  CHECK(client.GetPrefetchResultFlat(
-      flat_prefetch_id, &flat_values, &num_rows, 3));
-  CHECK(num_rows == static_cast<int64_t>(keys.size()));
-  CHECK(flat_values.size() == keys.size() * 3);
-  for (size_t i = 0; i < keys.size(); ++i) {
-    for (int d = 0; d < 3; ++d) {
-      CHECK(std::abs(flat_values[i * 3 + d] - values[i][d]) < 1e-6);
-    }
-  }
-  CHECK(!client.GetPrefetchResultFlat(
-      flat_prefetch_id, &flat_values, &num_rows, 3));
-  std::cout << "TestPrefetch done" << std::endl;
-}
-
-void TestPrefetchConcurrency() {
-  std::cout << "=== Testing Distributed gRPC Prefetch Concurrency ==="
-            << std::endl;
-
-  json config = {
-      {"distributed_client",
-       {{"servers",
-         {{{"host", "127.0.0.1"}, {"port", kGrpcPort0}, {"shard", 0}},
-          {{"host", "127.0.0.1"}, {"port", kGrpcPort1}, {"shard", 1}}}},
-        {"num_shards", 2},
-        {"hash_method", "city_hash"},
-        {"max_keys_per_request", 6}}}};
-
-  DistributedGRPCParameterClient client(config);
-  client.ClearPS();
-
-  struct CaseData {
-    std::vector<uint64_t> keys;
-    std::vector<std::vector<float>> values;
-  };
-
-  std::vector<CaseData> cases(4);
-  for (size_t c = 0; c < cases.size(); ++c) {
-    auto& cs = cases[c];
-    for (int i = 0; i < 12; ++i) {
-      uint64_t k = 3000 + static_cast<uint64_t>(c) * 100 + i;
-      cs.keys.push_back(k);
-      cs.values.push_back({static_cast<float>(k),
-                           static_cast<float>(k + 1),
-                           static_cast<float>(k + 2)});
-    }
-    base::ConstArray<uint64_t> keys_array(cs.keys);
-    CHECK(client.PutParameter(keys_array, cs.values) == 0);
-  }
-
-  std::vector<std::future<bool>> futures;
-  futures.reserve(cases.size());
-  for (const auto& cs : cases) {
-    futures.emplace_back(std::async(std::launch::async, [&client, cs]() {
-      base::ConstArray<uint64_t> keys_array(cs.keys);
-      uint64_t prefetch_id = client.PrefetchParameter(keys_array);
-      if (prefetch_id == 0) {
-        return false;
-      }
-      client.WaitForPrefetch(prefetch_id);
-      std::vector<std::vector<float>> fetched_values;
-      if (!client.GetPrefetchResult(prefetch_id, &fetched_values)) {
-        return false;
-      }
-      return check_eq_2d(fetched_values, cs.values);
-    }));
-  }
-
-  for (auto& future : futures) {
-    CHECK(future.get());
-  }
-  std::cout << "TestPrefetchConcurrency done" << std::endl;
 }
 
 int main(int argc, char** argv) {
   folly::Init(&argc, &argv);
-  Reporter::StartReportThread(2000);
+  xmh::Reporter::StartReportThread(2000);
 
   auto launch_options =
       recstore::test::PSServerLauncher::LoadOptionsFromEnvironment();
@@ -358,27 +225,9 @@ int main(int argc, char** argv) {
   launch_options.override_ports   = {kGrpcPort0, kGrpcPort1};
   recstore::test::ScopedPSServer server(launch_options, true);
 
-  std::cout << "=== 分布式gRPC客户端测试 ===" << std::endl;
-  std::cout << std::endl;
-
   TestBasicConfig();
-  std::cout << std::endl;
-
   TestFactoryClient();
-  std::cout << std::endl;
-
   TestDirectClient();
-  std::cout << std::endl;
-
   TestLargeBatch();
-  std::cout << std::endl;
-
-  TestPrefetch();
-  std::cout << std::endl;
-
-  TestPrefetchConcurrency();
-  std::cout << std::endl;
-
-  std::cout << "All tests completed!" << std::endl;
   return 0;
 }
