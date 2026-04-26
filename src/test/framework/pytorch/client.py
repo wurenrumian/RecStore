@@ -1,6 +1,8 @@
-import torch
 import os
 from typing import Optional
+
+import torch
+
 
 class RecstoreClient:
     _is_initialized = False
@@ -8,14 +10,14 @@ class RecstoreClient:
     def __init__(self, library_path: Optional[str] = None):
         if RecstoreClient._is_initialized:
             return
-            
+
         if library_path is None:
             script_dir = os.path.dirname(__file__)
             default_lib_path = os.path.abspath(
-                os.path.join(script_dir, '../../../../build/_recstore_ops.so')
+                os.path.join(script_dir, "../../../../build/_recstore_ops.so")
             )
             if not os.path.exists(default_lib_path):
-                 raise ImportError(
+                raise ImportError(
                     f"Could not find Recstore library at default path: {default_lib_path}\n"
                     "Please provide the correct path via the 'library_path' argument "
                     "or ensure your project is built correctly with build.sh."
@@ -41,7 +43,6 @@ class RecstoreClient:
             raise TypeError(f"grads tensor must be of dtype torch.float32, but got {grads.dtype}")
         if keys.shape[0] != grads.shape[0]:
             raise ValueError("keys and grads must have the same number of entries")
-        # Backward compatibility: route to table-aware update on default table
         self.ops.emb_update_table("default", keys, grads)
 
     def emb_update_table(self, table_name: str, keys: torch.Tensor, grads: torch.Tensor) -> None:
@@ -76,7 +77,6 @@ class RecstoreClient:
 
         self.ops.emb_write(keys, values)
 
-    # ---- Async Prefetch APIs ----
     def emb_prefetch(self, keys: torch.Tensor) -> int:
         if keys.dtype != torch.int64:
             raise TypeError(f"keys tensor must be of dtype torch.int64, but got {keys.dtype}")

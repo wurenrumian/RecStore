@@ -1,13 +1,22 @@
 import os
 import sys
+
 import numpy as np
-from client import GRPCParameterClient
 import torch
+
+PYTHON_CLIENT_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "../../../ps/python_client")
+)
+if PYTHON_CLIENT_DIR not in sys.path:
+    sys.path.insert(0, PYTHON_CLIENT_DIR)
+
+from client import GRPCParameterClient
 
 TEST_KEY_SIZE = 12000
 TEST_ROUND = 10000
 EMB_DIM = 32
 SINGLE_TEST_LEN = 1000
+
 
 if __name__ == "__main__":
     client = GRPCParameterClient("127.0.0.1", 15000, 0, 32)
@@ -18,17 +27,18 @@ if __name__ == "__main__":
     client.PutParameter(keys, values)
 
     for i in range(TEST_ROUND):
-        if (i % 100 == 0):
+        if i % 100 == 0:
             put_keys = torch.randint(
-                TEST_KEY_SIZE, (SINGLE_TEST_LEN, )).to(torch.int64)
+                TEST_KEY_SIZE, (SINGLE_TEST_LEN,)
+            ).to(torch.int64)
             put_values = torch.rand((SINGLE_TEST_LEN, EMB_DIM))
             client.PutParameter(put_keys, put_values)
             for i in range(SINGLE_TEST_LEN):
                 values[put_keys[i]] = put_values[i]
-            # values[put_keys] = put_values
         else:
             get_keys = torch.randint(
-                TEST_KEY_SIZE, (SINGLE_TEST_LEN, )).to(torch.int64)
+                TEST_KEY_SIZE, (SINGLE_TEST_LEN,)
+            ).to(torch.int64)
             get_values = client.GetParameter(get_keys)
 
             if not torch.equal(get_values, values[get_keys]):

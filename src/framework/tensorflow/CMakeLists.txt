@@ -58,9 +58,9 @@ set_target_properties(recstore_tf_ops PROPERTIES
 add_test(
     NAME tf_client_test
     COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/python_client/client_test.py
+            ${PROJECT_SOURCE_DIR}/src/test/framework/tensorflow/client_test.py
             "$<TARGET_FILE:recstore_tf_ops>"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python_client
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/test/framework/tensorflow
 )
 
 # add_test(

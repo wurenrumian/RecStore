@@ -12,7 +12,10 @@ set(warp_wq_ps_client -Wl,--whole-archive wq_ps_client -Wl,--no-whole-archive CA
 add_executable(petps_server petps_server.cc)
 target_link_libraries(petps_server PUBLIC base ps_base kv_engine ps_common mayfly TBB::tbb)
 
-add_executable(petps_integration_test petps_integration_test.cpp)
+add_executable(
+    petps_integration_test
+    ${PROJECT_SOURCE_DIR}/src/test/ps/rdma/petps_integration_test.cpp
+)
 add_dependencies(petps_integration_test petps_server)
 target_link_libraries(petps_integration_test PUBLIC
     wq_ps_client
