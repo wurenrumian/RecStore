@@ -1,4 +1,4 @@
-name: Docker Image Test
+name: Docker Test
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
     branches:
       - '**'
   workflow_run:
-    workflows: ["Docker Publish"]
+    workflows: ["Docker Build and Publish"]
     types: [completed]
   workflow_dispatch:
     inputs:
