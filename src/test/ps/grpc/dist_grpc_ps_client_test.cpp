@@ -204,8 +204,8 @@ void TestLargeBatch() {
     CHECK(put_result == 0);
 
     std::vector<std::vector<float>> retrieved_values;
-    int get_result = client.GetParameter(keys_array, &retrieved_values);
-    CHECK(get_result == 0);
+    bool get_success = client.GetParameter(keys_array, &retrieved_values);
+    CHECK(get_success);
     CHECK(check_eq_2d(retrieved_values, large_values));
 
     std::cout << "Large batch test passed!" << std::endl;
