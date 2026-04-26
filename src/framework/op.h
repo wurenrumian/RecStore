@@ -150,9 +150,16 @@ public:
   void SaveToFile(const std::string& path) override;
   void LoadFromFile(const std::string& path) override;
   void SetPSConfig(const std::string& host, int port);
+  void SetPSBackend(const std::string& backend);
+  std::string CurrentPSBackend() const;
+  void LocalLookupFlat(const base::RecTensor& keys, base::RecTensor& values);
+  void LocalUpdateFlat(const std::string& table_name,
+                       const base::RecTensor& keys,
+                       const base::RecTensor& grads);
 
 private:
   int64_t embedding_dim_;
+  std::string ps_backend_name_ = "unknown";
   static BasePSClient* ps_client_;
   static std::unique_ptr<BasePSClient> ps_client_holder_;
 

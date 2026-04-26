@@ -162,8 +162,8 @@ if [[ "${SKIP_PY}" -eq 0 ]]; then
 
   python3 -m coverage erase
   (
-    cd "${REPO_ROOT}/src/framework/pytorch/python_client"
-    python3 -m coverage run --parallel-mode client_test.py "${LIB_PATH}"
+    cd "${REPO_ROOT}/src/test/framework/pytorch"
+    python3 -m coverage run --parallel-mode test_client.py "${LIB_PATH}"
   )
   (
     cd "${REPO_ROOT}/src/python/pytorch"

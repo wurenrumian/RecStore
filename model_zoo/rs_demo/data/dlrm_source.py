@@ -10,7 +10,7 @@ import torch
 def inject_project_paths(repo_root: Path) -> None:
     recstore_src = str(repo_root / "src")
     dlrm_root = str(repo_root / "model_zoo/torchrec_dlrm")
-    py_client = str(repo_root / "src/framework/pytorch/python_client")
+    py_client = str(repo_root / "src/test/framework/pytorch")
     for p in (recstore_src, dlrm_root, py_client):
         if p not in sys.path:
             sys.path.insert(0, p)
