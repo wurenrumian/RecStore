@@ -1,5 +1,6 @@
 import torch
 from typing import List, Union, Dict, Tuple, Any
+from .single_node_exchange import SparseGradPayload, exchange_sparse_grads
 
 class DistEmbedding:
     pass
@@ -78,6 +79,127 @@ def _process_generic_module_with_trace(mod: Any, lr: float, kv_client: Any):
         )
     return handles
 
+
+def _can_use_single_node_distributed_fast_path(mod: Any) -> bool:
+    if not getattr(mod, "enable_single_node_distributed_fast_path", False):
+        return False
+    if getattr(mod, "single_node_distributed_mode", None) != "single_node":
+        return False
+    if getattr(mod, "single_node_owner_policy", None) != "hash_mod_world_size":
+        return False
+    if getattr(mod, "single_node_ps_backend", None) != "local_shm":
+        return False
+    dist = getattr(torch, "distributed", None)
+    if dist is None or not hasattr(dist, "is_initialized") or not dist.is_initialized():
+        return False
+    if not hasattr(dist, "get_world_size") or dist.get_world_size() <= 1:
+        return False
+    return True
+
+
+def _collect_traces_by_name(mod: Any) -> Dict[str, List[Tuple[torch.Tensor, torch.Tensor]]]:
+    traces_by_name: Dict[str, List[Tuple[torch.Tensor, torch.Tensor]]] = {}
+    for entry in mod._trace:
+        if isinstance(entry, dict):
+            name = entry["name"]
+            ids = entry["ids"]
+            if "grads" in entry:
+                grads = entry["grads"]
+            else:
+                grads = entry["grad"].unsqueeze(0).expand(int(entry["count"]), -1)
+        else:
+            name, ids, grads = entry
+        traces_by_name.setdefault(name, []).append((ids, grads))
+    return traces_by_name
+
+
+def _aggregate_ids_and_grads(
+    ids: torch.Tensor,
+    grads: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    unique_ids, inverse_indices = torch.unique(ids, return_inverse=True)
+    summed_grads = torch.zeros(
+        (len(unique_ids), grads.size(1)),
+        device=grads.device,
+        dtype=grads.dtype,
+    )
+    summed_grads.index_add_(0, inverse_indices, grads)
+    return unique_ids, summed_grads
+
+
+def _process_generic_module_with_trace_single_node_distributed(mod: Any) -> None:
+    if not mod._trace:
+        return
+
+    dist = torch.distributed
+    rank = int(dist.get_rank())
+    world_size = int(dist.get_world_size())
+    exchange_backend = dist
+    module_kv_client = getattr(mod, "kv_client", None)
+    if module_kv_client is None:
+        raise RuntimeError("single-node distributed sparse update requires module kv_client")
+
+    traces_by_name = _collect_traces_by_name(mod)
+    for name, entries in traces_by_name.items():
+        all_ids = torch.cat([ids for ids, _ in entries], dim=0)
+        all_grads = torch.cat([grads for _, grads in entries], dim=0)
+        unique_ids, summed_grads = _aggregate_ids_and_grads(all_ids, all_grads)
+        if getattr(mod, "single_node_owner_policy", "hash_mod_world_size") != "hash_mod_world_size":
+            raise RuntimeError("single-node distributed sparse update currently requires hash_mod_world_size")
+
+        normalized_ids = unique_ids.detach().to(dtype=torch.int64)
+        normalized_grads = summed_grads.detach().to(dtype=torch.float32)
+        destination_ranks = torch.remainder(normalized_ids, world_size)
+        payload_device = normalized_ids.device
+
+        local_payload = SparseGradPayload(
+            rank=rank,
+            destination_ranks=destination_ranks,
+            source_ranks=torch.full(
+                (normalized_ids.numel(),),
+                rank,
+                dtype=torch.int64,
+                device=payload_device,
+            ),
+            row_positions=torch.arange(
+                normalized_ids.numel(),
+                dtype=torch.int64,
+                device=payload_device,
+            ),
+            fused_ids=normalized_ids,
+            grads=normalized_grads,
+        )
+        gathered_payloads = exchange_sparse_grads(
+            local_payload,
+            world_size=world_size,
+            backend=exchange_backend,
+        )
+
+        owner_ids: list[int] = []
+        owner_grads: list[torch.Tensor] = []
+        for payload in gathered_payloads:
+            owner_ids.extend(payload.fused_ids.detach().cpu().tolist())
+            owner_grads.append(payload.grads)
+
+        if not owner_ids:
+            continue
+
+        owner_grads_tensor = torch.cat(owner_grads, dim=0)
+        owner_ids_tensor = torch.tensor(
+            owner_ids,
+            dtype=torch.int64,
+            device=owner_grads_tensor.device,
+        )
+        owner_unique_ids, owner_summed_grads = _aggregate_ids_and_grads(
+            owner_ids_tensor,
+            owner_grads_tensor,
+        )
+        module_kv_client.local_update_flat(
+            name=name,
+            ids=owner_unique_ids,
+            grads=owner_summed_grads,
+        )
+
 # --- Core Classes ---
 
 class SparseOptimizer:
@@ -139,9 +261,12 @@ class SparseSGD(SparseOptimizer):
                     if isinstance(mod, DistEmbedding):
                         _process_dist_embedding_module(mod, lr)
                     elif hasattr(mod, '_config_names') and hasattr(mod, '_trace'):
-                        self._inflight_handles.extend(
-                            _process_generic_module_with_trace(mod, lr, self.kv_client)
-                        )
+                        if _can_use_single_node_distributed_fast_path(mod):
+                            _process_generic_module_with_trace_single_node_distributed(mod)
+                        else:
+                            self._inflight_handles.extend(
+                                _process_generic_module_with_trace(mod, lr, self.kv_client)
+                            )
                     else:
                         print(f"Warning: Module type {type(mod).__name__} is not supported by SparseSGD optimizer.")
                     if hasattr(mod, 'reset_trace'):
