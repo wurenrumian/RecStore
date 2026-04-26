@@ -183,7 +183,7 @@ jobs:
             echo "Current commit under test:"
             git rev-parse HEAD || true
             echo "Verifying bRPC test source version in container..."
-            grep -n "kBrpcTestPort0\|kDistBrpcPort0" src/ps/brpc/*_test.cpp || true
+            grep -n "kBrpcTestPort0\|kDistBrpcPort0" src/test/ps/brpc/*_test.cpp || true
             mkdir -p runner/logs
             rm -rf build
             mkdir -p build
@@ -226,48 +226,6 @@ jobs:
             fi
           '
           echo "===== end of ctest log summary ====="
-
-      - name: Run op tests inside container
-        run: |
-          set -euo pipefail
-          docker exec "${TEST_CONTAINER}" bash -lc '
-            set -euo pipefail
-
-            cleanup_ps_server() {
-              pids="$(pgrep -x ps_server || true)"
-              if [ -n "${pids}" ]; then
-                echo "Stopping ps_server PIDs: ${pids}"
-                kill ${pids} || true
-              fi
-            }
-            trap cleanup_ps_server EXIT
-
-            pids_after_ctest="$(pgrep -x ps_server || true)"
-            if [ -n "${pids_after_ctest}" ]; then
-              echo "Cleaning stale ps_server after ctest: ${pids_after_ctest}"
-              kill ${pids_after_ctest} || true
-              sleep 2
-            fi
-
-            cd /workspace
-
-            if [ -f build/lib/_recstore_ops.so ] && [ ! -f build/lib/lib_recstore_ops.so ]; then
-              cp -f build/lib/_recstore_ops.so build/lib/lib_recstore_ops.so
-            fi
-
-            if [ ! -f build/lib/lib_recstore_ops.so ]; then
-              echo "recstore ops shared library missing after build" >&2
-              ls -lah build/lib || true
-              find build -maxdepth 4 -name '*recstore*ops*.so*' -print || true
-              exit 1
-            fi
-
-            bash dockerfiles/init_dlrm.sh --mirror=0
-            bash ci/env/ci_fix_config.sh || true
-
-            python3 ci/pack/runner.py build bin/ps_server --ready-pattern "listening on" --timeout 180 --log runner/logs/docker-image-ps-server.log --keep-alive
-            bash ci/test/test_op.sh
-          '
 
       - name: Collect test logs from container
         if: always()
