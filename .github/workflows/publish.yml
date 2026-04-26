@@ -1,4 +1,4 @@
-name: Docker Publish
+name: Docker Build and Publish
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
       - 'dockerfiles/init_env_inside_docker.sh'
       - '.gitmodules'
       - 'third_party/**'
-      - '.github/workflows/docker-publish.yml'
+      - '.github/workflows/publish.yml'
   workflow_dispatch:
     inputs:
       run_init:

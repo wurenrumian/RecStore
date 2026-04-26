@@ -14,7 +14,7 @@
 ## 1. 获取构建产物
 
 1.  进入 RecStore GitHub 仓库的 **[Actions](https://github.com/RecStore/RecStore/actions)** 页面。
-2.  点击最新的构建成功（✅ Success）的 Workflow Run（例如 [Build (CPU)](https://github.com/RecStore/RecStore/actions/workflows/ci-build.yml)）。
+2.  点击最新的构建成功（✅ Success）的 Workflow Run（例如 [Release](https://github.com/RecStore/RecStore/actions/workflows/release.yml)）。
 3.  在页面底部的 **Artifacts** 区域，下载以下文件：
     *   `packed-bundle`: 包含编译好的 `ps_server` 可执行文件和 `lib_recstore_ops.so` 动态库。
     *   `torch-wheel`: 包含与 RecStore 兼容的 PyTorch 安装包（.whl）。
