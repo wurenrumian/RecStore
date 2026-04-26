@@ -20,10 +20,38 @@ class _FakeOps:
     def __init__(self) -> None:
         self.active_port: int | None = None
         self.port_history: list[int] = []
+        self.backend = "local_shm"
+        self.lookup_calls: list[tuple[int | None, list[int], int]] = []
+        self.update_calls: list[tuple[int | None, str, list[int], list[list[float]]]] = []
+        self.backend_switch_calls: list[str] = []
 
     def set_ps_config(self, host: str, port: int) -> None:
         self.active_port = int(port)
         self.port_history.append(int(port))
+
+    def current_ps_backend(self) -> str:
+        return self.backend
+
+    def set_ps_backend(self, backend: str) -> None:
+        self.backend = backend
+        self.backend_switch_calls.append(str(backend))
+
+    def local_lookup_flat(self, keys: torch.Tensor, embedding_dim: int) -> torch.Tensor:
+        self.lookup_calls.append(
+            (self.active_port, [int(v) for v in keys.tolist()], int(embedding_dim))
+        )
+        rows = keys.numel()
+        return torch.arange(rows * int(embedding_dim), dtype=torch.float32).view(rows, int(embedding_dim))
+
+    def local_update_flat(self, table_name: str, keys: torch.Tensor, grads: torch.Tensor) -> None:
+        self.update_calls.append(
+            (
+                self.active_port,
+                table_name,
+                [int(v) for v in keys.tolist()],
+                [[float(x) for x in row] for row in grads.tolist()],
+            )
+        )
 
 
 class _FakeClient:
@@ -471,6 +499,67 @@ class TestShardedRecstoreClient(unittest.TestCase):
 
         self.assertEqual(len(fake_client.table_inits), 2)
         self.assertEqual(len(fake_client.updates), 2)
+
+    def test_current_and_set_ps_backend_forward_to_underlying_ops(self) -> None:
+        runtime_dir = self._make_runtime_dir()
+        fake_client = _FakeClient()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+
+        self.assertEqual(client.current_ps_backend(), "local_shm")
+
+        client.set_ps_backend("brpc")
+
+        self.assertEqual(client.current_ps_backend(), "brpc")
+        self.assertEqual(fake_client.ops.backend_switch_calls, ["brpc"])
+
+    def test_local_lookup_flat_normalizes_ids_and_forwards_to_active_shard(self) -> None:
+        runtime_dir = self._make_runtime_dir()
+        fake_client = _FakeClient()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+        client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
+        client._activate_shard(1)
+
+        ids = torch.tensor([7, 3], dtype=torch.int32)
+        out = client.local_lookup_flat("table0", ids)
+
+        self.assertEqual(out.shape, (2, 4))
+        self.assertEqual(fake_client.ops.lookup_calls, [(20001, [7, 3], 4)])
+
+    def test_local_update_flat_normalizes_inputs_and_forwards_to_active_shard(self) -> None:
+        runtime_dir = self._make_runtime_dir()
+        fake_client = _FakeClient()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+        client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
+        client._activate_shard(0)
+
+        ids = torch.tensor([7, 3], dtype=torch.int32)
+        grads = torch.ones((2, 4), dtype=torch.float64)
+        client.local_update_flat("table0", ids, grads)
+
+        self.assertEqual(
+            fake_client.ops.update_calls,
+            [(20000, "table0", [7, 3], grads.to(dtype=torch.float32).tolist())],
+        )
+
+    def test_local_flat_ops_fail_loudly_for_non_local_backend(self) -> None:
+        runtime_dir = self._make_runtime_dir()
+        fake_client = _FakeClient()
+        fake_client.ops.backend = "brpc"
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+        client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
+        client._activate_shard(0)
+
+        with self.assertRaisesRegex(RuntimeError, "local_shm"):
+            client.local_lookup_flat("table0", torch.tensor([1], dtype=torch.int64))
+        with self.assertRaisesRegex(RuntimeError, "local_shm"):
+            client.local_update_flat(
+                "table0",
+                torch.tensor([1], dtype=torch.int64),
+                torch.ones((1, 4), dtype=torch.float32),
+            )
+
+        self.assertEqual(fake_client.ops.lookup_calls, [])
+        self.assertEqual(fake_client.ops.update_calls, [])
 
 
 if __name__ == "__main__":

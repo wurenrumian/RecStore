@@ -22,6 +22,22 @@ ToRecTensor(const torch::Tensor& tensor, base::DataType dtype) {
   return base::RecTensor(const_cast<void*>(tensor.data_ptr()), shape, dtype);
 }
 
+static torch::TensorOptions PinnedCpuOptions(torch::ScalarType dtype) {
+  return torch::TensorOptions()
+      .device(torch::kCPU)
+      .dtype(dtype)
+      .pinned_memory(true);
+}
+
+static torch::Tensor StageCudaTensorToPinnedCpu(
+    const torch::Tensor& tensor, torch::ScalarType dtype) {
+  auto cpu_tensor = torch::empty(
+      tensor.sizes(),
+      PinnedCpuOptions(dtype));
+  cpu_tensor.copy_(tensor.to(dtype), /*non_blocking=*/false);
+  return cpu_tensor;
+}
+
 torch::Tensor emb_read_torch(const torch::Tensor& keys, int64_t embedding_dim) {
   bool is_cuda           = keys.is_cuda();
   auto orig_device       = keys.device();
@@ -51,6 +67,57 @@ torch::Tensor emb_read_torch(const torch::Tensor& keys, int64_t embedding_dim) {
 
   if (is_cuda) {
     return cpu_values.to(orig_device);
+  }
+  return cpu_values;
+}
+
+static std::shared_ptr<KVClientOp> GetConcreteKVClientOp() {
+  auto op    = GetKVClientOp();
+  auto kv_op = std::dynamic_pointer_cast<KVClientOp>(op);
+  TORCH_CHECK(
+      kv_op != nullptr, "storage backend is not KVClientOp");
+  return kv_op;
+}
+
+torch::Tensor local_lookup_flat_torch(const torch::Tensor& keys,
+                                      int64_t embedding_dim) {
+  bool is_cuda           = keys.is_cuda();
+  auto orig_device       = keys.device();
+  torch::Tensor cpu_keys =
+      is_cuda ? StageCudaTensorToPinnedCpu(keys, torch::kInt64) : keys;
+
+  TORCH_CHECK(cpu_keys.dim() == 1, "Keys tensor must be 1-dimensional");
+  TORCH_CHECK(cpu_keys.scalar_type() == torch::kInt64,
+              "Keys tensor must have dtype int64");
+  TORCH_CHECK(cpu_keys.is_contiguous(), "Keys tensor must be contiguous");
+  TORCH_CHECK(embedding_dim > 0, "Embedding dimension must be positive");
+
+  auto kv_op = GetConcreteKVClientOp();
+  TORCH_CHECK(
+      kv_op->CurrentPSBackend() == "local_shm",
+      "local_lookup_flat requires local_shm backend, but current backend is ",
+      kv_op->CurrentPSBackend());
+
+  const int64_t num_keys = cpu_keys.size(0);
+  if (num_keys == 0) {
+    return torch::empty(
+        {0, embedding_dim}, torch::TensorOptions().dtype(torch::kFloat32));
+  }
+
+  auto cpu_values =
+      is_cuda
+          ? torch::empty({num_keys, embedding_dim}, PinnedCpuOptions(torch::kFloat32))
+          : torch::empty(
+                {num_keys, embedding_dim},
+                torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32));
+
+  base::RecTensor rec_keys   = ToRecTensor(cpu_keys, base::DataType::UINT64);
+  base::RecTensor rec_values = ToRecTensor(cpu_values, base::DataType::FLOAT32);
+
+  kv_op->LocalLookupFlat(rec_keys, rec_values);
+
+  if (is_cuda) {
+    return cpu_values.to(orig_device, /*non_blocking=*/true);
   }
   return cpu_values;
 }
@@ -140,6 +207,43 @@ void emb_update_table_torch(const std::string& table_name,
   op->EmbUpdate(table_name, rec_keys, rec_grads);
 }
 
+void local_update_flat_torch(const std::string& table_name,
+                             const torch::Tensor& keys,
+                             const torch::Tensor& grads) {
+  TORCH_CHECK(!table_name.empty(), "table_name must be non-empty");
+  TORCH_CHECK(keys.dim() == 1, "Keys tensor must be 1-dimensional");
+  TORCH_CHECK(keys.scalar_type() == torch::kInt64,
+              "Keys tensor must have dtype int64");
+  TORCH_CHECK(keys.is_contiguous(), "Keys tensor must be contiguous");
+
+  TORCH_CHECK(grads.dim() == 2, "Grads tensor must be 2-dimensional");
+  TORCH_CHECK(grads.scalar_type() == torch::kFloat32,
+              "Grads tensor must have dtype float32");
+  TORCH_CHECK(grads.is_contiguous(), "Grads tensor must be contiguous");
+  TORCH_CHECK(keys.size(0) == grads.size(0),
+              "Keys and grads tensors must have the same number of entries");
+
+  auto kv_op = GetConcreteKVClientOp();
+  TORCH_CHECK(
+      kv_op->CurrentPSBackend() == "local_shm",
+      "local_update_flat requires local_shm backend, but current backend is ",
+      kv_op->CurrentPSBackend());
+
+  if (keys.size(0) == 0) {
+    return;
+  }
+
+  torch::Tensor cpu_keys =
+      keys.is_cuda() ? StageCudaTensorToPinnedCpu(keys, torch::kInt64) : keys;
+  torch::Tensor cpu_grads =
+      grads.is_cuda() ? StageCudaTensorToPinnedCpu(grads, torch::kFloat32) : grads;
+
+  base::RecTensor rec_keys  = ToRecTensor(cpu_keys, base::DataType::UINT64);
+  base::RecTensor rec_grads = ToRecTensor(cpu_grads, base::DataType::FLOAT32);
+
+  kv_op->LocalUpdateFlat(table_name, rec_keys, rec_grads);
+}
+
 bool init_embedding_table_torch(const std::string& table_name,
                                 int64_t num_embeddings,
                                 int64_t embedding_dim) {
@@ -189,27 +293,33 @@ void emb_write_torch(const torch::Tensor& keys, const torch::Tensor& values) {
 }
 
 void set_ps_config_torch(const std::string& host, int64_t port) {
-  auto op    = GetKVClientOp();
-  auto kv_op = std::dynamic_pointer_cast<KVClientOp>(op);
-  if (kv_op) {
-    kv_op->SetPSConfig(host, static_cast<int>(port));
-  } else {
-    LOG(ERROR) << "Failed to cast CommonOp to KVClientOp. Cannot set "
-                  "PS config.";
-    throw std::runtime_error(
-        "Failed to set PS config: storage backend is not KVClientOp");
-  }
+  auto kv_op = GetConcreteKVClientOp();
+  kv_op->SetPSConfig(host, static_cast<int>(port));
+}
+
+void set_ps_backend_torch(const std::string& backend) {
+  auto kv_op = GetConcreteKVClientOp();
+  kv_op->SetPSBackend(backend);
+}
+
+std::string current_ps_backend_torch() {
+  auto kv_op = GetConcreteKVClientOp();
+  return kv_op->CurrentPSBackend();
 }
 
 TORCH_LIBRARY(recstore_ops, m) {
   m.def("emb_read", emb_read_torch);
+  m.def("local_lookup_flat", local_lookup_flat_torch);
   m.def("emb_update", emb_update_torch);
   m.def("emb_update_table", emb_update_table_torch);
+  m.def("local_update_flat", local_update_flat_torch);
   m.def("init_embedding_table", init_embedding_table_torch);
   m.def("emb_write", emb_write_torch);
   m.def("emb_prefetch", emb_prefetch_torch);
   m.def("emb_wait_result", emb_wait_result_torch);
   m.def("set_ps_config", set_ps_config_torch);
+  m.def("set_ps_backend", set_ps_backend_torch);
+  m.def("current_ps_backend", current_ps_backend_torch);
 }
 
 } // namespace framework

@@ -33,6 +33,21 @@ bool IsReadWriteSuccess(BasePSClient* client, int ret) {
   // Legacy GRPC/BRPC read/write methods return bool-like int values.
   return ret != 0;
 }
+
+std::string BackendNameFromConfig(const json& config) {
+  switch (ResolveFrameworkPSClientType(config)) {
+  case PSClientType::kGrpc:
+    return "grpc";
+  case PSClientType::kBrpc:
+    return "brpc";
+  case PSClientType::kRdma:
+    return "rdma";
+  case PSClientType::kLocalShm:
+    return "local_shm";
+  }
+
+  return "unknown";
+}
 } // namespace
 
 json load_config_from_file(const std::string& config_path) {
@@ -214,6 +229,7 @@ KVClientOp::KVClientOp() {
       }
       std::cerr << "[RDMA-DBG] KVClientOp ctor use_rdma="
                 << (use_rdma ? "true" : "false") << std::endl;
+      ps_backend_name_ = BackendNameFromConfig(config);
 
       if (use_rdma) {
         std::cerr << "[RDMA-DBG] InitializeRdmaProcessRuntime before "
@@ -273,8 +289,53 @@ void KVClientOp::SetPSConfig(const std::string& host, int port) {
 
   ps_client_holder_ = create_ps_client_from_config(config);
   ps_client_        = ps_client_holder_.get();
+  ps_backend_name_  = BackendNameFromConfig(config);
   LOG(INFO) << "Re-initialized PS client with host=" << final_host
             << " port=" << final_port;
+}
+
+void KVClientOp::SetPSBackend(const std::string& backend) {
+  if (backend.empty()) {
+    throw std::invalid_argument("backend must be non-empty");
+  }
+
+  json config = GetGlobalConfig();
+  if (!config.contains("cache_ps")) {
+    config["cache_ps"] = json::object();
+  }
+  config["cache_ps"]["ps_type"] = NormalizePSType(backend);
+
+  ps_client_holder_.reset();
+  ps_client_ = nullptr;
+  ps_client_holder_ = create_ps_client_from_config(config);
+  ps_client_        = ps_client_holder_.get();
+  ps_backend_name_  = BackendNameFromConfig(config);
+  LOG(INFO) << "Re-initialized PS client with backend=" << ps_backend_name_;
+}
+
+std::string KVClientOp::CurrentPSBackend() const {
+  return ps_backend_name_;
+}
+
+void KVClientOp::LocalLookupFlat(const base::RecTensor& keys,
+                                 base::RecTensor& values) {
+  if (ps_backend_name_ != "local_shm") {
+    throw std::runtime_error(
+        "local_lookup_flat requires local_shm backend, but current backend is " +
+        ps_backend_name_);
+  }
+  EmbRead(keys, values);
+}
+
+void KVClientOp::LocalUpdateFlat(const std::string& table_name,
+                                 const base::RecTensor& keys,
+                                 const base::RecTensor& grads) {
+  if (ps_backend_name_ != "local_shm") {
+    throw std::runtime_error(
+        "local_update_flat requires local_shm backend, but current backend is " +
+        ps_backend_name_);
+  }
+  EmbUpdate(table_name, keys, grads);
 }
 
 void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
