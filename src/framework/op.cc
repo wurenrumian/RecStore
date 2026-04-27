@@ -1,7 +1,8 @@
 #include "framework/op.h"
+#include "framework/common/local_shm_op_component.h"
+#include "framework/common/op_runtime_support.h"
 #include "framework/common/ps_client_config_adapter.h"
 #include "ps/client_factory.h"
-#include "ps/local_shm/local_shm_client.h"
 #include "ps/rdma/rdma_ps_client_adapter.h"
 #include "base/factory.h"
 #include <immintrin.h>
@@ -35,56 +36,7 @@ bool IsReadWriteSuccess(BasePSClient* client, int ret) {
   return ret != 0;
 }
 
-LocalShmPSClient* GetLocalShmClientOrThrow(BasePSClient* client,
-                                          const std::string& backend_name,
-                                          const char* api_name) {
-  if (backend_name != "local_shm") {
-    throw std::runtime_error(
-        std::string(api_name) +
-        " requires local_shm backend, but current backend is " + backend_name);
-  }
-  auto* local_client = dynamic_cast<LocalShmPSClient*>(client);
-  if (local_client == nullptr) {
-    throw std::runtime_error(
-        std::string(api_name) +
-        " requires LocalShmPSClient backend instance.");
-  }
-  return local_client;
-}
-
-std::string BackendNameFromConfig(const json& config) {
-  switch (ResolveFrameworkPSClientType(config)) {
-  case PSClientType::kGrpc:
-    return "grpc";
-  case PSClientType::kBrpc:
-    return "brpc";
-  case PSClientType::kRdma:
-    return "rdma";
-  case PSClientType::kLocalShm:
-    return "local_shm";
-  }
-
-  return "unknown";
-}
 } // namespace
-
-json load_config_from_file(const std::string& config_path) {
-  std::ifstream file(config_path);
-  if (!file.is_open()) {
-    throw std::runtime_error("Cannot open config file: " + config_path);
-  }
-
-  std::string content(
-      (std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-  file.close();
-
-  try {
-    return json::parse(content);
-  } catch (const json::exception& e) {
-    throw std::runtime_error(
-        "Failed to parse config file: " + std::string(e.what()));
-  }
-}
 
 void validate_keys(const base::RecTensor& keys) {
   if (keys.dtype() != base::DataType::UINT64) {
@@ -153,87 +105,6 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 #ifndef USE_FAKE_KVCLIENT
 
 namespace recstore {
-
-std::unique_ptr<BasePSClient> create_ps_client_from_config(const json& config) {
-  return CreatePSClient(ResolvePSClientOptionsFromFrameworkConfig(config));
-}
-
-json GetGlobalConfig() {
-  try {
-    auto current_path = std::filesystem::current_path();
-    std::cerr << "[Config] Current working directory: " << current_path.string()
-              << std::endl;
-
-    std::filesystem::path config_path;
-    bool config_found = false;
-
-    if (const char* env_config = std::getenv("RECSTORE_CONFIG");
-        env_config != nullptr && env_config[0] != '\0') {
-      config_path = env_config;
-      if (std::filesystem::exists(config_path)) {
-        config_found = true;
-        std::cerr << "[Config] Using config file from RECSTORE_CONFIG: "
-                  << config_path.string() << std::endl;
-      } else {
-        throw std::runtime_error("RECSTORE_CONFIG points to a missing file: " +
-                                 config_path.string());
-      }
-    }
-
-    if (!config_found) {
-      for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
-        if (std::filesystem::exists(p / "recstore_config.json")) {
-          config_path  = p / "recstore_config.json";
-          config_found = true;
-          std::cerr << "[Config] Found config file at: " << config_path.string()
-                    << std::endl;
-          break;
-        }
-      }
-    }
-
-    if (!config_found) {
-      throw std::runtime_error(
-          "Could not find 'recstore_config.json' in current or any parent "
-          "directory starting from: " +
-          current_path.string());
-    }
-
-    std::ifstream test_file(config_path);
-    if (!test_file.good()) {
-      throw std::runtime_error(
-          "Config file not found: " + config_path.string() +
-          ". Please ensure recstore_config.json exists "
-          "in the project root directory.");
-    }
-    test_file.close();
-
-    return load_config_from_file(config_path);
-  } catch (const std::exception& e) {
-    std::cerr << "Failed to load config: " << e.what() << std::endl;
-    return json::object();
-  }
-}
-
-void ConfigureLogging(bool initialize_google_logging) {
-  static std::once_flag log_init_flag;
-  std::call_once(log_init_flag, [initialize_google_logging]() {
-    std::cerr << "[Debug] ConfigureLogging called. Setting flags." << std::endl;
-    FLAGS_log_dir         = "/tmp";
-    FLAGS_alsologtostderr = false;
-    FLAGS_logtostderr     = false;
-    FLAGS_stderrthreshold = google::ERROR;
-
-    google::SetLogDestination(google::INFO, "/tmp/recstore_op_layer_INFO_");
-    google::SetLogDestination(
-        google::WARNING, "/tmp/recstore_op_layer_WARNING_");
-    google::SetLogDestination(google::ERROR, "/tmp/recstore_op_layer_ERROR_");
-
-    if (initialize_google_logging) {
-      google::InitGoogleLogging("recstore_op_layer");
-    }
-  });
-}
 
 KVClientOp::KVClientOp() {
   if (!ps_client_) {
@@ -324,72 +195,39 @@ void KVClientOp::SetPSBackend(const std::string& backend) {
   config["cache_ps"]["ps_type"] = NormalizePSType(backend);
 
   ps_client_holder_.reset();
-  ps_client_ = nullptr;
+  ps_client_        = nullptr;
   ps_client_holder_ = create_ps_client_from_config(config);
   ps_client_        = ps_client_holder_.get();
   ps_backend_name_  = BackendNameFromConfig(config);
   LOG(INFO) << "Re-initialized PS client with backend=" << ps_backend_name_;
 }
 
-std::string KVClientOp::CurrentPSBackend() const {
-  return ps_backend_name_;
-}
+std::string KVClientOp::CurrentPSBackend() const { return ps_backend_name_; }
 
 void KVClientOp::LocalLookupFlat(const base::RecTensor& keys,
                                  base::RecTensor& values) {
-  validate_keys(keys);
-  validate_embeddings(values, "Values");
-
-  const int64_t L = keys.shape(0);
-  if (values.shape(0) != L) {
-    throw std::invalid_argument(
-        "Dimension mismatch: Keys has length " + std::to_string(L) +
-        " but values has length " + std::to_string(values.shape(0)));
-  }
-
-  auto* local_client =
-      GetLocalShmClientOrThrow(ps_client_, ps_backend_name_, "local_lookup_flat");
-
-  const uint64_t* keys_data = keys.data_as<uint64_t>();
-  base::ConstArray<uint64_t> keys_array(keys_data, L);
-  float* values_data = values.data_as<float>();
-  const int64_t D = values.shape(1);
-
-  int ret = local_client->GetParameterFlat(keys_array, values_data, L, D);
-  if (ret != 0) {
-    throw std::runtime_error("Failed to read embeddings from local_shm PS client.");
-  }
+  LocalShmLookupFlat(ps_client_, ps_backend_name_, keys, values);
 }
 
 int KVClientOp::SubmitLocalLookupFlat(const base::RecTensor& keys,
                                       int64_t embedding_dim,
                                       LocalShmFlatGetHandle* handle) {
-  validate_keys(keys);
-  const int64_t L = keys.shape(0);
-  const uint64_t* keys_data = keys.data_as<uint64_t>();
-  base::ConstArray<uint64_t> keys_array(keys_data, L);
-  auto* local_client =
-      GetLocalShmClientOrThrow(ps_client_, ps_backend_name_, "local_lookup_flat");
-  return local_client->SubmitGetParameterFlat(keys_array, L, embedding_dim, handle);
+  return SubmitLocalShmLookupFlat(
+      ps_client_, ps_backend_name_, keys, embedding_dim, handle);
 }
 
 int KVClientOp::WaitLocalLookupFlat(LocalShmFlatGetHandle* handle) {
-  auto* local_client =
-      GetLocalShmClientOrThrow(ps_client_, ps_backend_name_, "local_lookup_flat");
-  return local_client->WaitGetParameterFlat(handle);
+  return WaitLocalShmLookupFlat(ps_client_, ps_backend_name_, handle);
 }
 
 void KVClientOp::ReleaseLocalLookupFlat(LocalShmFlatGetHandle* handle) {
-  auto* local_client =
-      GetLocalShmClientOrThrow(ps_client_, ps_backend_name_, "local_lookup_flat");
-  local_client->ReleaseGetParameterFlat(handle);
+  ReleaseLocalShmLookupFlat(ps_client_, ps_backend_name_, handle);
 }
 
 void KVClientOp::LocalUpdateFlat(const std::string& table_name,
                                  const base::RecTensor& keys,
                                  const base::RecTensor& grads) {
-  GetLocalShmClientOrThrow(ps_client_, ps_backend_name_, "local_update_flat");
-  EmbUpdate(table_name, keys, grads);
+  LocalShmUpdateFlat(ps_client_, ps_backend_name_, table_name, keys, grads);
 }
 
 void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {

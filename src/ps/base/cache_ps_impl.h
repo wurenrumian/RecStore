@@ -242,17 +242,16 @@ public:
       if (slice.Size() != 0 &&
           static_cast<int64_t>(slice.Size()) != embedding_dim) {
         LOG(ERROR) << "GetParameterFlat embedding_dim mismatch at row=" << row
-                   << " key=" << keys[static_cast<size_t>(row)]
-                   << " expected=" << embedding_dim
-                   << " actual=" << slice.Size();
+                   << " key=" << keys[static_cast<size_t>(row)] << " expected="
+                   << embedding_dim << " actual=" << slice.Size();
         return false;
       }
     }
 
-    std::fill_n(values,
-                static_cast<size_t>(num_rows) *
-                    static_cast<size_t>(embedding_dim),
-                0.0f);
+    std::fill_n(
+        values,
+        static_cast<size_t>(num_rows) * static_cast<size_t>(embedding_dim),
+        0.0f);
     for (int64_t row = 0; row < num_rows; ++row) {
       const auto& slice = value_slices[static_cast<size_t>(row)];
       if (slice.Size() > 0) {

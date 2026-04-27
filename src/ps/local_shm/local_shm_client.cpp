@@ -106,18 +106,17 @@ int LocalShmPSClient::GetParameter(const base::ConstArray<uint64_t>& keys,
       keys, values, static_cast<int64_t>(keys.Size()), /*embedding_dim=*/0);
 }
 
-int LocalShmPSClient::GetParameterFlat(const base::ConstArray<uint64_t>& keys,
-                                       float* values,
-                                       int64_t num_rows,
-                                       int64_t embedding_dim) {
+int LocalShmPSClient::GetParameterFlat(
+    const base::ConstArray<uint64_t>& keys,
+    float* values,
+    int64_t num_rows,
+    int64_t embedding_dim) {
   if (values == nullptr) {
     LOG(ERROR) << "LocalShmPSClient::GetParameter invalid_state"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " key_count=" << num_rows
-               << " embedding_dim=" << embedding_dim;
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " key_count="
+               << num_rows << " embedding_dim=" << embedding_dim;
     return -1;
   }
   LocalShmFlatGetHandle handle;
@@ -126,9 +125,8 @@ int LocalShmPSClient::GetParameterFlat(const base::ConstArray<uint64_t>& keys,
   }
   const int wait_rc = WaitGetParameterFlat(&handle);
   if (wait_rc == 0 && handle.output_bytes > 0) {
-    std::memcpy(values,
-                handle.values,
-                static_cast<std::size_t>(handle.output_bytes));
+    std::memcpy(
+        values, handle.values, static_cast<std::size_t>(handle.output_bytes));
   }
   ReleaseGetParameterFlat(&handle);
   return wait_rc;
@@ -142,51 +140,42 @@ int LocalShmPSClient::SubmitGetParameterFlat(
   if (handle == nullptr) {
     LOG(ERROR) << "LocalShmPSClient::SubmitGetParameterFlat null_handle"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
+               << " backend=local_shm" << " region_name=" << region_name_
                << " ready_queue_id=" << ready_queue_id_;
     return -1;
   }
   if (!IsFlatGetHandleClear(*handle)) {
     LOG(ERROR) << "LocalShmPSClient::SubmitGetParameterFlat handle_not_clear"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " slot_id=" << handle->slot_id
-               << " request_id=" << handle->request_id
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " slot_id="
+               << handle->slot_id << " request_id=" << handle->request_id
                << " output_bytes=" << handle->output_bytes;
     return -1;
   }
   if (!region_.IsOpen()) {
     LOG(ERROR) << "LocalShmPSClient::SubmitGetParameterFlat invalid_state"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " key_count=" << num_rows
-               << " embedding_dim=" << embedding_dim;
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " key_count="
+               << num_rows << " embedding_dim=" << embedding_dim;
     return -1;
   }
   if (num_rows < 0 || keys.Size() != static_cast<size_t>(num_rows)) {
     LOG(ERROR) << "LocalShmPSClient::SubmitGetParameterFlat invalid_row_count"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
+               << " backend=local_shm" << " region_name=" << region_name_
                << " ready_queue_id=" << ready_queue_id_
-               << " key_count=" << keys.Size()
-               << " num_rows=" << num_rows
+               << " key_count=" << keys.Size() << " num_rows=" << num_rows
                << " embedding_dim=" << embedding_dim;
     return -1;
   }
   if (embedding_dim < 0) {
     LOG(ERROR)
         << "LocalShmPSClient::SubmitGetParameterFlat invalid_embedding_dim"
-        << " pid=" << static_cast<int>(::getpid())
-        << " backend=local_shm"
+        << " pid=" << static_cast<int>(::getpid()) << " backend=local_shm"
         << " region_name=" << region_name_
-        << " ready_queue_id=" << ready_queue_id_
-        << " key_count=" << num_rows
+        << " ready_queue_id=" << ready_queue_id_ << " key_count=" << num_rows
         << " embedding_dim=" << embedding_dim;
     return -1;
   }
@@ -195,11 +184,9 @@ int LocalShmPSClient::SubmitGetParameterFlat(
   if (slot < 0) {
     LOG(ERROR) << "LocalShmPSClient::SubmitGetParameterFlat acquire_slot_failed"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " key_count=" << num_rows
-               << " embedding_dim=" << embedding_dim;
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " key_count="
+               << num_rows << " embedding_dim=" << embedding_dim;
     return -1;
   }
 
@@ -209,13 +196,10 @@ int LocalShmPSClient::SubmitGetParameterFlat(
   if (input_bytes > region_.slot_buffer_bytes()) {
     LOG(ERROR) << "LocalShmPSClient::SubmitGetParameterFlat input_too_large"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " key_count=" << num_rows
-               << " embedding_dim=" << embedding_dim
-               << " slot_id=" << slot
-               << " input_bytes=" << input_bytes
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " key_count="
+               << num_rows << " embedding_dim=" << embedding_dim
+               << " slot_id=" << slot << " input_bytes=" << input_bytes
                << " slot_buffer_bytes=" << region_.slot_buffer_bytes();
     MarkError(header, LocalStatusCode::kBufferTooSmall);
     ReleaseSlot(static_cast<uint32_t>(slot));
@@ -259,8 +243,7 @@ int LocalShmPSClient::WaitGetParameterFlat(LocalShmFlatGetHandle* handle) {
   if (handle == nullptr) {
     LOG(ERROR) << "LocalShmPSClient::WaitGetParameterFlat null_handle"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
+               << " backend=local_shm" << " region_name=" << region_name_
                << " ready_queue_id=" << ready_queue_id_;
     return -1;
   }
@@ -268,21 +251,17 @@ int LocalShmPSClient::WaitGetParameterFlat(LocalShmFlatGetHandle* handle) {
       handle->request_id == 0) {
     LOG(ERROR) << "LocalShmPSClient::WaitGetParameterFlat invalid_handle"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " slot_id=" << handle->slot_id
-               << " request_id=" << handle->request_id;
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " slot_id="
+               << handle->slot_id << " request_id=" << handle->request_id;
     return -1;
   }
   if (handle->values != nullptr) {
     LOG(ERROR) << "LocalShmPSClient::WaitGetParameterFlat already_waited"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " slot_id=" << handle->slot_id
-               << " request_id=" << handle->request_id;
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " slot_id="
+               << handle->slot_id << " request_id=" << handle->request_id;
     return -1;
   }
 
@@ -291,21 +270,17 @@ int LocalShmPSClient::WaitGetParameterFlat(LocalShmFlatGetHandle* handle) {
   if (!ok) {
     LOG(ERROR) << "LocalShmPSClient::WaitGetParameterFlat wait_failed"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " slot_id=" << handle->slot_id
-               << " request_id=" << handle->request_id;
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " slot_id="
+               << handle->slot_id << " request_id=" << handle->request_id;
     return -1;
   }
   if (header->status_code != static_cast<uint32_t>(LocalStatusCode::kOk)) {
     LOG(ERROR) << "LocalShmPSClient::WaitGetParameterFlat request_failed"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
-               << " ready_queue_id=" << ready_queue_id_
-               << " slot_id=" << handle->slot_id
-               << " request_id=" << handle->request_id
+               << " backend=local_shm" << " region_name=" << region_name_
+               << " ready_queue_id=" << ready_queue_id_ << " slot_id="
+               << handle->slot_id << " request_id=" << handle->request_id
                << " status_code=" << header->status_code;
     return -1;
   }
@@ -315,21 +290,21 @@ int LocalShmPSClient::WaitGetParameterFlat(LocalShmFlatGetHandle* handle) {
         sizeof(float) * static_cast<std::size_t>(handle->num_rows) *
         static_cast<std::size_t>(handle->embedding_dim);
     if (header->output_bytes != expected_output_bytes) {
-      LOG(ERROR) << "LocalShmPSClient::WaitGetParameterFlat output_size_mismatch"
-                 << " pid=" << static_cast<int>(::getpid())
-                 << " backend=local_shm"
-                 << " region_name=" << region_name_
-                 << " ready_queue_id=" << ready_queue_id_
-                 << " slot_id=" << handle->slot_id
-                 << " request_id=" << handle->request_id
-                 << " expected_output_bytes=" << expected_output_bytes
-                 << " actual_output_bytes=" << header->output_bytes
-                 << " server_embedding_dim=" << header->embedding_dim;
+      LOG(ERROR)
+          << "LocalShmPSClient::WaitGetParameterFlat output_size_mismatch"
+          << " pid=" << static_cast<int>(::getpid()) << " backend=local_shm"
+          << " region_name=" << region_name_ << " ready_queue_id="
+          << ready_queue_id_ << " slot_id=" << handle->slot_id
+          << " request_id=" << handle->request_id
+          << " expected_output_bytes=" << expected_output_bytes
+          << " actual_output_bytes=" << header->output_bytes
+          << " server_embedding_dim=" << header->embedding_dim;
       return -1;
     }
   }
 
-  handle->values = reinterpret_cast<float*>(region_.slot_payload(handle->slot_id));
+  handle->values =
+      reinterpret_cast<float*>(region_.slot_payload(handle->slot_id));
   handle->output_bytes = header->output_bytes;
   return 0;
 }
@@ -338,16 +313,14 @@ void LocalShmPSClient::ReleaseGetParameterFlat(LocalShmFlatGetHandle* handle) {
   if (handle == nullptr) {
     LOG(ERROR) << "LocalShmPSClient::ReleaseGetParameterFlat null_handle"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
+               << " backend=local_shm" << " region_name=" << region_name_
                << " ready_queue_id=" << ready_queue_id_;
     return;
   }
   if (handle->slot_id == LocalShmFlatGetHandle::kInvalidSlotId) {
     LOG(ERROR) << "LocalShmPSClient::ReleaseGetParameterFlat invalid_handle"
                << " pid=" << static_cast<int>(::getpid())
-               << " backend=local_shm"
-               << " region_name=" << region_name_
+               << " backend=local_shm" << " region_name=" << region_name_
                << " ready_queue_id=" << ready_queue_id_
                << " request_id=" << handle->request_id;
     ResetFlatGetHandle(handle);
@@ -663,14 +636,13 @@ bool LocalShmPSClient::WaitForSlot(uint32_t slot_id, uint64_t request_id) {
     FutexWaitUntilValueChange(
         &header->completion_doorbell, observed, remaining);
   }
-  LOG(ERROR) << "LocalShmPSClient::WaitForSlot timeout request_id="
-             << request_id << " slot_id=" << slot_id
-             << " state=" << header->state.load()
-             << " status_code=" << header->status_code
-             << " output_bytes=" << header->output_bytes
-             << " completion_doorbell="
-             << header->completion_doorbell.load(std::memory_order_acquire)
-             << " server_epoch=" << region_.control()->server_epoch;
+  LOG(ERROR)
+      << "LocalShmPSClient::WaitForSlot timeout request_id=" << request_id
+      << " slot_id=" << slot_id << " state=" << header->state.load()
+      << " status_code=" << header->status_code
+      << " output_bytes=" << header->output_bytes << " completion_doorbell="
+      << header->completion_doorbell.load(std::memory_order_acquire)
+      << " server_epoch=" << region_.control()->server_epoch;
   header->status_code = static_cast<uint32_t>(LocalStatusCode::kTimeout);
   return false;
 }

@@ -33,11 +33,9 @@ static torch::TensorOptions PinnedCpuOptions(torch::ScalarType dtype) {
       .pinned_memory(true);
 }
 
-static torch::Tensor StageCudaTensorToPinnedCpu(
-    const torch::Tensor& tensor, torch::ScalarType dtype) {
-  auto cpu_tensor = torch::empty(
-      tensor.sizes(),
-      PinnedCpuOptions(dtype));
+static torch::Tensor StageCudaTensorToPinnedCpu(const torch::Tensor& tensor,
+                                                torch::ScalarType dtype) {
+  auto cpu_tensor = torch::empty(tensor.sizes(), PinnedCpuOptions(dtype));
   cpu_tensor.copy_(tensor.to(dtype), /*non_blocking=*/false);
   return cpu_tensor;
 }
@@ -53,7 +51,8 @@ static bool EnsurePinnedLocalShmPayload(const void* ptr, std::size_t bytes) {
   const std::size_t page_bytes = static_cast<std::size_t>(page_size);
   const uintptr_t raw_begin    = reinterpret_cast<uintptr_t>(ptr);
   const uintptr_t raw_end      = raw_begin + bytes;
-  const uintptr_t page_begin   = raw_begin & ~(static_cast<uintptr_t>(page_bytes) - 1U);
+  const uintptr_t page_begin =
+      raw_begin & ~(static_cast<uintptr_t>(page_bytes) - 1U);
   const uintptr_t page_end =
       (raw_end + page_bytes - 1U) & ~(static_cast<uintptr_t>(page_bytes) - 1U);
   const std::size_t required_bytes =
@@ -69,10 +68,8 @@ static bool EnsurePinnedLocalShmPayload(const void* ptr, std::size_t bytes) {
 
   void* register_ptr = reinterpret_cast<void*>(page_begin + existing_bytes);
   const std::size_t register_bytes = required_bytes - existing_bytes;
-  const cudaError_t err = cudaHostRegister(
-      register_ptr,
-      register_bytes,
-      cudaHostRegisterPortable);
+  const cudaError_t err =
+      cudaHostRegister(register_ptr, register_bytes, cudaHostRegisterPortable);
   if (err != cudaSuccess && err != cudaErrorHostMemoryAlreadyRegistered) {
     LOG(WARNING) << "cudaHostRegister failed for local_shm payload: "
                  << cudaGetErrorString(err)
@@ -120,15 +117,14 @@ torch::Tensor emb_read_torch(const torch::Tensor& keys, int64_t embedding_dim) {
 static std::shared_ptr<KVClientOp> GetConcreteKVClientOp() {
   auto op    = GetKVClientOp();
   auto kv_op = std::dynamic_pointer_cast<KVClientOp>(op);
-  TORCH_CHECK(
-      kv_op != nullptr, "storage backend is not KVClientOp");
+  TORCH_CHECK(kv_op != nullptr, "storage backend is not KVClientOp");
   return kv_op;
 }
 
-torch::Tensor local_lookup_flat_torch(const torch::Tensor& keys,
-                                      int64_t embedding_dim) {
-  bool is_cuda           = keys.is_cuda();
-  auto orig_device       = keys.device();
+torch::Tensor
+local_lookup_flat_torch(const torch::Tensor& keys, int64_t embedding_dim) {
+  bool is_cuda     = keys.is_cuda();
+  auto orig_device = keys.device();
   torch::Tensor cpu_keys =
       is_cuda ? StageCudaTensorToPinnedCpu(keys, torch::kInt64) : keys;
 
@@ -155,7 +151,8 @@ torch::Tensor local_lookup_flat_torch(const torch::Tensor& keys,
     auto cpu_values = torch::empty(
         {num_keys, embedding_dim},
         torch::TensorOptions().device(torch::kCPU).dtype(torch::kFloat32));
-    base::RecTensor rec_values = ToRecTensor(cpu_values, base::DataType::FLOAT32);
+    base::RecTensor rec_values =
+        ToRecTensor(cpu_values, base::DataType::FLOAT32);
     kv_op->LocalLookupFlat(rec_keys, rec_values);
     return cpu_values;
   }
@@ -169,9 +166,9 @@ torch::Tensor local_lookup_flat_torch(const torch::Tensor& keys,
     kv_op->ReleaseLocalLookupFlat(&handle);
     TORCH_CHECK(false, "Failed to wait for local_shm flat lookup.");
   }
-  const float* payload_values   = handle.values;
-  const int64_t payload_rows    = handle.num_rows;
-  const int64_t payload_dim     = handle.embedding_dim;
+  const float* payload_values = handle.values;
+  const int64_t payload_rows  = handle.num_rows;
+  const int64_t payload_dim   = handle.embedding_dim;
   const std::size_t payload_bytes =
       static_cast<std::size_t>(handle.output_bytes);
   const int64_t expected_bytes =
@@ -180,14 +177,13 @@ torch::Tensor local_lookup_flat_torch(const torch::Tensor& keys,
       payload_dim != embedding_dim ||
       static_cast<int64_t>(payload_bytes) != expected_bytes) {
     kv_op->ReleaseLocalLookupFlat(&handle);
-    TORCH_CHECK(
-        false,
-        "local_shm flat lookup returned unexpected payload metadata.");
+    TORCH_CHECK(false,
+                "local_shm flat lookup returned unexpected payload metadata.");
   }
   if (EnsurePinnedLocalShmPayload(payload_values, payload_bytes)) {
     try {
       LocalShmFlatGetHandle handle_for_release = handle;
-      auto cpu_view = torch::from_blob(
+      auto cpu_view                            = torch::from_blob(
           const_cast<float*>(payload_values),
           {num_keys, embedding_dim},
           [kv_op, handle_for_release](void* /*unused*/) mutable {
@@ -322,7 +318,8 @@ void local_update_flat_torch(const std::string& table_name,
   torch::Tensor cpu_keys =
       keys.is_cuda() ? StageCudaTensorToPinnedCpu(keys, torch::kInt64) : keys;
   torch::Tensor cpu_grads =
-      grads.is_cuda() ? StageCudaTensorToPinnedCpu(grads, torch::kFloat32) : grads;
+      grads.is_cuda() ? StageCudaTensorToPinnedCpu(grads, torch::kFloat32)
+                      : grads;
 
   base::RecTensor rec_keys  = ToRecTensor(cpu_keys, base::DataType::UINT64);
   base::RecTensor rec_grads = ToRecTensor(cpu_grads, base::DataType::FLOAT32);

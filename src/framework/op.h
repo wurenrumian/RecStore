@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/tensor.h"
+#include "framework/common/op_runtime_support.h"
 #include "ps/base/base_client.h"
 #include <memory>
 #include <string>
@@ -11,7 +12,6 @@
 using base::RecTensor;
 
 namespace recstore {
-void ConfigureLogging(bool initialize_google_logging = true);
 enum class InitStrategyType { Normal, Uniform, Xavier, Zero };
 struct LocalShmFlatGetHandle;
 

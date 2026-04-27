@@ -16,12 +16,12 @@ struct LocalShmFlatGetHandle {
   static constexpr uint32_t kInvalidSlotId =
       std::numeric_limits<uint32_t>::max();
 
-  uint32_t slot_id        = kInvalidSlotId;
-  uint64_t request_id     = 0;
-  float* values           = nullptr;
-  int64_t num_rows        = 0;
-  int64_t embedding_dim   = 0;
-  uint64_t output_bytes   = 0;
+  uint32_t slot_id      = kInvalidSlotId;
+  uint64_t request_id   = 0;
+  float* values         = nullptr;
+  int64_t num_rows      = 0;
+  int64_t embedding_dim = 0;
+  uint64_t output_bytes = 0;
 };
 
 class LocalShmPSClient : public BasePSClient {

@@ -27,6 +27,11 @@ find_package(Python 3.10 COMPONENTS Interpreter Development REQUIRED)
 add_library(recstore_tf_ops SHARED
     op_tensorflow.cc
     ../op.cc
+    ../common/op_runtime_support.cc
+    ../common/local_shm_op_component.cc
+    ../common/ps_client_config_adapter.cc
+    ../../ps/client_factory.cc
+    ${PROJECT_SOURCE_DIR}/src/ps/rdma/rdma_ps_client_adapter.cc
 )
 
 if(USE_FAKE_KVCLIENT)
@@ -45,6 +50,13 @@ target_include_directories(recstore_tf_ops PRIVATE
 # --- Link libraries ---
 target_link_libraries(recstore_tf_ops PRIVATE
     ${TENSORFLOW_LIBRARIES}
+    wq_ps_client
+    grpc_ps_client
+    brpc_ps_client
+    local_shm_ps_client
+    protobuf::libprotobuf
+    gRPC::grpc++
+    glog::glog
 )
 
 # --- Set C++ standard ---

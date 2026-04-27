@@ -3,8 +3,7 @@
 
 namespace {
 
-std::vector<uint64_t>
-CollectReaderKeys(const ParameterCompressReader* reader) {
+std::vector<uint64_t> CollectReaderKeys(const ParameterCompressReader* reader) {
   const int size = reader->item_size();
   std::vector<uint64_t> keys;
   keys.reserve(size);
@@ -57,7 +56,7 @@ void SGD::Update(
     throw std::runtime_error("Table not found: " + table);
   }
 
-  int size = reader->item_size();
+  int size                   = reader->item_size();
   std::vector<uint64_t> keys = CollectReaderKeys(reader);
 
   std::vector<base::ConstArray<float>> current_values;
@@ -87,12 +86,13 @@ void SGD::Update(
   }
 }
 
-void SGD::UpdateFlat(std::string table,
-                     const base::ConstArray<uint64_t>& keys,
-                     const float* grads,
-                     int64_t num_rows,
-                     int64_t embedding_dim,
-                     unsigned tid) {
+void SGD::UpdateFlat(
+    std::string table,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim,
+    unsigned tid) {
   ValidateFlatUpdateArgs(keys, grads, num_rows, embedding_dim);
 
   auto it = tensor_map_.find(table);
@@ -107,15 +107,14 @@ void SGD::UpdateFlat(std::string table,
 
   for (int64_t row = 0; row < num_rows; ++row) {
     const float* row_grad = grads + row * embedding_dim;
-    const auto& current = current_values[static_cast<size_t>(row)];
+    const auto& current   = current_values[static_cast<size_t>(row)];
     if (current.Size() == 0) {
       std::vector<float> zero_init(static_cast<size_t>(embedding_dim), 0.0f);
       for (int64_t col = 0; col < embedding_dim; ++col) {
         zero_init[static_cast<size_t>(col)] = -learning_rate_ * row_grad[col];
       }
-      std::string val_str(
-          reinterpret_cast<char*>(zero_init.data()),
-          zero_init.size() * sizeof(float));
+      std::string val_str(reinterpret_cast<char*>(zero_init.data()),
+                          zero_init.size() * sizeof(float));
       it->second->Put(keys[static_cast<size_t>(row)], val_str, tid);
       continue;
     }
@@ -169,7 +168,7 @@ void AdaGrad::Update(
         "Accumulated gradient table not found: " + acc_table);
   }
 
-  int size = reader->item_size();
+  int size                   = reader->item_size();
   std::vector<uint64_t> keys = CollectReaderKeys(reader);
 
   std::vector<base::ConstArray<float>> current_values;
@@ -198,12 +197,13 @@ void AdaGrad::Update(
   }
 }
 
-void AdaGrad::UpdateFlat(std::string table,
-                         const base::ConstArray<uint64_t>& keys,
-                         const float* grads,
-                         int64_t num_rows,
-                         int64_t embedding_dim,
-                         unsigned tid) {
+void AdaGrad::UpdateFlat(
+    std::string table,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim,
+    unsigned tid) {
   ValidateFlatUpdateArgs(keys, grads, num_rows, embedding_dim);
 
   auto param_it = tensor_map_.find(table);
@@ -242,7 +242,8 @@ void AdaGrad::UpdateFlat(std::string table,
 #pragma omp simd
     for (int64_t col = 0; col < embedding_dim; ++col) {
       acc_data[col] += row_grad[col] * row_grad[col];
-      float adaptive_lr = learning_rate_ / (std::sqrt(acc_data[col]) + epsilon_);
+      float adaptive_lr =
+          learning_rate_ / (std::sqrt(acc_data[col]) + epsilon_);
       param_data[col] -= adaptive_lr * row_grad[col];
     }
   }
@@ -287,7 +288,7 @@ void RowWiseAdaGrad::Update(
         "Row-wise accumulated gradient table not found: " + acc_table);
   }
 
-  int size = reader->item_size();
+  int size                   = reader->item_size();
   std::vector<uint64_t> keys = CollectReaderKeys(reader);
 
   std::vector<base::ConstArray<float>> current_values;
@@ -322,12 +323,13 @@ void RowWiseAdaGrad::Update(
   }
 }
 
-void RowWiseAdaGrad::UpdateFlat(std::string table,
-                                const base::ConstArray<uint64_t>& keys,
-                                const float* grads,
-                                int64_t num_rows,
-                                int64_t embedding_dim,
-                                unsigned tid) {
+void RowWiseAdaGrad::UpdateFlat(
+    std::string table,
+    const base::ConstArray<uint64_t>& keys,
+    const float* grads,
+    int64_t num_rows,
+    int64_t embedding_dim,
+    unsigned tid) {
   ValidateFlatUpdateArgs(keys, grads, num_rows, embedding_dim);
 
   auto param_it = tensor_map_.find(table);

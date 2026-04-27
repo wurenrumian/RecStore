@@ -119,7 +119,8 @@ TEST(LocalShmPSClientTest, GetParameterFlatRoundTripUsesFixedEmbeddingDim) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, SubmitWaitAndReleaseGetParameterFlatExposesSlotPayload) {
+TEST(LocalShmPSClientTest,
+     SubmitWaitAndReleaseGetParameterFlatExposesSlotPayload) {
   const auto config = MakeLocalShmConfig(
       "recstore_local_shm_ps_client_flat_handle_" + std::to_string(::getpid()));
   LocalShmParameterServer server;
@@ -205,10 +206,9 @@ TEST(LocalShmPSClientTest, UpdateParameterFlatRejectsMismatchedEmbeddingDim) {
   ASSERT_EQ(client.PutParameter(key_array, values), 0);
 
   std::vector<float> grads = {0.1f, 0.2f, 0.3f};
-  EXPECT_EQ(
-      client.UpdateParameterFlat(
-          "table_update_mismatch", key_array, grads.data(), 1, 3),
-      -1);
+  EXPECT_EQ(client.UpdateParameterFlat(
+                "table_update_mismatch", key_array, grads.data(), 1, 3),
+            -1);
 
   server.Stop();
   server_thread.join();
