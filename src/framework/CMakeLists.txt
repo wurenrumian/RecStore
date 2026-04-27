@@ -12,9 +12,52 @@ endif()
 
 add_test(
     NAME pytorch_client_test
-    COMMAND ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client/client_test.py
+    COMMAND ${Python_EXECUTABLE} ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch/test_client.py
             "$<TARGET_FILE:recstore_torch_ops>"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pytorch/python_client
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch
+)
+
+add_test(
+    NAME pytorch_client_test_rdma_basic
+    COMMAND ${CMAKE_COMMAND} -E env
+            RECSTORE_CONFIG=${PROJECT_SOURCE_DIR}/src/test/configs/recstore_config.op_rdma.json
+            RECSTORE_CLIENT_TEST_PHASE=basic
+            RECSTORE_USE_LOCAL_MEMCACHED=auto
+            ${Python_EXECUTABLE} ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch/test_client.py
+            "$<TARGET_FILE:recstore_torch_ops>"
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch
+)
+
+add_test(
+    NAME pytorch_client_test_rdma
+    COMMAND ${CMAKE_COMMAND} -E env
+            RECSTORE_CONFIG=${PROJECT_SOURCE_DIR}/src/test/configs/recstore_config.op_rdma.json
+            RECSTORE_CLIENT_TEST_PHASE=full
+            RECSTORE_USE_LOCAL_MEMCACHED=auto
+            ${Python_EXECUTABLE} ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch/test_client.py
+            "$<TARGET_FILE:recstore_torch_ops>"
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch
+)
+
+add_test(
+    NAME pytorch_client_test_rdma_auto
+    COMMAND ${CMAKE_COMMAND} -E env
+            RECSTORE_CONFIG=${PROJECT_SOURCE_DIR}/src/test/configs/recstore_config.op_rdma.json
+            RECSTORE_CLIENT_TEST_PHASE=full
+            RECSTORE_USE_LOCAL_MEMCACHED=auto
+            ${Python_EXECUTABLE} ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch/test_client.py
+            "$<TARGET_FILE:recstore_torch_ops>"
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/src/test/framework/pytorch
+)
+
+set_tests_properties(
+    pytorch_client_test_rdma_basic
+    pytorch_client_test_rdma
+    pytorch_client_test_rdma_auto
+    PROPERTIES
+        SKIP_RETURN_CODE 77
+        TIMEOUT 90
+        LABELS "rdma_integration"
 )
 
 add_test(
