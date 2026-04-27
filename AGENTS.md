@@ -128,7 +128,7 @@ When the user asks to validate baseline repository operability, or explicitly as
 
 Notes:
 
-- `pytorch_client_test` maps to `src/framework/pytorch/python_client/client_test.py`.
+- `pytorch_client_test` maps to `src/test/framework/pytorch/test_client.py`.
 - The test connects to the ports defined in `recstore_config.json`, currently `15123` and `15124`.
 - If a usable `ps_server` is already running on those ports, the test may reuse it.
 - If the environment blocks local socket binding, start the server and run the client tests in an environment without that restriction.

@@ -69,7 +69,7 @@ nav:
     - 介绍: index.md
     - 快速开始:
       - 搭建指南: quickstart.md
-      - 快速运行: quick_run.md
+      - 快速运行: quickrun.md
       - 常见问题: faq.md
   - 配置:
       - 项目配置: config.md
@@ -100,6 +100,7 @@ nav:
     - 免配置运行: dev/zero_config_run.md
     - 功能实现:
       - 添加算子: dev/feature/add_operator.md
+      - 分布式训练: dev/distributed.md
     - 测试文档:
       - 概览: dev/testing.md
       - 辅助工具: dev/tests/tools.md
