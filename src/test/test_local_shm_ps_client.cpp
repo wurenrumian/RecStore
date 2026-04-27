@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <limits>
 #include <thread>
 #include <vector>
+#include <sys/mman.h>
 
 #include "base/json.h"
 #include "ps/local_shm/local_shm_client.h"
@@ -16,32 +19,83 @@
 namespace recstore {
 namespace {
 
-json MakeLocalShmConfig(const std::string& region_name,
-                        uint32_t ready_queue_count       = 1,
-                        uint32_t ready_queue_burst_limit = 8) {
-  return {
-      {"cache_ps",
-       {{"num_threads", 1},
-        {"ps_type", "LOCAL_SHM"},
-        {"base_kv_config",
-         {{"path", "/tmp/recstore_local_shm_test"},
-          {"index_type", "DRAM"},
-          {"value_type", "DRAM"},
-          {"capacity", 1024},
-          {"value_size", 16}}}}},
-      {"local_shm",
-       {{"region_name", region_name},
-        {"slot_count", 8},
-        {"ready_queue_count", ready_queue_count},
-        {"ready_queue_burst_limit", ready_queue_burst_limit},
-        {"slot_buffer_bytes", 1 << 20},
-        {"client_timeout_ms", 1000}}},
-  };
+std::string NormalizeRegionNameForShm(const std::string& region_name) {
+  if (!region_name.empty() && region_name.front() == '/') {
+    return region_name;
+  }
+  return "/" + region_name;
 }
 
-TEST(LocalShmPSClientTest, FactoryClientTypeCanBeConstructed) {
+void RemoveRegionIfExists(const std::string& region_name) {
+  ::shm_unlink(NormalizeRegionNameForShm(region_name).c_str());
+}
+
+std::string MakeUniqueRegionName(const std::string& prefix) {
+  static std::atomic<uint64_t> counter{0};
+  return prefix + "_" + std::to_string(::getpid()) + "_" +
+         std::to_string(
+             std::chrono::steady_clock::now().time_since_epoch().count()) +
+         "_" + std::to_string(counter.fetch_add(1, std::memory_order_relaxed));
+}
+
+class LocalShmPSClientTest : public ::testing::Test {
+protected:
+  json MakeLocalShmConfig(const std::string& region_name,
+                          uint32_t ready_queue_count       = 1,
+                          uint32_t ready_queue_burst_limit = 8) {
+    const std::string storage_path = "/tmp/" + region_name + "_kv_store";
+    cleanup_paths_.push_back(storage_path);
+    cleanup_region_names_.push_back(region_name);
+    std::error_code ec;
+    std::filesystem::remove_all(storage_path, ec);
+    RemoveRegionIfExists(region_name);
+    return {
+        {"cache_ps",
+         {{"num_threads", 1},
+          {"ps_type", "LOCAL_SHM"},
+          {"base_kv_config",
+           {{"path", storage_path},
+            {"index_type", "DRAM"},
+            {"value_type", "DRAM"},
+            {"capacity", 1024},
+            {"value_size", 16}}}}},
+        {"local_shm",
+         {{"region_name", region_name},
+          {"local_rank", 0},
+          {"slot_count", 8},
+          {"ready_queue_count", ready_queue_count},
+          {"ready_queue_burst_limit", ready_queue_burst_limit},
+          {"slot_buffer_bytes", 1 << 20},
+          {"client_timeout_ms", 1000}}},
+    };
+  }
+
+  void TearDown() override {
+    std::error_code ec;
+    for (const auto& path : cleanup_paths_) {
+      std::filesystem::remove_all(path, ec);
+    }
+    for (const auto& region_name : cleanup_region_names_) {
+      RemoveRegionIfExists(region_name);
+    }
+  }
+
+private:
+  std::vector<std::string> cleanup_paths_;
+  std::vector<std::string> cleanup_region_names_;
+};
+
+TEST_F(LocalShmPSClientTest, StoragePathIsScopedToRegionName) {
+  const auto config_a = MakeLocalShmConfig("recstore_local_shm_ps_client_a");
+  const auto config_b = MakeLocalShmConfig("recstore_local_shm_ps_client_b");
+
+  EXPECT_NE(config_a["cache_ps"]["base_kv_config"]["path"],
+            config_b["cache_ps"]["base_kv_config"]["path"]);
+}
+
+TEST_F(LocalShmPSClientTest, FactoryClientTypeCanBeConstructed) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_factory_" + std::to_string(::getpid()));
+      MakeUniqueRegionName("recstore_local_shm_ps_client_factory"));
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -56,9 +110,9 @@ TEST(LocalShmPSClientTest, FactoryClientTypeCanBeConstructed) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, PutGetAndUpdateFlatRoundTrip) {
+TEST_F(LocalShmPSClientTest, PutGetAndUpdateFlatRoundTrip) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_rw_" + std::to_string(::getpid()));
+      MakeUniqueRegionName("recstore_local_shm_ps_client_rw"));
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -90,9 +144,9 @@ TEST(LocalShmPSClientTest, PutGetAndUpdateFlatRoundTrip) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, GetParameterFlatRoundTripUsesFixedEmbeddingDim) {
+TEST_F(LocalShmPSClientTest, GetParameterFlatRoundTripUsesFixedEmbeddingDim) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_flat_get_" + std::to_string(::getpid()));
+      MakeUniqueRegionName("recstore_local_shm_ps_client_flat_get"));
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -119,10 +173,10 @@ TEST(LocalShmPSClientTest, GetParameterFlatRoundTripUsesFixedEmbeddingDim) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest,
-     SubmitWaitAndReleaseGetParameterFlatExposesSlotPayload) {
+TEST_F(LocalShmPSClientTest,
+       SubmitWaitAndReleaseGetParameterFlatExposesSlotPayload) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_flat_handle_" + std::to_string(::getpid()));
+      MakeUniqueRegionName("recstore_local_shm_ps_client_flat_handle"));
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -162,10 +216,9 @@ TEST(LocalShmPSClientTest,
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, GetParameterFlatRejectsMismatchedEmbeddingDim) {
+TEST_F(LocalShmPSClientTest, GetParameterFlatRejectsMismatchedEmbeddingDim) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_flat_dim_mismatch_" +
-      std::to_string(::getpid()));
+      MakeUniqueRegionName("recstore_local_shm_ps_client_flat_dim_mismatch"));
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -187,10 +240,9 @@ TEST(LocalShmPSClientTest, GetParameterFlatRejectsMismatchedEmbeddingDim) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, UpdateParameterFlatRejectsMismatchedEmbeddingDim) {
+TEST_F(LocalShmPSClientTest, UpdateParameterFlatRejectsMismatchedEmbeddingDim) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_update_dim_mismatch_" +
-      std::to_string(::getpid()));
+      MakeUniqueRegionName("recstore_local_shm_ps_client_update_dim_mismatch"));
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -214,9 +266,9 @@ TEST(LocalShmPSClientTest, UpdateParameterFlatRejectsMismatchedEmbeddingDim) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, MultiClientUsesIndependentReadyQueues) {
+TEST_F(LocalShmPSClientTest, MultiClientUsesIndependentReadyQueues) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_multi_" + std::to_string(::getpid()), 2);
+      MakeUniqueRegionName("recstore_local_shm_ps_client_multi"), 2);
   LocalShmParameterServer server;
   server.Init(config);
 
@@ -263,36 +315,37 @@ TEST(LocalShmPSClientTest, MultiClientUsesIndependentReadyQueues) {
   server_thread.join();
 }
 
-TEST(LocalShmPSClientTest, LocalRankEnvironmentSelectsReadyQueue) {
+TEST_F(LocalShmPSClientTest, LocalRankEnvironmentSelectsReadyQueue) {
   auto config = MakeLocalShmConfig(
-      "recstore_local_shm_ps_client_env_" + std::to_string(::getpid()), 2);
-  config["local_shm"]["client_timeout_ms"] = 100;
+      MakeUniqueRegionName("recstore_local_shm_ps_client_env"), 2);
+  config["local_shm"].erase("local_rank");
   LocalShmRegion region;
   ASSERT_TRUE(region.Create(
       config["local_shm"]["region_name"].get<std::string>(), 8, 1 << 20, 2));
 
   ASSERT_EQ(::setenv("LOCAL_RANK", "1", 1), 0);
-  int init_ret = 0;
-  std::thread worker([&]() {
-    LocalShmPSClient client(config["local_shm"]);
-    init_ret = client.InitEmbeddingTable("table_env", {128, 4});
-  });
+  LocalShmPSClient client(config["local_shm"]);
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  std::vector<uint64_t> keys;
+  base::ConstArray<uint64_t> key_array(keys);
+  LocalShmFlatGetHandle handle;
+  ASSERT_EQ(client.SubmitGetParameterFlat(key_array, 0, 4, &handle), 0);
+  ASSERT_NE(handle.slot_id, LocalShmFlatGetHandle::kInvalidSlotId);
+
   uint32_t slot_id = 0;
   EXPECT_FALSE(LocalShmQueueDequeue(
       region.ready_queue_header(0), region.ready_queue_cells(0), &slot_id));
-  EXPECT_TRUE(LocalShmQueueDequeue(
+  ASSERT_TRUE(LocalShmQueueDequeue(
       region.ready_queue_header(1), region.ready_queue_cells(1), &slot_id));
+  EXPECT_EQ(slot_id, handle.slot_id);
 
-  worker.join();
-  EXPECT_EQ(init_ret, -1);
+  client.ReleaseGetParameterFlat(&handle);
   ::unsetenv("LOCAL_RANK");
 }
 
-TEST(LocalShmPSClientTest, ServerDrainReadyQueueHonorsBurstLimit) {
+TEST_F(LocalShmPSClientTest, ServerDrainReadyQueueHonorsBurstLimit) {
   const auto config = MakeLocalShmConfig(
-      "recstore_local_shm_server_burst_" + std::to_string(::getpid()), 2, 2);
+      MakeUniqueRegionName("recstore_local_shm_server_burst"), 2, 2);
   LocalShmRegion region;
   ASSERT_TRUE(region.Create(
       config["local_shm"]["region_name"].get<std::string>(), 8, 1 << 20, 2));
