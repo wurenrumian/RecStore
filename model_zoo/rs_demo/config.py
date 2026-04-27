@@ -51,6 +51,9 @@ class RunConfig:
     nnodes: int = 1
     node_rank: int = 0
     nproc_per_node: int = 1
+    enable_single_node_distributed_fast_path: bool = False
+    single_node_ps_backend: str = "local_shm"
+    single_node_owner_policy: str = "hash_mod_world_size"
     master_addr: str = "127.0.0.1"
     master_port: int = 29500
     rdzv_backend: str = "c10d"
@@ -82,6 +85,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nnodes", type=int, default=1)
     parser.add_argument("--node-rank", type=int, default=0)
     parser.add_argument("--nproc-per-node", type=int, default=None)
+    parser.add_argument(
+        "--enable-single-node-distributed-fast-path",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--single-node-ps-backend",
+        type=str,
+        default="local_shm",
+        choices=["local_shm"],
+    )
+    parser.add_argument(
+        "--single-node-owner-policy",
+        type=str,
+        default="hash_mod_world_size",
+        choices=["hash_mod_world_size"],
+    )
     parser.add_argument("--master-addr", type=str, default="127.0.0.1")
     parser.add_argument("--master-port", type=int, default=29500)
     parser.add_argument("--rdzv-backend", type=str, default="c10d")
@@ -223,6 +243,23 @@ def validate_recstore_config(cfg: RunConfig) -> None:
         raise RuntimeError("--nproc-per-node must be greater than 0.")
     if cfg.node_rank < 0 or cfg.node_rank >= cfg.nnodes:
         raise RuntimeError("--node-rank must be within [0, nnodes).")
+    if cfg.enable_single_node_distributed_fast_path:
+        if cfg.nnodes != 1:
+            raise RuntimeError(
+                "RecStore single-node distributed fast path requires --nnodes=1."
+            )
+        if cfg.nproc_per_node <= 1:
+            raise RuntimeError(
+                "RecStore single-node distributed fast path requires --nproc-per-node greater than 1."
+            )
+        if cfg.single_node_ps_backend != "local_shm":
+            raise RuntimeError(
+                "RecStore single-node distributed fast path only supports --single-node-ps-backend=local_shm."
+            )
+        if cfg.single_node_owner_policy != "hash_mod_world_size":
+            raise RuntimeError(
+                "RecStore single-node distributed fast path only supports --single-node-owner-policy=hash_mod_world_size."
+            )
     if cfg.nnodes > 1 and not cfg.recstore_runtime_dir:
         raise RuntimeError(
             "RecStore multi-node requires --recstore-runtime-dir pointing to a shared runtime directory."

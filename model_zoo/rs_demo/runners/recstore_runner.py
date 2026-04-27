@@ -429,6 +429,11 @@ class RecStoreRunner(BenchmarkRunner):
                 kv_client=client,
                 initialize_tables=(rank == 0),
             )
+            if cfg.enable_single_node_distributed_fast_path:
+                embedding_module.enable_single_node_distributed_fast_path = True
+                embedding_module.single_node_distributed_mode = "single_node"
+                embedding_module.single_node_ps_backend = cfg.single_node_ps_backend
+                embedding_module.single_node_owner_policy = cfg.single_node_owner_policy
             _barrier_for_step_alignment(
                 dist=dist,
                 device=device,

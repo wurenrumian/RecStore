@@ -1,4 +1,6 @@
 #include "framework/op.h"
+#include "framework/common/local_shm_op_component.h"
+#include "framework/common/op_runtime_support.h"
 #include "framework/common/ps_client_config_adapter.h"
 #include "ps/client_factory.h"
 #include "ps/rdma/rdma_ps_client_adapter.h"
@@ -16,7 +18,6 @@
 #include <cstdlib>
 #include <string>
 #include <fstream>
-
 #include "base/tensor.h"
 #include <glog/logging.h>
 #ifdef ENABLE_PERF_REPORT
@@ -27,31 +28,15 @@ namespace recstore {
 
 namespace {
 bool IsReadWriteSuccess(BasePSClient* client, int ret) {
-  if (dynamic_cast<RDMAPSClientAdapter*>(client) != nullptr) {
+  if (dynamic_cast<RDMAPSClientAdapter*>(client) != nullptr ||
+      dynamic_cast<LocalShmPSClient*>(client) != nullptr) {
     return ret == 0;
   }
   // Legacy GRPC/BRPC read/write methods return bool-like int values.
   return ret != 0;
 }
+
 } // namespace
-
-json load_config_from_file(const std::string& config_path) {
-  std::ifstream file(config_path);
-  if (!file.is_open()) {
-    throw std::runtime_error("Cannot open config file: " + config_path);
-  }
-
-  std::string content(
-      (std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-  file.close();
-
-  try {
-    return json::parse(content);
-  } catch (const json::exception& e) {
-    throw std::runtime_error(
-        "Failed to parse config file: " + std::string(e.what()));
-  }
-}
 
 void validate_keys(const base::RecTensor& keys) {
   if (keys.dtype() != base::DataType::UINT64) {
@@ -121,87 +106,6 @@ std::shared_ptr<CommonOp> GetKVClientOp() {
 
 namespace recstore {
 
-std::unique_ptr<BasePSClient> create_ps_client_from_config(const json& config) {
-  return CreatePSClient(ResolvePSClientOptionsFromFrameworkConfig(config));
-}
-
-json GetGlobalConfig() {
-  try {
-    auto current_path = std::filesystem::current_path();
-    std::cerr << "[Config] Current working directory: " << current_path.string()
-              << std::endl;
-
-    std::filesystem::path config_path;
-    bool config_found = false;
-
-    if (const char* env_config = std::getenv("RECSTORE_CONFIG");
-        env_config != nullptr && env_config[0] != '\0') {
-      config_path = env_config;
-      if (std::filesystem::exists(config_path)) {
-        config_found = true;
-        std::cerr << "[Config] Using config file from RECSTORE_CONFIG: "
-                  << config_path.string() << std::endl;
-      } else {
-        throw std::runtime_error("RECSTORE_CONFIG points to a missing file: " +
-                                 config_path.string());
-      }
-    }
-
-    if (!config_found) {
-      for (auto p = current_path; p.has_parent_path(); p = p.parent_path()) {
-        if (std::filesystem::exists(p / "recstore_config.json")) {
-          config_path  = p / "recstore_config.json";
-          config_found = true;
-          std::cerr << "[Config] Found config file at: " << config_path.string()
-                    << std::endl;
-          break;
-        }
-      }
-    }
-
-    if (!config_found) {
-      throw std::runtime_error(
-          "Could not find 'recstore_config.json' in current or any parent "
-          "directory starting from: " +
-          current_path.string());
-    }
-
-    std::ifstream test_file(config_path);
-    if (!test_file.good()) {
-      throw std::runtime_error(
-          "Config file not found: " + config_path.string() +
-          ". Please ensure recstore_config.json exists "
-          "in the project root directory.");
-    }
-    test_file.close();
-
-    return load_config_from_file(config_path);
-  } catch (const std::exception& e) {
-    std::cerr << "Failed to load config: " << e.what() << std::endl;
-    return json::object();
-  }
-}
-
-void ConfigureLogging(bool initialize_google_logging) {
-  static std::once_flag log_init_flag;
-  std::call_once(log_init_flag, [initialize_google_logging]() {
-    std::cerr << "[Debug] ConfigureLogging called. Setting flags." << std::endl;
-    FLAGS_log_dir         = "/tmp";
-    FLAGS_alsologtostderr = false;
-    FLAGS_logtostderr     = false;
-    FLAGS_stderrthreshold = google::ERROR;
-
-    google::SetLogDestination(google::INFO, "/tmp/recstore_op_layer_INFO_");
-    google::SetLogDestination(
-        google::WARNING, "/tmp/recstore_op_layer_WARNING_");
-    google::SetLogDestination(google::ERROR, "/tmp/recstore_op_layer_ERROR_");
-
-    if (initialize_google_logging) {
-      google::InitGoogleLogging("recstore_op_layer");
-    }
-  });
-}
-
 KVClientOp::KVClientOp() {
   if (!ps_client_) {
     try {
@@ -214,6 +118,7 @@ KVClientOp::KVClientOp() {
       }
       std::cerr << "[RDMA-DBG] KVClientOp ctor use_rdma="
                 << (use_rdma ? "true" : "false") << std::endl;
+      ps_backend_name_ = BackendNameFromConfig(config);
 
       if (use_rdma) {
         std::cerr << "[RDMA-DBG] InitializeRdmaProcessRuntime before "
@@ -273,8 +178,56 @@ void KVClientOp::SetPSConfig(const std::string& host, int port) {
 
   ps_client_holder_ = create_ps_client_from_config(config);
   ps_client_        = ps_client_holder_.get();
+  ps_backend_name_  = BackendNameFromConfig(config);
   LOG(INFO) << "Re-initialized PS client with host=" << final_host
             << " port=" << final_port;
+}
+
+void KVClientOp::SetPSBackend(const std::string& backend) {
+  if (backend.empty()) {
+    throw std::invalid_argument("backend must be non-empty");
+  }
+
+  json config = GetGlobalConfig();
+  if (!config.contains("cache_ps")) {
+    config["cache_ps"] = json::object();
+  }
+  config["cache_ps"]["ps_type"] = NormalizePSType(backend);
+
+  ps_client_holder_.reset();
+  ps_client_        = nullptr;
+  ps_client_holder_ = create_ps_client_from_config(config);
+  ps_client_        = ps_client_holder_.get();
+  ps_backend_name_  = BackendNameFromConfig(config);
+  LOG(INFO) << "Re-initialized PS client with backend=" << ps_backend_name_;
+}
+
+std::string KVClientOp::CurrentPSBackend() const { return ps_backend_name_; }
+
+void KVClientOp::LocalLookupFlat(const base::RecTensor& keys,
+                                 base::RecTensor& values) {
+  LocalShmLookupFlat(ps_client_, ps_backend_name_, keys, values);
+}
+
+int KVClientOp::SubmitLocalLookupFlat(const base::RecTensor& keys,
+                                      int64_t embedding_dim,
+                                      LocalShmFlatGetHandle* handle) {
+  return SubmitLocalShmLookupFlat(
+      ps_client_, ps_backend_name_, keys, embedding_dim, handle);
+}
+
+int KVClientOp::WaitLocalLookupFlat(LocalShmFlatGetHandle* handle) {
+  return WaitLocalShmLookupFlat(ps_client_, ps_backend_name_, handle);
+}
+
+void KVClientOp::ReleaseLocalLookupFlat(LocalShmFlatGetHandle* handle) {
+  ReleaseLocalShmLookupFlat(ps_client_, ps_backend_name_, handle);
+}
+
+void KVClientOp::LocalUpdateFlat(const std::string& table_name,
+                                 const base::RecTensor& keys,
+                                 const base::RecTensor& grads) {
+  LocalShmUpdateFlat(ps_client_, ps_backend_name_, table_name, keys, grads);
 }
 
 void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {

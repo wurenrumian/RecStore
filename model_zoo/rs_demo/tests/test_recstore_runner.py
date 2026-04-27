@@ -112,6 +112,226 @@ class _FakeSparseSGD:
 
 
 class TestRecStoreRunner(unittest.TestCase):
+    def _run_local_worker_with_fake_embedding_module(
+        self,
+        cfg: RunConfig,
+        *,
+        rank: int = 0,
+        world_size: int = 1,
+        local_rank: int = 0,
+    ) -> _FakeRecStoreEmbeddingBagCollection:
+        runner_runtime = Path(tempfile.mkdtemp())
+        repo_root = Path("/app/RecStore")
+
+        dense = torch.zeros((1, 13), dtype=torch.float32)
+        sparse = torch.zeros((1, 1), dtype=torch.int64)
+        labels = torch.zeros((1, 1), dtype=torch.float32)
+        dataset = [(dense, sparse, labels)]
+        dataloader = [(dense, sparse, labels)]
+
+        fake_client = _FakeDirectReadShardedClient()
+        fake_client_module = types.ModuleType("client")
+        fake_client_module.RecstoreClient = lambda library_path=None: object()
+        fake_embeddingbag_module = types.ModuleType("python.pytorch.torchrec_kv.EmbeddingBag")
+        fake_embeddingbag_module.RecStoreEmbeddingBagCollection = _FakeRecStoreEmbeddingBagCollection
+        fake_optimizer_module = types.ModuleType("python.pytorch.recstore.optimizer")
+        fake_optimizer_module.SparseSGD = _FakeSparseSGD
+
+        _FakeRecStoreEmbeddingBagCollection.last_instance = None
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                mock.patch.dict(
+                    "sys.modules",
+                    {
+                        "client": fake_client_module,
+                        "python.pytorch.torchrec_kv.EmbeddingBag": fake_embeddingbag_module,
+                        "python.pytorch.recstore.optimizer": fake_optimizer_module,
+                    },
+                )
+            )
+            stack.enter_context(
+                mock.patch("model_zoo.rs_demo.runners.recstore_runner.inject_project_paths", lambda *_: None)
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.detect_library_path",
+                    lambda *_: repo_root / "build/lib/lib_recstore_ops.so",
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.ShardedRecstoreClient",
+                    lambda raw_client, runtime_dir: fake_client,
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.get_default_cat_names",
+                    lambda: ["cat_0"],
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.build_train_dataloader",
+                    lambda **kwargs: (dataset, dataloader),
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.build_kjt_batch_from_dense_sparse_labels",
+                    lambda *args, **kwargs: (None, object()),
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.build_hybrid_dense_arch",
+                    lambda *args, **kwargs: _DummyDense().to(kwargs["device"]),
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.reshape_torchrec_embeddings_for_dlrm",
+                    lambda **kwargs: torch.zeros((1, 1, 4), dtype=torch.float32, requires_grad=True),
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.prepare_hybrid_dlrm_input",
+                    lambda **kwargs: (
+                        torch.zeros((1, 13), dtype=torch.float32, device=kwargs["device"]),
+                        torch.zeros((1, 1, 4), dtype=torch.float32, device=kwargs["device"], requires_grad=True),
+                        torch.zeros((1, 1), dtype=torch.float32, device=kwargs["device"]),
+                    ),
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.run_hybrid_backward",
+                    lambda **kwargs: torch.zeros((1, 1, 4), dtype=torch.float32),
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.sync_device",
+                    lambda *args, **kwargs: None,
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.finalize_recstore_row",
+                    lambda row: row,
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.summarize_us",
+                    lambda xs: "ok",
+                )
+            )
+            stack.enter_context(
+                mock.patch(
+                    "model_zoo.rs_demo.runners.recstore_runner.write_stage_csv",
+                    lambda *args, **kwargs: None,
+                )
+            )
+
+            runner = RecStoreRunner(runner_runtime)
+            runner._run_local_worker(
+                repo_root=repo_root,
+                cfg=cfg,
+                rank=rank,
+                world_size=world_size,
+                local_rank=local_rank,
+                out_csv=runner_runtime / "rank.csv",
+            )
+
+        fake_ebc = _FakeRecStoreEmbeddingBagCollection.last_instance
+        self.assertIsNotNone(fake_ebc)
+        return fake_ebc
+
+    def test_parse_config_keeps_single_node_fast_path_disabled_by_default(self) -> None:
+        cfg = config.parse_config(["--backend", "recstore"])
+
+        self.assertFalse(cfg.enable_single_node_distributed_fast_path)
+        self.assertEqual(cfg.single_node_ps_backend, "local_shm")
+        self.assertEqual(cfg.single_node_owner_policy, "hash_mod_world_size")
+
+    def test_validate_recstore_config_allows_single_node_fast_path(self) -> None:
+        cfg = RunConfig(
+            backend="recstore",
+            nnodes=1,
+            nproc_per_node=2,
+            enable_single_node_distributed_fast_path=True,
+            single_node_ps_backend="local_shm",
+            single_node_owner_policy="hash_mod_world_size",
+        )
+
+        config.validate_recstore_config(cfg)
+
+    def test_validate_recstore_config_rejects_single_node_fast_path_with_multiple_nodes(self) -> None:
+        cfg = RunConfig(
+            backend="recstore",
+            nnodes=2,
+            nproc_per_node=2,
+            node_rank=0,
+            recstore_runtime_dir="/tmp/shared",
+            enable_single_node_distributed_fast_path=True,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "single-node distributed fast path requires --nnodes=1",
+        ):
+            config.validate_recstore_config(cfg)
+
+    def test_validate_recstore_config_rejects_single_node_fast_path_without_multiple_processes(self) -> None:
+        cfg = RunConfig(
+            backend="recstore",
+            nnodes=1,
+            nproc_per_node=1,
+            enable_single_node_distributed_fast_path=True,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "single-node distributed fast path requires --nproc-per-node greater than 1",
+        ):
+            config.validate_recstore_config(cfg)
+
+    def test_validate_recstore_config_rejects_invalid_fast_path_backend(self) -> None:
+        cfg = RunConfig(
+            backend="recstore",
+            nnodes=1,
+            nproc_per_node=2,
+            enable_single_node_distributed_fast_path=True,
+            single_node_ps_backend="brpc",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "single-node distributed fast path only supports --single-node-ps-backend=local_shm",
+        ):
+            config.validate_recstore_config(cfg)
+
+    def test_parse_config_rejects_invalid_single_node_owner_policy_choice(self) -> None:
+        with self.assertRaises(SystemExit):
+            config.parse_config(
+                [
+                    "--single-node-owner-policy",
+                    "invalid_policy",
+                ]
+            )
+
+    def test_parse_config_rejects_invalid_single_node_ps_backend_choice(self) -> None:
+        with self.assertRaises(SystemExit):
+            config.parse_config(
+                [
+                    "--single-node-ps-backend",
+                    "invalid_backend",
+                ]
+            )
+
     def test_build_worker_fingerprint_includes_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
@@ -245,6 +465,49 @@ class TestRecStoreRunner(unittest.TestCase):
 
         self.assertIn("--recstore-runtime-dir", cmd)
         self.assertIn(cfg.recstore_runtime_dir, cmd)
+
+    def test_embedding_module_default_path_does_not_inject_single_node_fast_path(self) -> None:
+        cfg = RunConfig(
+            backend="recstore",
+            steps=1,
+            warmup_steps=0,
+            init_rows=1,
+            batch_size=1,
+            embedding_dim=4,
+            num_embeddings=16,
+            recstore_main_csv="/tmp/recstore-default.csv",
+        )
+
+        fake_ebc = self._run_local_worker_with_fake_embedding_module(cfg)
+
+        self.assertFalse(hasattr(fake_ebc, "enable_single_node_distributed_fast_path"))
+        self.assertFalse(hasattr(fake_ebc, "single_node_distributed_mode"))
+        self.assertFalse(hasattr(fake_ebc, "single_node_ps_backend"))
+        self.assertFalse(hasattr(fake_ebc, "single_node_owner_policy"))
+
+    def test_embedding_module_injects_single_node_fast_path_when_enabled(self) -> None:
+        cfg = RunConfig(
+            backend="recstore",
+            steps=1,
+            warmup_steps=0,
+            init_rows=1,
+            batch_size=1,
+            embedding_dim=4,
+            num_embeddings=16,
+            nnodes=1,
+            nproc_per_node=2,
+            enable_single_node_distributed_fast_path=True,
+            single_node_ps_backend="local_shm",
+            single_node_owner_policy="hash_mod_world_size",
+            recstore_main_csv="/tmp/recstore-fast-path.csv",
+        )
+
+        fake_ebc = self._run_local_worker_with_fake_embedding_module(cfg)
+
+        self.assertTrue(fake_ebc.enable_single_node_distributed_fast_path)
+        self.assertEqual(fake_ebc.single_node_distributed_mode, "single_node")
+        self.assertEqual(fake_ebc.single_node_ps_backend, "local_shm")
+        self.assertEqual(fake_ebc.single_node_owner_policy, "hash_mod_world_size")
 
     def test_read_before_update_prefetch_mode_uses_ebc_prefetch_and_sparse_optimizer(self) -> None:
         runner_runtime = Path(tempfile.mkdtemp())

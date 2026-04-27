@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base/tensor.h"
+#include "framework/common/op_runtime_support.h"
 #include "ps/base/base_client.h"
 #include <memory>
 #include <string>
@@ -11,8 +12,8 @@
 using base::RecTensor;
 
 namespace recstore {
-void ConfigureLogging(bool initialize_google_logging = true);
 enum class InitStrategyType { Normal, Uniform, Xavier, Zero };
+struct LocalShmFlatGetHandle;
 
 struct InitStrategy {
   InitStrategy() = delete;
@@ -153,6 +154,11 @@ public:
   void SetPSBackend(const std::string& backend);
   std::string CurrentPSBackend() const;
   void LocalLookupFlat(const base::RecTensor& keys, base::RecTensor& values);
+  int SubmitLocalLookupFlat(const base::RecTensor& keys,
+                            int64_t embedding_dim,
+                            LocalShmFlatGetHandle* handle);
+  int WaitLocalLookupFlat(LocalShmFlatGetHandle* handle);
+  void ReleaseLocalLookupFlat(LocalShmFlatGetHandle* handle);
   void LocalUpdateFlat(const std::string& table_name,
                        const base::RecTensor& keys,
                        const base::RecTensor& grads);

@@ -6,6 +6,13 @@ from typing import List, Dict, Any, Tuple
 from torchrec.sparse.jagged_tensor import KeyedJaggedTensor, KeyedTensor
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from ..recstore.KVClient import get_kv_client, RecStoreClient
+from ..recstore.single_node_exchange import (
+    LookupEmbeddingResponsePayload,
+    LookupIdsPayload,
+    exchange_lookup_embedding_responses,
+    exchange_lookup_ids,
+    reassemble_lookup_embedding_responses,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -138,6 +145,12 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         # Cache for fused prefetch metadata (unique IDs and inverse) for one batch
         self._fused_ids_cpu: torch.Tensor | None = None
         self._fused_inverse: torch.Tensor | None = None
+
+        # Phase-1 single-node distributed fast path stays fully opt-in.
+        self.enable_single_node_distributed_fast_path: bool = False
+        self.single_node_distributed_mode: str | None = None
+        self.single_node_owner_policy: str = "hash_mod_world_size"
+        self.single_node_ps_backend: str = "local_shm"
 
         for idx, config in enumerate(self._embedding_bag_configs):
             base_offset = (idx << self._fusion_k) if self._enable_fusion else 0
@@ -322,6 +335,174 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
             return handle
         return handle, num_ids, issue_ts, unique_ids, inverse
 
+    def _can_use_single_node_distributed_fast_path(self) -> bool:
+        if not self.enable_single_node_distributed_fast_path:
+            return False
+        dist = getattr(torch, "distributed", None)
+        if dist is None or not hasattr(dist, "is_initialized") or not dist.is_initialized():
+            return False
+        if not hasattr(dist, "get_world_size") or dist.get_world_size() <= 1:
+            return False
+        if self.single_node_distributed_mode != "single_node":
+            return False
+        if self.single_node_owner_policy != "hash_mod_world_size":
+            return False
+        if self.single_node_ps_backend != "local_shm":
+            return False
+        return True
+
+    def _uses_shared_local_shm_single_table(self) -> bool:
+        probe = getattr(self.kv_client, "is_shared_local_shm_table", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe())
+        except Exception:
+            return False
+
+    def _can_use_shared_local_shm_direct_fast_path(self) -> bool:
+        return self._can_use_single_node_distributed_fast_path() and self._uses_shared_local_shm_single_table()
+
+    def _prepare_single_node_local_shm_fast_path_client(self, rank: int) -> None:
+        current_backend = None
+        if hasattr(self.kv_client, "current_ps_backend"):
+            current_backend = self.kv_client.current_ps_backend()
+        if hasattr(self.kv_client, "activate_shard"):
+            self.kv_client.activate_shard(rank)
+        if current_backend != self.single_node_ps_backend:
+            if hasattr(self.kv_client, "set_ps_backend"):
+                self.kv_client.set_ps_backend(self.single_node_ps_backend)
+
+    def _build_lookup_request_payload(
+        self,
+        fused_ids: torch.Tensor,
+        *,
+        rank: int,
+        world_size: int,
+    ) -> LookupIdsPayload:
+        normalized_ids = fused_ids.to(dtype=torch.int64)
+        if not normalized_ids.is_contiguous():
+            normalized_ids = normalized_ids.contiguous()
+        device = normalized_ids.device
+        if fused_ids.numel() == 0:
+            empty = torch.empty((0,), dtype=torch.int64, device=device)
+            return LookupIdsPayload(
+                rank=rank,
+                destination_ranks=empty,
+                source_ranks=empty,
+                row_positions=empty,
+                fused_ids=empty,
+            )
+        row_positions = torch.arange(normalized_ids.numel(), dtype=torch.int64, device=device)
+        source_ranks = torch.full(
+            (normalized_ids.numel(),),
+            fill_value=rank,
+            dtype=torch.int64,
+            device=device,
+        )
+        destination_ranks = torch.remainder(normalized_ids, int(world_size))
+        return LookupIdsPayload(
+            rank=rank,
+            destination_ranks=destination_ranks,
+            source_ranks=source_ranks,
+            row_positions=row_positions,
+            fused_ids=normalized_ids,
+        )
+
+    def _lookup_fused_embeddings_single_node_distributed(
+        self,
+        fused_ids: torch.Tensor,
+        *,
+        compute_device: torch.device,
+    ) -> torch.Tensor:
+        dist = torch.distributed
+        rank = int(dist.get_rank())
+        world_size = int(dist.get_world_size())
+        backend = dist
+        self._prepare_single_node_local_shm_fast_path_client(rank)
+
+        local_payload = self._build_lookup_request_payload(
+            fused_ids,
+            rank=rank,
+            world_size=world_size,
+        )
+        gathered_requests = exchange_lookup_ids(
+            local_payload,
+            world_size=world_size,
+            backend=backend,
+        )
+
+        owner_source_rank_tensors = [
+            payload.source_ranks for payload in gathered_requests if payload.source_ranks.numel() > 0
+        ]
+        owner_row_position_tensors = [
+            payload.row_positions for payload in gathered_requests if payload.row_positions.numel() > 0
+        ]
+        owner_id_tensors = [
+            payload.fused_ids for payload in gathered_requests if payload.fused_ids.numel() > 0
+        ]
+        payload_device = local_payload.fused_ids.device
+
+        if owner_id_tensors:
+            local_ids = torch.cat(owner_id_tensors, dim=0).contiguous()
+            local_embeddings = self.kv_client.local_lookup_flat(
+                self._master_config.name,
+                local_ids,
+            )
+        else:
+            local_ids = torch.empty((0,), dtype=torch.int64, device=payload_device)
+            local_embeddings = torch.empty(
+                (0, self._master_config.embedding_dim),
+                dtype=torch.float32,
+                device=payload_device,
+            )
+        if local_embeddings.device != compute_device:
+            local_embeddings = local_embeddings.to(compute_device)
+
+        response_payload = LookupEmbeddingResponsePayload(
+            rank=rank,
+            requestor_ranks=(
+                torch.cat(owner_source_rank_tensors, dim=0).contiguous()
+                if owner_source_rank_tensors
+                else torch.empty((0,), dtype=torch.int64, device=local_ids.device)
+            ),
+            row_positions=(
+                torch.cat(owner_row_position_tensors, dim=0).contiguous()
+                if owner_row_position_tensors
+                else torch.empty((0,), dtype=torch.int64, device=local_ids.device)
+            ),
+            embeddings=local_embeddings,
+        )
+        gathered_responses = exchange_lookup_embedding_responses(
+            response_payload,
+            world_size=world_size,
+            backend=backend,
+        )
+        rebuilt = reassemble_lookup_embedding_responses(
+            gathered_responses,
+            requestor_rank=rank,
+            total_rows=int(fused_ids.numel()),
+        )
+        if rebuilt.device != compute_device:
+            rebuilt = rebuilt.to(compute_device)
+        return rebuilt
+
+    def _lookup_fused_embeddings_shared_local_shm_single_table(
+        self,
+        fused_ids: torch.Tensor,
+        *,
+        compute_device: torch.device,
+    ) -> torch.Tensor:
+        rank = int(torch.distributed.get_rank())
+        self._prepare_single_node_local_shm_fast_path_client(rank)
+        local_embeddings = self.kv_client.local_lookup_flat(
+            self._master_config.name,
+            fused_ids,
+        )
+        if local_embeddings.device != compute_device:
+            local_embeddings = local_embeddings.to(compute_device)
+        return local_embeddings
+
     def forward(self, features: KeyedJaggedTensor) -> KeyedTensor:
         # Determine if we can enable fused single-call path safely
         keys_in_batch = list(features.keys())
@@ -342,6 +523,15 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
             fused_values_list: List[torch.Tensor] = []
             lengths_total_list: List[torch.Tensor] = []
             compute_device = features.device()  # target device (cuda or cpu)
+            use_shared_local_shm_direct_fast_path = self._can_use_shared_local_shm_direct_fast_path()
+            use_single_node_owner_exchange_fast_path = (
+                self._can_use_single_node_distributed_fast_path()
+                and not use_shared_local_shm_direct_fast_path
+            )
+            use_single_node_fast_path = (
+                use_shared_local_shm_direct_fast_path
+                or use_single_node_owner_exchange_fast_path
+            )
 
             for key in keys_in_batch:
                 kjt_per_feature = features[key]
@@ -360,20 +550,39 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
                 lengths_total_list.append(lengths)
 
             if len(fused_values_list) > 0:
-                fused_values_all = torch.cat(fused_values_list, dim=0).to(compute_device)
+                fused_values_all = torch.cat(fused_values_list, dim=0).to(dtype=torch.int64)
             else:
                 fused_values_all = torch.empty((0,), dtype=torch.int64, device=compute_device)
-            # CPU copy for KV pull
-            cpu_ids = fused_values_all.to('cpu')
-            if not cpu_ids.is_contiguous():
-                cpu_ids = cpu_ids.contiguous()
+            if not fused_values_all.is_contiguous():
+                fused_values_all = fused_values_all.contiguous()
+            if fused_values_all.device != compute_device:
+                fused_values_all = fused_values_all.to(compute_device)
+            if use_single_node_fast_path:
+                trace_ids = fused_values_all
+            else:
+                cpu_ids = (
+                    fused_values_all.to("cpu")
+                    if fused_values_all.device.type != "cpu"
+                    else fused_values_all
+                )
+                trace_ids = cpu_ids
 
             lengths_total = torch.cat(lengths_total_list, dim=0) if len(lengths_total_list) > 0 else torch.empty((0,), dtype=torch.int32, device=compute_device)
 
-            # Obtain embeddings: prefer fused prefetch handle; else merge per-feature prefetch; else single pull
+            # Obtain embeddings: prefer single-node owner lookup; else fused prefetch; else merge per-feature prefetch; else single pull
             all_embeddings: torch.Tensor
             used_fused_prefetch = False
-            if self._fused_prefetch_handle is not None:
+            if use_shared_local_shm_direct_fast_path:
+                all_embeddings = self._lookup_fused_embeddings_shared_local_shm_single_table(
+                    fused_values_all,
+                    compute_device=compute_device,
+                )
+            elif use_single_node_owner_exchange_fast_path:
+                all_embeddings = self._lookup_fused_embeddings_single_node_distributed(
+                    fused_values_all,
+                    compute_device=compute_device,
+                )
+            elif self._fused_prefetch_handle is not None:
                 import time
                 t_wait_start = time.time()
                 all_embeddings = self.kv_client.wait_and_get(self._fused_prefetch_handle, self._master_config.embedding_dim, device=compute_device)
@@ -451,7 +660,7 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
                     all_embeddings = all_embeddings.to(compute_device)
             all_embeddings.requires_grad_()
 
-            def grad_hook_fused(grad, ids=fused_values_all, master_name=self._master_config.name):
+            def grad_hook_fused(grad, ids=trace_ids, master_name=self._master_config.name):
                 self._append_trace(master_name, ids, grad)
 
             all_embeddings.register_hook(grad_hook_fused)
