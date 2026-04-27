@@ -239,11 +239,26 @@ public:
 
     for (int64_t row = 0; row < num_rows; ++row) {
       const auto& slice = value_slices[static_cast<size_t>(row)];
-      const int64_t copy_dim =
-          std::min<int64_t>(embedding_dim, static_cast<int64_t>(slice.Size()));
-      std::fill_n(values + row * embedding_dim, embedding_dim, 0.0f);
-      if (copy_dim > 0) {
-        std::copy_n(slice.Data(), copy_dim, values + row * embedding_dim);
+      if (slice.Size() != 0 &&
+          static_cast<int64_t>(slice.Size()) != embedding_dim) {
+        LOG(ERROR) << "GetParameterFlat embedding_dim mismatch at row=" << row
+                   << " key=" << keys[static_cast<size_t>(row)]
+                   << " expected=" << embedding_dim
+                   << " actual=" << slice.Size();
+        return false;
+      }
+    }
+
+    std::fill_n(values,
+                static_cast<size_t>(num_rows) *
+                    static_cast<size_t>(embedding_dim),
+                0.0f);
+    for (int64_t row = 0; row < num_rows; ++row) {
+      const auto& slice = value_slices[static_cast<size_t>(row)];
+      if (slice.Size() > 0) {
+        std::copy_n(slice.Data(),
+                    static_cast<int64_t>(slice.Size()),
+                    values + row * embedding_dim);
       }
     }
     return true;
@@ -312,21 +327,13 @@ public:
                  << " vs " << num_rows;
       return false;
     }
-
-    ParameterCompressor compressor(std::numeric_limits<int>::max());
-    for (int64_t row = 0; row < num_rows; ++row) {
-      ParameterPack pack;
-      pack.key      = keys[static_cast<size_t>(row)];
-      pack.dim      = static_cast<int>(embedding_dim);
-      pack.emb_data = grads + row * embedding_dim;
-      compressor.AddItem(pack, nullptr);
+    if (!optimizer_) {
+      LOG(ERROR) << "Optimizer not initialized. Please call InitTable first.";
+      return false;
     }
-
-    std::string block;
-    compressor.ToBlock(&block);
-    const auto* reader =
-        reinterpret_cast<const ParameterCompressReader*>(block.data());
-    return UpdateParameter(table_name, reader, tid);
+    optimizer_->UpdateFlat(
+        table_name, keys, grads, num_rows, embedding_dim, tid);
+    return true;
   }
 
 private:
