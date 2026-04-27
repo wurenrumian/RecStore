@@ -339,7 +339,6 @@ class ShardedRecstoreClient:
 
     def warmup_local_lookup_flat_cuda_region(self) -> bool:
         self._require_active_shard("warmup_local_lookup_flat_cuda_region")
-        self._require_local_shm_backend("warmup_local_lookup_flat_cuda_region")
         warmup = getattr(self._client.ops, "warmup_local_lookup_flat_cuda_region", None)
         if not callable(warmup):
             return False
