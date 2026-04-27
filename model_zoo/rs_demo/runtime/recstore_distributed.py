@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 
 import torch
 
+_LOCAL_FAST_PATH_BACKENDS = {"local_shm", "hierkv"}
+
 
 @dataclass(frozen=True)
 class ShardServer:
@@ -156,11 +158,18 @@ class ShardedRecstoreClient:
         if self.is_shared_local_shm_table():
             self._active_shard = shard
             return
+        current_backend = None
+        if hasattr(self._client, "ops") and hasattr(self._client.ops, "current_ps_backend"):
+            current_backend = str(self._client.ops.current_ps_backend())
         server = self._servers_by_shard.get(shard)
         if server is None:
             raise RuntimeError(f"no server configured for shard {shard}")
-        self._client.ops.set_ps_config(server.host, server.port)
+        if current_backend not in _LOCAL_FAST_PATH_BACKENDS:
+            self._client.ops.set_ps_config(server.host, server.port)
         self._active_shard = shard
+
+    def activate_shard(self, shard: int) -> None:
+        self._activate_shard(shard)
 
     def _group_indices(self, keys: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
         shard_to_indices: dict[int, list[int]] = {}
@@ -206,9 +215,9 @@ class ShardedRecstoreClient:
                 f"{api_name} requires a RecStore ops library exposing current_ps_backend()."
             )
         backend = self._client.ops.current_ps_backend()
-        if backend != "local_shm":
+        if backend not in _LOCAL_FAST_PATH_BACKENDS:
             raise RuntimeError(
-                f"{api_name} requires local_shm backend, but current backend is {backend}."
+                f"{api_name} requires local_shm or hierkv backend, but current backend is {backend}."
             )
 
     def _group_ids_by_shard(self, keys: torch.Tensor) -> list[tuple[int, torch.Tensor, torch.Tensor]]:
@@ -328,6 +337,30 @@ class ShardedRecstoreClient:
         normalized_ids = self._normalize_ids(ids, keep_device=True)
         return self._client.ops.local_lookup_flat(normalized_ids, embedding_dim)
 
+    def warmup_local_lookup_flat_cuda_region(self) -> bool:
+        self._require_active_shard("warmup_local_lookup_flat_cuda_region")
+        warmup = getattr(self._client.ops, "warmup_local_lookup_flat_cuda_region", None)
+        if not callable(warmup):
+            return False
+        return bool(warmup())
+
+    def get_last_local_shm_lookup_profile(self) -> dict[str, float]:
+        getter = getattr(self._client.ops, "get_last_local_lookup_flat_profile", None)
+        if not callable(getter):
+            return {}
+        values = getter()
+        if not isinstance(values, (list, tuple)) or len(values) < 7:
+            return {}
+        return {
+            "lookup_cpp_total_ms": float(values[0]),
+            "lookup_keys_stage_ms": float(values[1]),
+            "lookup_submit_ms": float(values[2]),
+            "lookup_wait_ms": float(values[3]),
+            "lookup_payload_pin_ms": float(values[4]),
+            "lookup_fallback_copy_ms": float(values[5]),
+            "lookup_values_h2d_enqueue_ms": float(values[6]),
+        }
+
     def local_update_flat(self, name: str, ids: torch.Tensor, grads: torch.Tensor) -> None:
         if name not in self._tensor_meta:
             raise RuntimeError(f"Tensor '{name}' has not been initialized.")
@@ -345,6 +378,20 @@ class ShardedRecstoreClient:
                 f"grads second dimension must match embedding dim {embedding_dim} for tensor '{name}'"
             )
         self._client.ops.local_update_flat(name, normalized_ids, normalized_grads)
+
+    def get_last_local_shm_update_profile(self) -> dict[str, float]:
+        getter = getattr(self._client.ops, "get_last_local_update_flat_profile", None)
+        if not callable(getter):
+            return {}
+        values = getter()
+        if not isinstance(values, (list, tuple)) or len(values) < 4:
+            return {}
+        return {
+            "local_update_cpp_total_ms": float(values[0]),
+            "local_update_keys_stage_ms": float(values[1]),
+            "local_update_grads_stage_ms": float(values[2]),
+            "local_update_shm_call_ms": float(values[3]),
+        }
 
     def emb_update_table(self, table_name: str, keys: torch.Tensor, grads: torch.Tensor) -> None:
         if keys.numel() == 0:

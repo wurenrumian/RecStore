@@ -51,12 +51,12 @@ class _FakeModule:
 
 
 class _FakeFastPathModule(_FakeModule):
-    def __init__(self, trace, kv_client):
+    def __init__(self, trace, kv_client, *, backend: str = "local_shm"):
         super().__init__(trace, kv_client)
         self.enable_single_node_distributed_fast_path = True
         self.single_node_distributed_mode = "single_node"
         self.single_node_owner_policy = "hash_mod_world_size"
-        self.single_node_ps_backend = "local_shm"
+        self.single_node_ps_backend = str(backend)
 
 
 class _FakeSharedLocalShmDirectModule(_FakeFastPathModule):
@@ -274,6 +274,8 @@ class TestSparseOptimizerSingleNodeDistributed(unittest.TestCase):
         self.assertIsInstance(profile, dict)
         self.assertEqual(profile.get("exchange_ms"), 0.0)
         self.assertEqual(profile.get("owner_aggregate_ms"), 0.0)
+        self.assertIn("trace_collect_ms", profile)
+        self.assertIn("trace_aggregate_ms", profile)
         self.assertGreaterEqual(profile.get("local_update_ms", -1.0), 0.0)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required for GPU-resident sparse fast path coverage")
@@ -440,6 +442,106 @@ class TestSparseOptimizerSingleNodeDistributed(unittest.TestCase):
         ):
             self.assertIn(key, profile)
             self.assertGreaterEqual(profile[key], 0.0)
+
+    def test_hierkv_fast_path_uses_same_owner_local_update_flow(self):
+        kv_client = _FakeLegacyKVClient()
+        mod = _FakeFastPathModule(
+            trace=[
+                (
+                    "table0",
+                    torch.tensor([6, 7], dtype=torch.int64),
+                    torch.tensor(
+                        [
+                            [1.0, 1.0],
+                            [9.0, 9.0],
+                        ],
+                        dtype=torch.float32,
+                    ),
+                )
+            ],
+            kv_client=kv_client,
+            backend="hierkv",
+        )
+        optimizer = SparseSGD([mod], lr=0.1)
+        optimizer_module.torch.distributed = _FakeDist(rank=0, world_size=2)
+
+        def fake_exchange_sparse_grads(payload, *, world_size, backend):
+            del payload, world_size, backend
+            return [
+                SparseGradPayload(
+                    rank=0,
+                    destination_ranks=torch.tensor([0], dtype=torch.int64),
+                    source_ranks=torch.tensor([0], dtype=torch.int64),
+                    row_positions=torch.tensor([0], dtype=torch.int64),
+                    fused_ids=torch.tensor([6], dtype=torch.int64),
+                    grads=torch.tensor([[1.0, 1.0]], dtype=torch.float32),
+                ),
+                SparseGradPayload(
+                    rank=1,
+                    destination_ranks=torch.tensor([0], dtype=torch.int64),
+                    source_ranks=torch.tensor([1], dtype=torch.int64),
+                    row_positions=torch.tensor([0], dtype=torch.int64),
+                    fused_ids=torch.tensor([6], dtype=torch.int64),
+                    grads=torch.tensor([[4.0, 4.0]], dtype=torch.float32),
+                ),
+            ]
+
+        optimizer_module.exchange_sparse_grads = fake_exchange_sparse_grads
+
+        optimizer.step()
+
+        self.assertEqual(len(kv_client.update_async_calls), 0)
+        self.assertEqual(len(kv_client.local_update_flat_calls), 1)
+        table_name, ids, grads = kv_client.local_update_flat_calls[0]
+        self.assertEqual(table_name, "table0")
+        self.assertTrue(torch.equal(ids, torch.tensor([6], dtype=torch.int64)))
+        self.assertTrue(torch.allclose(grads, torch.tensor([[5.0, 5.0]], dtype=torch.float32)))
+
+    def test_perf_stats_capture_fast_path_exchange_and_local_update(self):
+        kv_client = _FakeLegacyKVClient()
+        mod = _FakeFastPathModule(
+            trace=[
+                (
+                    "table0",
+                    torch.tensor([6, 7], dtype=torch.int64),
+                    torch.tensor(
+                        [
+                            [1.0, 1.0],
+                            [9.0, 9.0],
+                        ],
+                        dtype=torch.float32,
+                    ),
+                )
+            ],
+            kv_client=kv_client,
+            backend="hierkv",
+        )
+        optimizer = SparseSGD([mod], lr=0.1)
+        optimizer_module.torch.distributed = _FakeDist(rank=0, world_size=2)
+
+        def fake_exchange_sparse_grads(payload, *, world_size, backend):
+            del payload, world_size, backend
+            return [
+                SparseGradPayload(
+                    rank=0,
+                    destination_ranks=torch.tensor([0], dtype=torch.int64),
+                    source_ranks=torch.tensor([0], dtype=torch.int64),
+                    row_positions=torch.tensor([0], dtype=torch.int64),
+                    fused_ids=torch.tensor([6], dtype=torch.int64),
+                    grads=torch.tensor([[5.0, 5.0]], dtype=torch.float32),
+                ),
+            ]
+
+        optimizer_module.exchange_sparse_grads = fake_exchange_sparse_grads
+
+        optimizer.reset_perf_stats()
+        optimizer.step()
+        stats = optimizer.consume_perf_stats()
+
+        self.assertGreaterEqual(stats["update_trace_merge_ms"], 0.0)
+        self.assertGreaterEqual(stats["update_owner_exchange_ms"], 0.0)
+        self.assertGreaterEqual(stats["update_local_apply_ms"], 0.0)
+        self.assertEqual(stats["update_async_enqueue_ms"], 0.0)
 
 
 if __name__ == "__main__":

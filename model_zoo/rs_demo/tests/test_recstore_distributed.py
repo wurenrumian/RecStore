@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import ctypes
 import importlib
 import json
-import struct
 import tempfile
 import unittest
 from unittest import mock
@@ -13,6 +11,7 @@ import torch
 
 from model_zoo.rs_demo.runtime.recstore_distributed import (
     ShardedRecstoreClient,
+    _city_hash64_of_uint64,
 )
 
 
@@ -20,10 +19,11 @@ class _FakeOps:
     def __init__(self) -> None:
         self.active_port: int | None = None
         self.port_history: list[int] = []
-        self.backend = "local_shm"
+        self.backend = "brpc"
         self.lookup_calls: list[tuple[int | None, list[int], int]] = []
         self.update_calls: list[tuple[int | None, str, list[int], list[list[float]]]] = []
         self.backend_switch_calls: list[str] = []
+        self.lookup_region_warmup_calls = 0
 
     def set_ps_config(self, host: str, port: int) -> None:
         self.active_port = int(port)
@@ -52,6 +52,10 @@ class _FakeOps:
                 [[float(x) for x in row] for row in grads.tolist()],
             )
         )
+
+    def warmup_local_lookup_flat_cuda_region(self) -> bool:
+        self.lookup_region_warmup_calls += 1
+        return True
 
 
 class _FakeClient:
@@ -167,14 +171,7 @@ class TestShardedRecstoreClient(unittest.TestCase):
 
     @staticmethod
     def _cityhash_shard_for_key(key: int, num_shards: int) -> int:
-        lib = ctypes.CDLL(
-            "/app/RecStore/third_party/cityhash/src/.libs/libcityhash.so.0.0.0"
-        )
-        city_hash64 = lib._Z10CityHash64PKcm
-        city_hash64.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
-        city_hash64.restype = ctypes.c_uint64
-        raw = struct.pack("<Q", int(key) & 0xFFFFFFFFFFFFFFFF)
-        return int(city_hash64(raw, len(raw)) % num_shards)
+        return int(_city_hash64_of_uint64(int(key)) % num_shards)
 
     def test_routes_init_write_read_and_update_by_shard(self) -> None:
         runtime_dir = self._make_runtime_dir()
@@ -508,7 +505,7 @@ class TestShardedRecstoreClient(unittest.TestCase):
         fake_client = _FakeClient()
         client = ShardedRecstoreClient(fake_client, runtime_dir)
 
-        self.assertEqual(client.current_ps_backend(), "local_shm")
+        self.assertEqual(client.current_ps_backend(), "brpc")
 
         client.set_ps_backend("brpc")
 
@@ -518,6 +515,7 @@ class TestShardedRecstoreClient(unittest.TestCase):
     def test_local_lookup_flat_normalizes_ids_and_forwards_to_active_shard(self) -> None:
         runtime_dir = self._make_runtime_dir()
         fake_client = _FakeClient()
+        fake_client.ops.backend = "local_shm"
         client = ShardedRecstoreClient(fake_client, runtime_dir)
         client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
         client._activate_shard(1)
@@ -526,7 +524,9 @@ class TestShardedRecstoreClient(unittest.TestCase):
         out = client.local_lookup_flat("table0", ids)
 
         self.assertEqual(out.shape, (2, 4))
-        self.assertEqual(fake_client.ops.lookup_calls, [(20001, [7, 3], 4)])
+        self.assertEqual(fake_client.ops.lookup_calls, [(None, [7, 3], 4)])
+        self.assertEqual(client._active_shard, 1)
+        self.assertEqual(fake_client.ops.port_history, [])
 
     def test_activate_shard_skips_transport_reconfig_for_shared_local_shm_single_table(self) -> None:
         runtime_dir = self._make_runtime_dir(
@@ -596,6 +596,7 @@ class TestShardedRecstoreClient(unittest.TestCase):
     def test_local_update_flat_normalizes_inputs_and_forwards_to_active_shard(self) -> None:
         runtime_dir = self._make_runtime_dir()
         fake_client = _FakeClient()
+        fake_client.ops.backend = "local_shm"
         client = ShardedRecstoreClient(fake_client, runtime_dir)
         client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
         client._activate_shard(0)
@@ -606,8 +607,50 @@ class TestShardedRecstoreClient(unittest.TestCase):
 
         self.assertEqual(
             fake_client.ops.update_calls,
-            [(20000, "table0", [7, 3], grads.to(dtype=torch.float32).tolist())],
+            [(None, "table0", [7, 3], grads.to(dtype=torch.float32).tolist())],
         )
+        self.assertEqual(client._active_shard, 0)
+        self.assertEqual(fake_client.ops.port_history, [])
+
+    def test_local_flat_ops_allow_hierkv_backend(self) -> None:
+        runtime_dir = self._make_runtime_dir()
+        fake_client = _FakeClient()
+        fake_client.ops.backend = "hierkv"
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+        client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
+        client._activate_shard(0)
+
+        ids = torch.tensor([7, 3], dtype=torch.int32)
+        grads = torch.ones((2, 4), dtype=torch.float64)
+        out = client.local_lookup_flat("table0", ids)
+        client.local_update_flat("table0", ids, grads)
+
+        self.assertEqual(out.shape, (2, 4))
+        self.assertEqual(fake_client.ops.lookup_calls, [(None, [7, 3], 4)])
+        self.assertEqual(
+            fake_client.ops.update_calls,
+            [(None, "table0", [7, 3], grads.to(dtype=torch.float32).tolist())],
+        )
+        self.assertEqual(fake_client.ops.port_history, [])
+
+    def test_warmup_local_lookup_flat_cuda_region_forwards_to_underlying_ops(self) -> None:
+        runtime_dir = self._make_runtime_dir(
+            cache_ps_type="LOCAL_SHM",
+            cache_servers=[
+                {"host": "127.0.0.1", "port": 20000, "shard": 0},
+            ],
+        )
+        cfg = json.loads((runtime_dir / "recstore_config.json").read_text(encoding="utf-8"))
+        cfg["cache_ps"]["num_shards"] = 1
+        (runtime_dir / "recstore_config.json").write_text(json.dumps(cfg), encoding="utf-8")
+        fake_client = _FakeClient()
+        client = ShardedRecstoreClient(fake_client, runtime_dir)
+        client._activate_shard(0)
+
+        ok = client.warmup_local_lookup_flat_cuda_region()
+
+        self.assertTrue(ok)
+        self.assertEqual(fake_client.ops.lookup_region_warmup_calls, 1)
 
     def test_local_flat_ops_fail_loudly_for_non_local_backend(self) -> None:
         runtime_dir = self._make_runtime_dir()
@@ -617,9 +660,9 @@ class TestShardedRecstoreClient(unittest.TestCase):
         client.register_tensor_meta("table0", shape=(16, 4), dtype=torch.float32)
         client._activate_shard(0)
 
-        with self.assertRaisesRegex(RuntimeError, "local_shm"):
+        with self.assertRaisesRegex(RuntimeError, "local_shm or hierkv"):
             client.local_lookup_flat("table0", torch.tensor([1], dtype=torch.int64))
-        with self.assertRaisesRegex(RuntimeError, "local_shm"):
+        with self.assertRaisesRegex(RuntimeError, "local_shm or hierkv"):
             client.local_update_flat(
                 "table0",
                 torch.tensor([1], dtype=torch.int64),
