@@ -36,9 +36,13 @@ public:
 
   static bool IsHeavyTestName(const std::string& test_name) {
     static const std::vector<std::string> kHeavyPrefixes = {
-        "RandomData",          "PerformanceTest",    "StressTest",
-        "ConcurrentPutTest",   "ConcurrentGetTest",
-        "ConcurrentReadWriteTest", "ConcurrentBatchGetTest",
+        "RandomData",
+        "PerformanceTest",
+        "StressTest",
+        "ConcurrentPutTest",
+        "ConcurrentGetTest",
+        "ConcurrentReadWriteTest",
+        "ConcurrentBatchGetTest",
         "DataConsistencyTest"};
     for (const auto& prefix : kHeavyPrefixes) {
       if (test_name.rfind(prefix, 0) == 0) {
