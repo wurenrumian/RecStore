@@ -7,12 +7,18 @@
 #include <string>
 #include <unordered_map>
 #include <unistd.h>
-#include <cuda_runtime_api.h>
 #include "base/tensor.h"
 #include "framework/op.h"
 #include "ps/local_shm/local_shm_client.h"
 // Log level: 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG
 #include <glog/logging.h>
+
+#if __has_include(<cuda_runtime_api.h>)
+#  include <cuda_runtime_api.h>
+#  define RECSTORE_HAS_CUDA_RUNTIME_API 1
+#else
+#  define RECSTORE_HAS_CUDA_RUNTIME_API 0
+#endif
 
 namespace recstore {
 namespace framework {
@@ -41,6 +47,11 @@ static torch::Tensor StageCudaTensorToPinnedCpu(const torch::Tensor& tensor,
 }
 
 static bool EnsurePinnedLocalShmPayload(const void* ptr, std::size_t bytes) {
+#if !RECSTORE_HAS_CUDA_RUNTIME_API
+  (void)ptr;
+  (void)bytes;
+  return false;
+#else
   if (ptr == nullptr || bytes == 0) {
     return false;
   }
@@ -79,6 +90,7 @@ static bool EnsurePinnedLocalShmPayload(const void* ptr, std::size_t bytes) {
   }
   registered_bytes_by_base[page_begin] = required_bytes;
   return true;
+#endif
 }
 
 torch::Tensor emb_read_torch(const torch::Tensor& keys, int64_t embedding_dim) {
