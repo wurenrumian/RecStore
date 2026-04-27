@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 
 import torch
 
+_LOCAL_FAST_PATH_BACKENDS = {"local_shm", "hierkv"}
+
 
 @dataclass(frozen=True)
 class ShardServer:
@@ -60,6 +62,18 @@ def _load_num_shards(distributed_cfg: dict, cache_cfg: dict, servers: list[Shard
     return len(servers)
 
 
+def _load_cache_servers(cache_cfg: dict) -> list[ShardServer]:
+    raw_servers = cache_cfg.get("servers") or []
+    return [
+        ShardServer(
+            shard=int(server["shard"]),
+            host=str(server["host"]),
+            port=int(server["port"]),
+        )
+        for server in raw_servers
+    ]
+
+
 def _load_hash_method(distributed_cfg: dict) -> str:
     return str(distributed_cfg.get("hash_method", "city_hash"))
 
@@ -98,6 +112,9 @@ class ShardedRecstoreClient:
         cfg = _load_runtime_config(runtime_dir)
         distributed_cfg, cache_cfg = _load_client_configs(cfg)
         self._client = client
+        self._cache_ps_type = str(cache_cfg.get("ps_type", "")).upper()
+        self._cache_servers = _load_cache_servers(cache_cfg)
+        self._cache_num_shards = _load_num_shards({}, cache_cfg, self._cache_servers)
         self._servers = _load_shard_servers(
             distributed_cfg, cache_cfg, runtime_dir / "recstore_config.json"
         )
@@ -138,11 +155,21 @@ class ShardedRecstoreClient:
         shard = int(shard)
         if self._active_shard == shard:
             return
+        if self.is_shared_local_shm_table():
+            self._active_shard = shard
+            return
+        current_backend = None
+        if hasattr(self._client, "ops") and hasattr(self._client.ops, "current_ps_backend"):
+            current_backend = str(self._client.ops.current_ps_backend())
         server = self._servers_by_shard.get(shard)
         if server is None:
             raise RuntimeError(f"no server configured for shard {shard}")
-        self._client.ops.set_ps_config(server.host, server.port)
+        if current_backend not in _LOCAL_FAST_PATH_BACKENDS:
+            self._client.ops.set_ps_config(server.host, server.port)
         self._active_shard = shard
+
+    def activate_shard(self, shard: int) -> None:
+        self._activate_shard(shard)
 
     def _group_indices(self, keys: torch.Tensor) -> list[tuple[int, torch.Tensor]]:
         shard_to_indices: dict[int, list[int]] = {}
@@ -158,25 +185,40 @@ class ShardedRecstoreClient:
             for shard, indices in ((shard, shard_to_indices[shard]) for shard in shard_order)
         ]
 
-    def _normalize_ids(self, ids: torch.Tensor) -> torch.Tensor:
+    def _normalize_ids(self, ids: torch.Tensor, *, keep_device: bool = False) -> torch.Tensor:
         if not isinstance(ids, torch.Tensor):
             raise TypeError("ids must be a torch.Tensor")
-        ids_cpu = ids.to(dtype=torch.int64)
-        if not ids_cpu.is_contiguous():
-            ids_cpu = ids_cpu.contiguous()
-        if ids_cpu.device.type != "cpu":
-            ids_cpu = ids_cpu.to("cpu")
-        return ids_cpu
+        normalized_ids = ids.to(dtype=torch.int64)
+        if not normalized_ids.is_contiguous():
+            normalized_ids = normalized_ids.contiguous()
+        if not keep_device and normalized_ids.device.type != "cpu":
+            normalized_ids = normalized_ids.to("cpu")
+        return normalized_ids
 
-    def _normalize_grads(self, grads: torch.Tensor) -> torch.Tensor:
+    def _normalize_grads(self, grads: torch.Tensor, *, keep_device: bool = False) -> torch.Tensor:
         if not isinstance(grads, torch.Tensor):
             raise TypeError("grads must be a torch.Tensor")
-        grads_cpu = grads.to(dtype=torch.float32)
-        if not grads_cpu.is_contiguous():
-            grads_cpu = grads_cpu.contiguous()
-        if grads_cpu.device.type != "cpu":
-            grads_cpu = grads_cpu.to("cpu")
-        return grads_cpu
+        normalized_grads = grads.to(dtype=torch.float32)
+        if not normalized_grads.is_contiguous():
+            normalized_grads = normalized_grads.contiguous()
+        if not keep_device and normalized_grads.device.type != "cpu":
+            normalized_grads = normalized_grads.to("cpu")
+        return normalized_grads
+
+    def _require_active_shard(self, api_name: str) -> None:
+        if self._active_shard is None:
+            raise RuntimeError(f"{api_name} requires an active shard to be selected first.")
+
+    def _require_local_shm_backend(self, api_name: str) -> None:
+        if not hasattr(self._client, "ops") or not hasattr(self._client.ops, "current_ps_backend"):
+            raise RuntimeError(
+                f"{api_name} requires a RecStore ops library exposing current_ps_backend()."
+            )
+        backend = self._client.ops.current_ps_backend()
+        if backend not in _LOCAL_FAST_PATH_BACKENDS:
+            raise RuntimeError(
+                f"{api_name} requires local_shm or hierkv backend, but current backend is {backend}."
+            )
 
     def _group_ids_by_shard(self, keys: torch.Tensor) -> list[tuple[int, torch.Tensor, torch.Tensor]]:
         ids_cpu = self._normalize_ids(keys)
@@ -257,6 +299,100 @@ class ShardedRecstoreClient:
     def emb_read_prefetch(self, keys: torch.Tensor, embedding_dim: int) -> torch.Tensor:
         prefetch_id = self.emb_prefetch(keys)
         return self.emb_wait_result(prefetch_id, embedding_dim)
+
+    def current_ps_backend(self) -> str:
+        if not hasattr(self._client, "ops") or not hasattr(self._client.ops, "current_ps_backend"):
+            raise RuntimeError(
+                "current_ps_backend requires a RecStore ops library exposing current_ps_backend()."
+            )
+        return str(self._client.ops.current_ps_backend())
+
+    def activate_shard(self, shard: int) -> None:
+        self._activate_shard(int(shard))
+
+    def set_ps_backend(self, backend: str) -> None:
+        if not isinstance(backend, str) or not backend:
+            raise ValueError("backend must be a non-empty string")
+        if not hasattr(self._client, "ops") or not hasattr(self._client.ops, "set_ps_backend"):
+            raise RuntimeError(
+                "set_ps_backend requires a RecStore ops library exposing set_ps_backend()."
+            )
+        self._client.ops.set_ps_backend(backend)
+
+    def is_shared_local_shm_table(self) -> bool:
+        if self._cache_ps_type != "LOCAL_SHM":
+            return False
+        if self._cache_num_shards != 1:
+            return False
+        if len(self._cache_servers) != 1:
+            return False
+        return True
+
+    def local_lookup_flat(self, name: str, ids: torch.Tensor) -> torch.Tensor:
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor '{name}' has not been initialized.")
+        self._require_active_shard("local_lookup_flat")
+        self._require_local_shm_backend("local_lookup_flat")
+        embedding_dim = int(self._tensor_meta[name]["shape"][1])
+        normalized_ids = self._normalize_ids(ids, keep_device=True)
+        return self._client.ops.local_lookup_flat(normalized_ids, embedding_dim)
+
+    def warmup_local_lookup_flat_cuda_region(self) -> bool:
+        self._require_active_shard("warmup_local_lookup_flat_cuda_region")
+        self._require_local_shm_backend("warmup_local_lookup_flat_cuda_region")
+        warmup = getattr(self._client.ops, "warmup_local_lookup_flat_cuda_region", None)
+        if not callable(warmup):
+            return False
+        return bool(warmup())
+
+    def get_last_local_shm_lookup_profile(self) -> dict[str, float]:
+        getter = getattr(self._client.ops, "get_last_local_lookup_flat_profile", None)
+        if not callable(getter):
+            return {}
+        values = getter()
+        if not isinstance(values, (list, tuple)) or len(values) < 7:
+            return {}
+        return {
+            "lookup_cpp_total_ms": float(values[0]),
+            "lookup_keys_stage_ms": float(values[1]),
+            "lookup_submit_ms": float(values[2]),
+            "lookup_wait_ms": float(values[3]),
+            "lookup_payload_pin_ms": float(values[4]),
+            "lookup_fallback_copy_ms": float(values[5]),
+            "lookup_values_h2d_enqueue_ms": float(values[6]),
+        }
+
+    def local_update_flat(self, name: str, ids: torch.Tensor, grads: torch.Tensor) -> None:
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor '{name}' has not been initialized.")
+        self._require_active_shard("local_update_flat")
+        self._require_local_shm_backend("local_update_flat")
+        normalized_ids = self._normalize_ids(ids, keep_device=True)
+        normalized_grads = self._normalize_grads(grads, keep_device=True)
+        if normalized_grads.dim() != 2:
+            raise ValueError("grads must be a 2-dimensional tensor")
+        if normalized_ids.size(0) != normalized_grads.size(0):
+            raise ValueError("ids and grads must have the same number of rows")
+        embedding_dim = int(self._tensor_meta[name]["shape"][1])
+        if normalized_grads.size(1) != embedding_dim:
+            raise ValueError(
+                f"grads second dimension must match embedding dim {embedding_dim} for tensor '{name}'"
+            )
+        self._client.ops.local_update_flat(name, normalized_ids, normalized_grads)
+
+    def get_last_local_shm_update_profile(self) -> dict[str, float]:
+        getter = getattr(self._client.ops, "get_last_local_update_flat_profile", None)
+        if not callable(getter):
+            return {}
+        values = getter()
+        if not isinstance(values, (list, tuple)) or len(values) < 4:
+            return {}
+        return {
+            "local_update_cpp_total_ms": float(values[0]),
+            "local_update_keys_stage_ms": float(values[1]),
+            "local_update_grads_stage_ms": float(values[2]),
+            "local_update_shm_call_ms": float(values[3]),
+        }
 
     def emb_update_table(self, table_name: str, keys: torch.Tensor, grads: torch.Tensor) -> None:
         if keys.numel() == 0:
