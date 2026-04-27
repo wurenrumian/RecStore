@@ -2,7 +2,9 @@ import torch
 import os
 import time
 import ctypes
-from typing import Optional, Tuple, List, Any, Callable
+from typing import Optional, Tuple, List, Dict, Any, Callable
+
+_LOCAL_FAST_PATH_BACKENDS = {"local_shm", "hierkv"}
 
 def get_reporter():
     if not hasattr(get_reporter, 'lib'):
@@ -243,6 +245,119 @@ class RecStoreClient:
         
         return res
 
+    def _normalize_ids(
+        self,
+        ids: torch.Tensor,
+        *,
+        preserve_device: bool = False,
+    ) -> torch.Tensor:
+        if not isinstance(ids, torch.Tensor):
+            raise TypeError("ids must be a torch.Tensor")
+        if ids.dtype != torch.int64:
+            ids = ids.to(dtype=torch.int64)
+        if not ids.is_contiguous():
+            ids = ids.contiguous()
+        if preserve_device and ids.device.type not in ("cpu", "cuda"):
+            raise RuntimeError(
+                f"local_shm fast path only supports cpu or cuda tensors, got {ids.device.type}."
+            )
+        if not preserve_device and ids.device.type != 'cpu':
+            ids = ids.to('cpu')
+        return ids
+
+    def _normalize_grads(
+        self,
+        grads: torch.Tensor,
+        *,
+        preserve_device: bool = False,
+    ) -> torch.Tensor:
+        if not isinstance(grads, torch.Tensor):
+            raise TypeError("grads must be a torch.Tensor")
+        if grads.dtype != torch.float32:
+            grads = grads.to(dtype=torch.float32)
+        if not grads.is_contiguous():
+            grads = grads.contiguous()
+        if preserve_device and grads.device.type not in ("cpu", "cuda"):
+            raise RuntimeError(
+                f"local_shm fast path only supports cpu or cuda tensors, got {grads.device.type}."
+            )
+        if not preserve_device and grads.device.type != 'cpu':
+            grads = grads.to('cpu')
+        return grads
+
+    def _require_local_shm_backend(self, api_name: str) -> None:
+        if not hasattr(self.ops, "current_ps_backend"):
+            raise RuntimeError(
+                f"{api_name} requires a RecStore ops library exposing current_ps_backend()."
+            )
+        backend = self.ops.current_ps_backend()
+        if backend not in _LOCAL_FAST_PATH_BACKENDS:
+            raise RuntimeError(
+                f"{api_name} requires local_shm or hierkv backend, but current backend is {backend}."
+            )
+
+    def set_ps_backend(self, backend: str) -> None:
+        if not isinstance(backend, str) or not backend:
+            raise ValueError("backend must be a non-empty string")
+        if not hasattr(self.ops, "set_ps_backend"):
+            raise RuntimeError(
+                "set_ps_backend requires a RecStore ops library exposing set_ps_backend()."
+            )
+        self.ops.set_ps_backend(backend)
+
+    def local_lookup_flat(self, name: str, ids: torch.Tensor) -> torch.Tensor:
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor '{name}' has not been initialized.")
+        self._require_local_shm_backend("local_lookup_flat")
+        meta = self._tensor_meta[name]
+        embedding_dim = meta['shape'][1]
+        ids = self._normalize_ids(ids, preserve_device=True)
+        return self.ops.local_lookup_flat(ids, int(embedding_dim))
+
+    def get_last_local_shm_lookup_profile(self) -> Dict[str, float]:
+        getter = getattr(self.ops, "get_last_local_lookup_flat_profile", None)
+        if not callable(getter):
+            return {}
+        values = getter()
+        if not isinstance(values, (list, tuple)) or len(values) < 7:
+            return {}
+        return {
+            "lookup_cpp_total_ms": float(values[0]),
+            "lookup_keys_stage_ms": float(values[1]),
+            "lookup_submit_ms": float(values[2]),
+            "lookup_wait_ms": float(values[3]),
+            "lookup_payload_pin_ms": float(values[4]),
+            "lookup_fallback_copy_ms": float(values[5]),
+            "lookup_values_h2d_enqueue_ms": float(values[6]),
+        }
+
+    def local_update_flat(self, name: str, ids: torch.Tensor, grads: torch.Tensor) -> None:
+        if name not in self._tensor_meta:
+            raise RuntimeError(f"Tensor '{name}' has not been initialized.")
+
+        self._require_local_shm_backend("local_update_flat")
+        ids = self._normalize_ids(ids, preserve_device=True)
+        grads = self._normalize_grads(grads, preserve_device=True)
+        if grads.dim() != 2:
+            raise ValueError("grads must be a 2-dimensional tensor")
+        if ids.size(0) != grads.size(0):
+            raise ValueError("ids and grads must have the same number of rows")
+        self.ops.local_update_flat(name, ids, grads)
+
+    def get_last_local_shm_update_profile(self) -> Dict[str, float]:
+        getter = getattr(self.ops, "get_last_local_update_flat_profile", None)
+        if not callable(getter):
+            return {}
+        values = getter()
+        if not isinstance(values, (list, tuple)) or len(values) < 4:
+            return {}
+        return {
+            "local_update_cpp_total_ms": float(values[0]),
+            "local_update_keys_stage_ms": float(values[1]),
+            "local_update_grads_stage_ms": float(values[2]),
+            "local_update_shm_call_ms": float(values[3]),
+        }
+
     def push(self, name: str, ids: torch.Tensor, data: torch.Tensor):
         """Push data to KVServer.
 
@@ -306,23 +421,8 @@ class RecStoreClient:
         if name not in self._tensor_meta:
             raise RuntimeError(f"Tensor '{name}' has not been initialized.")
         
-        if not isinstance(ids, torch.Tensor):
-            raise TypeError("ids must be a torch.Tensor")
-        if ids.dtype != torch.int64:
-            ids = ids.to(dtype=torch.int64)
-        if not ids.is_contiguous():
-            ids = ids.contiguous()
-        if ids.device.type != 'cpu':
-            ids = ids.to('cpu')
-        
-        if not isinstance(grads, torch.Tensor):
-            raise TypeError("grads must be a torch.Tensor")
-        if grads.dtype != torch.float32:
-            grads = grads.to(dtype=torch.float32)
-        if not grads.is_contiguous():
-            grads = grads.contiguous()
-        if grads.device.type != 'cpu':
-            grads = grads.to('cpu')
+        ids = self._normalize_ids(ids)
+        grads = self._normalize_grads(grads)
 
         handle = self._next_async_handle
         self._next_async_handle += 1
