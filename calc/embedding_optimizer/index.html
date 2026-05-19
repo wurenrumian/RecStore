@@ -12,13 +12,13 @@
         <meta name="author" content="RecStore Team">
       
       
-        <link rel="canonical" href="https://wurenrumian.github.io/RecStore/calc/pytorch_binding/">
+        <link rel="canonical" href="https://wurenrumian.github.io/RecStore/calc/embedding_optimizer/">
       
       
-        <link rel="prev" href="../kvclient/">
+        <link rel="prev" href="../interfaces/">
       
       
-        <link rel="next" href="../embedding_modules/">
+        <link rel="next" href="../../parameter_server/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>PyTorch C++ 扩展 - RecStore Documentation</title>
+        <title>Embedding 与 Optimizer - RecStore Documentation</title>
       
     
     
@@ -80,7 +80,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#pytorch-c" class="md-skip">
+        <a href="#embedding-optimizer" class="md-skip">
           跳转至
         </a>
       
@@ -114,7 +114,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              PyTorch C++ 扩展
+              Embedding 与 Optimizer
             
           </span>
         </div>
@@ -853,42 +853,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../op_interface/" class="md-nav__link">
+      <a href="../interfaces/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    CommonOp 接口
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../kvclient/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    KVClient 客户端
+    接口边界
   
 
     
@@ -925,7 +897,7 @@
   <span class="md-ellipsis">
     
   
-    PyTorch C++ 扩展
+    Embedding 与 Optimizer
   
 
     
@@ -943,7 +915,7 @@
   <span class="md-ellipsis">
     
   
-    PyTorch C++ 扩展
+    Embedding 与 Optimizer
   
 
     
@@ -969,13 +941,102 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
+  <a href="#embedding" class="md-nav__link">
     <span class="md-ellipsis">
       
-        概述
+        Embedding 模块
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Embedding 模块">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recstoreembeddingbagcollection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RecStoreEmbeddingBagCollection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#distembedding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DistEmbedding
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fused-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fused id
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        预取
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optimizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        梯度和 optimizer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="梯度和 optimizer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ebc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EBC 更新
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#distembedding_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DistEmbedding 更新
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -983,140 +1044,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        操作列表
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="操作列表">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        嵌入读取
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        嵌入写入
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        异步预取
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        等待预取结果
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        梯度更新
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        初始化嵌入表
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rectensor" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        RecTensor 转换
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="RecTensor 转换">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#torectensor" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ToRecTensor 函数
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        设备支持
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        张量验证
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        编译
+        修改检查
       
     </span>
   </a>
@@ -1127,62 +1055,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../embedding_modules/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    EmbeddingBag 模块
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../optimizer/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    优化器与梯度更新
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1517,34 +1389,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../../storage/cacheps/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    CachePS 层
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../../storage/basekv/" class="md-nav__link">
         
   
@@ -1552,7 +1396,7 @@
   <span class="md-ellipsis">
     
   
-    BaseKV 抽象
+    BaseKV 与配置
   
 
     
@@ -1580,35 +1424,7 @@
   <span class="md-ellipsis">
     
   
-    KV 引擎实现
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../storage/memory/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    内存管理
+    Composite KV 开发
   
 
     
@@ -2211,13 +2027,102 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
+  <a href="#embedding" class="md-nav__link">
     <span class="md-ellipsis">
       
-        概述
+        Embedding 模块
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Embedding 模块">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#recstoreembeddingbagcollection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RecStoreEmbeddingBagCollection
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#distembedding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DistEmbedding
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fused-id" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fused id
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        预取
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#optimizer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        梯度和 optimizer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="梯度和 optimizer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ebc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        EBC 更新
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#distembedding_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DistEmbedding 更新
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2225,140 +2130,7 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        操作列表
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="操作列表">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        嵌入读取
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        嵌入写入
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        异步预取
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        等待预取结果
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        梯度更新
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        初始化嵌入表
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rectensor" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        RecTensor 转换
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="RecTensor 转换">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#torectensor" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ToRecTensor 函数
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        设备支持
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        张量验证
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_11" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        编译
+        修改检查
       
     </span>
   </a>
@@ -2382,7 +2154,7 @@
 
 
   
-    <a href="https://github.com/RecStore/RecStore/edit/main/docs/calc/pytorch_binding.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/RecStore/RecStore/edit/main/docs/calc/embedding_optimizer.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -2390,400 +2162,128 @@
   
 
 
-<h1 id="pytorch-c">PyTorch C++ 扩展<a class="headerlink" href="#pytorch-c" title="Permanent link">&para;</a></h1>
-<h2 id="_1">概述<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>PyTorch C++ 扩展位于 <code>src/framework/pytorch/op_torch.cc</code>，将 CommonOp 接口暴露为 torch.ops 操作，支持 CPU/GPU 张量。</p>
-<h2 id="_2">操作列表<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<h3 id="_3">嵌入读取<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">emb_read</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="n">embedding_dim</span><span class="p">)</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">Tensor</span>
+<h1 id="embedding-optimizer">Embedding 与 Optimizer<a class="headerlink" href="#embedding-optimizer" title="Permanent link">&para;</a></h1>
+<p>计算层的主入口是 <code>RecStoreEmbeddingBagCollection</code>。<code>DistEmbedding</code> 是单表封装，适合简单实验和兼容旧训练代码；它的更新路径和 EBC 不一样。</p>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>文件</th>
+<th>使用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RecStoreEmbeddingBagCollection</code></td>
+<td><code>src/python/pytorch/torchrec_kv/EmbeddingBag.py</code></td>
+<td>TorchRec 风格多表、多特征模型。当前模型接入优先看它。</td>
+</tr>
+<tr>
+<td><code>DistEmbedding</code></td>
+<td><code>src/python/pytorch/recstore/DistEmb.py</code></td>
+<td>单个 embedding table。通过 <code>DistTensor</code> 读写，optimizer 在 Python 侧做 SGD 写回。</td>
+</tr>
+</tbody>
+</table>
+<h2 id="embedding">Embedding 模块<a class="headerlink" href="#embedding" title="Permanent link">&para;</a></h2>
+<h3 id="recstoreembeddingbagcollection">RecStoreEmbeddingBagCollection<a class="headerlink" href="#recstoreembeddingbagcollection" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">module</span> <span class="o">=</span> <span class="n">RecStoreEmbeddingBagCollection</span><span class="p">(</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">embedding_bag_configs</span><span class="o">=</span><span class="n">configs</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">enable_fusion</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">fusion_k</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
 </code></pre></div>
-<p><strong>函数签名</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">emb_read_torch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">embedding_dim</span><span class="p">)</span>
-</code></pre></div></p>
+<p>输入是 <code>KeyedJaggedTensor</code>。模块按 feature 找到 table，读取 ids 对应的 embedding，再用 <code>torch.nn.functional.embedding_bag</code> 做 sum pooling。</p>
+<h3 id="distembedding">DistEmbedding<a class="headerlink" href="#distembedding" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">emb</span> <span class="o">=</span> <span class="n">DistEmbedding</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">num_embeddings</span><span class="o">=</span><span class="mi">100000</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">embedding_dim</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;user_embedding&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">init_func</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">lr</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">)</span>
+</code></pre></div>
+<p><code>forward(ids)</code> 通过 <code>DistTensor.__getitem__</code> 调 <code>client.pull</code>。backward 会对重复 id 做 <code>torch.unique + index_add_</code>，把聚合后的 <code>(ids, grads)</code> 写入 <code>_trace</code>。</p>
+<h2 id="fused-id">fused id<a class="headerlink" href="#fused-id" title="Permanent link">&para;</a></h2>
+<p>开启 fusion 后，表前缀写进高位：<code>fused_id = raw_id + (table_idx &lt;&lt; fusion_k)</code>。</p>
+<p>改 <code>fusion_k</code> 时要确认 raw id 不会覆盖表前缀。</p>
+<h2 id="_1">预取<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">handle</span> <span class="o">=</span> <span class="n">module</span><span class="o">.</span><span class="n">issue_fused_prefetch</span><span class="p">(</span><span class="n">features</span><span class="p">)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">module</span><span class="o">.</span><span class="n">set_fused_prefetch_handle</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">out</span> <span class="o">=</span> <span class="n">module</span><span class="p">(</span><span class="n">features</span><span class="p">)</span>
+</code></pre></div>
+<p><code>issue_fused_prefetch</code> 去重 fused ids 并返回 handle。forward 看到 <code>_fused_prefetch_handle</code> 后等待结果，再按 inverse index 恢复原始顺序。没有 handle 时走同步读取。</p>
+<h2 id="optimizer">梯度和 optimizer<a class="headerlink" href="#optimizer" title="Permanent link">&para;</a></h2>
+<p>Python 侧 optimizer 先消费模块 <code>_trace</code>。EBC 和 <code>DistEmbedding</code> 后续更新位置不同。</p>
 <table>
 <thead>
 <tr>
-<th>参数</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>keys</td>
-<td>int64 张量，[N] 形状，可在 CPU/GPU</td>
-</tr>
-<tr>
-<td>embedding_dim</td>
-<td>整数，嵌入维度</td>
-</tr>
-</tbody>
-</table>
-<table>
-<thead>
-<tr>
-<th>返回值</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>values</td>
-<td>float32 张量，[N, embedding_dim] 形状，CPU 上</td>
-</tr>
-</tbody>
-</table>
-<p><strong>工作流程</strong></p>
-<table>
-<thead>
-<tr>
-<th>步骤</th>
-<th>代码/操作</th>
-<th>说明</th>
+<th>顺序</th>
+<th>操作</th>
+<th>文件</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>1</td>
-<td>验证 keys 张量 (int64, 1D, contiguous)</td>
-<td>输入检查</td>
+<td>forward 读取 embedding。</td>
+<td><code>torchrec_kv/EmbeddingBag.py</code>、<code>recstore/DistEmb.py</code></td>
 </tr>
 <tr>
 <td>2</td>
-<td><code>if (keys.is_cuda()) cpu_keys = keys.cpu()</code></td>
-<td>GPU → CPU 复制</td>
+<td>backward 写入 <code>module._trace</code>。</td>
+<td>同上</td>
 </tr>
 <tr>
 <td>3</td>
-<td><code>base::RecTensor rec_keys = ToRecTensor(cpu_keys, UINT64)</code></td>
-<td>转换为 RecTensor</td>
+<td><code>SparseOptimizer.step()</code> 读取并聚合 trace。</td>
+<td><code>recstore/optimizer.py</code></td>
 </tr>
 <tr>
 <td>4</td>
-<td><code>op-&gt;EmbRead(rec_keys, rec_values)</code></td>
-<td>调用 C++ op 读取</td>
+<td>EBC 调 <code>RecStoreClient.update_async(table, ids, grads)</code>；<code>DistEmbedding</code> 读当前权重并在 Python 侧计算新值。</td>
+<td><code>recstore/optimizer.py</code></td>
 </tr>
 <tr>
 <td>5</td>
-<td><code>if (values.is_cuda()) values.copy_(cpu_values)</code></td>
-<td>CPU → GPU 复制</td>
-</tr>
-<tr>
-<td>6</td>
-<td>返回 <code>values</code></td>
-<td>返回 float32 张量 <code>[N, embedding_dim]</code></td>
-</tr>
-</tbody>
-</table>
-<p><strong>示例</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">recstore.KVClient</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_kv_client</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">client</span> <span class="o">=</span> <span class="n">get_kv_client</span><span class="p">()</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">keys</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">embeddings</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ops</span><span class="o">.</span><span class="n">recstore_ops</span><span class="o">.</span><span class="n">emb_read</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span> <span class="mi">128</span><span class="p">)</span>  <span class="c1"># [5, 128]</span>
-</code></pre></div></p>
-<h3 id="_4">嵌入写入<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">emb_write</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="n">values</span><span class="p">)</span>
-</code></pre></div>
-<p><strong>函数签名</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kt">void</span><span class="w"> </span><span class="n">emb_write_torch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">values</span><span class="p">)</span>
-</code></pre></div></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>keys</td>
-<td>int64 张量，[N]</td>
-</tr>
-<tr>
-<td>values</td>
-<td>float32 张量，[N, D]</td>
-</tr>
-</tbody>
-</table>
-<p>调用 op-&gt;EmbWrite() 同步写入嵌入</p>
-<h3 id="_5">异步预取<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">emb_prefetch</span><span class="p">(</span><span class="n">keys</span><span class="p">)</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">int64</span>
-</code></pre></div>
-<p><strong>函数签名</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kt">int64_t</span><span class="w"> </span><span class="n">emb_prefetch_torch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">keys</span><span class="p">)</span>
-</code></pre></div></p>
-<p>返回预取 ID (uint64_t 转换为 int64_t)</p>
-<p><strong>工作流程</strong> （<code>src/framework/pytorch/op_torch.cc:emb_prefetch_torch</code>）</p>
-<table>
-<thead>
-<tr>
-<th>步骤</th>
-<th>代码/操作</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>1</td>
-<td>验证 keys 张量</td>
-<td>输入检查</td>
-</tr>
-<tr>
-<td>2</td>
-<td><code>if (keys.is_cuda()) cpu_keys = keys.cpu()</code></td>
-<td>GPU → CPU</td>
-</tr>
-<tr>
-<td>3</td>
-<td><code>base::RecTensor rec_keys = ToRecTensor(cpu_keys, UINT64)</code></td>
-<td>转换为 RecTensor</td>
-</tr>
-<tr>
-<td>4</td>
-<td><code>uint64_t pid = op-&gt;EmbPrefetch(rec_keys, rec_vals)</code></td>
-<td>发起异步预取</td>
-</tr>
-<tr>
-<td>5</td>
-<td>返回 <code>static_cast&lt;int64_t&gt;(pid)</code></td>
-<td>返回预取 ID</td>
-</tr>
-</tbody>
-</table>
-<h3 id="_6">等待预取结果<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">emb_wait_result</span><span class="p">(</span><span class="n">prefetch_id</span><span class="p">,</span><span class="w"> </span><span class="n">embedding_dim</span><span class="p">)</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="n">Tensor</span>
-</code></pre></div>
-<p><strong>函数签名</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="w"> </span><span class="n">emb_wait_result_torch</span><span class="p">(</span><span class="kt">int64_t</span><span class="w"> </span><span class="n">prefetch_id</span><span class="p">,</span><span class="w"> </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">embedding_dim</span><span class="p">)</span>
-</code></pre></div></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>prefetch_id</td>
-<td>int64，从 prefetch 返回的 ID</td>
-</tr>
-<tr>
-<td>embedding_dim</td>
-<td>整数，嵌入维度</td>
+<td>EBC 进入 <code>KVClientOp::EmbUpdate</code> 和 PS optimizer；<code>DistEmbedding</code> 写回 <code>DistTensor</code>。</td>
+<td><code>src/framework/op.cc</code>、<code>src/optimizer/optimizer.cpp</code>、<code>recstore/DistTensor.py</code></td>
 </tr>
 </tbody>
 </table>
 <table>
 <thead>
 <tr>
-<th>返回值</th>
-<th>说明</th>
+<th>模块</th>
+<th>trace item</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>values</td>
-<td>float32 张量，[N, embedding_dim]</td>
+<td><code>RecStoreEmbeddingBagCollection</code></td>
+<td><code>(table_name, ids, grads)</code></td>
+</tr>
+<tr>
+<td><code>DistEmbedding</code></td>
+<td><code>(ids, grads)</code></td>
 </tr>
 </tbody>
 </table>
-<p><strong>工作流程</strong>
-1. 调用 op-&gt;WaitForPrefetch()
-2. 调用 op-&gt;GetPretchResult()
-3. 将 vector<vector\<float>> 转换为 Tensor
-4. 返回 [N, D] 张量</p>
-<h3 id="_7">梯度更新<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">emb_update</span><span class="p">(</span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="n">grads</span><span class="p">)</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">emb_update_with_table</span><span class="p">(</span><span class="n">table_name</span><span class="p">,</span><span class="w"> </span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="n">grads</span><span class="p">)</span>
-</code></pre></div>
-<p><strong>函数签名</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kt">void</span><span class="w"> </span><span class="n">emb_update_torch</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">keys</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">grads</span><span class="p">)</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kt">void</span><span class="w"> </span><span class="n">emb_update_with_table_torch</span><span class="p">(</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">table_name</span><span class="p">,</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">keys</span><span class="p">,</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">grads</span>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">)</span>
-</code></pre></div></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>keys</td>
-<td>int64 张量，[N]</td>
-</tr>
-<tr>
-<td>grads</td>
-<td>float32 张量，[N, D]</td>
-</tr>
-<tr>
-<td>table_name</td>
-<td>嵌入表名称</td>
-</tr>
-</tbody>
-</table>
-<p>调用 op-&gt;EmbUpdate() 应用梯度</p>
-<h3 id="_8">初始化嵌入表<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">torch</span><span class="p">.</span><span class="n">ops</span><span class="p">.</span><span class="n">recstore_ops</span><span class="p">.</span><span class="n">init_embedding_table</span><span class="p">(</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">num_embeddings</span><span class="p">,</span><span class="w"> </span><span class="n">embedding_dim</span><span class="p">)</span><span class="w"> </span><span class="err">→</span><span class="w"> </span><span class="kt">bool</span>
-</code></pre></div>
-<p><strong>函数签名</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kt">bool</span><span class="w"> </span><span class="n">init_embedding_table_torch</span><span class="p">(</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">string</span><span class="o">&amp;</span><span class="w"> </span><span class="n">name</span><span class="p">,</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">num_embeddings</span><span class="p">,</span>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="kt">int64_t</span><span class="w"> </span><span class="n">embedding_dim</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="p">)</span>
-</code></pre></div></p>
-<table>
-<thead>
-<tr>
-<th>参数</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>name</td>
-<td>表名称</td>
-</tr>
-<tr>
-<td>num_embeddings</td>
-<td>嵌入数量</td>
-</tr>
-<tr>
-<td>embedding_dim</td>
-<td>嵌入维度</td>
-</tr>
-</tbody>
-</table>
-<table>
-<thead>
-<tr>
-<th>返回值</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>success</td>
-<td>bool，初始化是否成功</td>
-</tr>
-</tbody>
-</table>
-<h2 id="rectensor">RecTensor 转换<a class="headerlink" href="#rectensor" title="Permanent link">&para;</a></h2>
-<h3 id="torectensor">ToRecTensor 函数<a class="headerlink" href="#torectensor" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="k">static</span><span class="w"> </span><span class="kr">inline</span><span class="w"> </span><span class="n">base</span><span class="o">::</span><span class="n">RecTensor</span>
-<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">ToRecTensor</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">torch</span><span class="o">::</span><span class="n">Tensor</span><span class="o">&amp;</span><span class="w"> </span><span class="n">tensor</span><span class="p">,</span><span class="w"> </span><span class="n">base</span><span class="o">::</span><span class="n">DataType</span><span class="w"> </span><span class="n">dtype</span><span class="p">)</span>
-</code></pre></div>
-<p>将 PyTorch Tensor 转换为 RecTensor 用于 C++ 侧处理</p>
-<table>
-<thead>
-<tr>
-<th>操作</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>提取数据指针</td>
-<td><code>tensor.data_ptr()</code></td>
-</tr>
-<tr>
-<td>提取形状</td>
-<td>遍历 <code>tensor.dim()</code> 获取各维大小</td>
-</tr>
-<tr>
-<td>指定数据类型</td>
-<td>UINT64 (keys) 或 FLOAT32 (values)</td>
-</tr>
-</tbody>
-</table>
-<h2 id="_9">设备支持<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>设备</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>CPU</td>
-<td>直接处理</td>
-</tr>
-<tr>
-<td>GPU (CUDA)</td>
-<td>自动复制到 CPU，处理后复制回 GPU</td>
-</tr>
-</tbody>
-</table>
-<p><strong>转移逻辑</strong></p>
-<table>
-<thead>
-<tr>
-<th>步骤</th>
-<th>操作</th>
-<th>代码位置</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>1</td>
-<td>GPU Tensor 复制到 CPU</td>
-<td><code>src/framework/pytorch/op_torch.cc</code></td>
-</tr>
-<tr>
-<td>2</td>
-<td>C++ 处理 (op-&gt;EmbRead 等)</td>
-<td><code>src/framework/op.h:KVClientOp</code></td>
-</tr>
-<tr>
-<td>3</td>
-<td>CPU Tensor 复制回 GPU</td>
-<td><code>src/framework/pytorch/op_torch.cc</code></td>
-</tr>
-</tbody>
-</table>
-<h2 id="_10">张量验证<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
-<p>操作前进行的检查：</p>
-<table>
-<thead>
-<tr>
-<th>检查项</th>
-<th>说明</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>维度</td>
-<td>keys 必须是 1D，values 必须是 2D</td>
-</tr>
-<tr>
-<td>数据类型</td>
-<td>keys 必须是 int64，values 必须是 float32</td>
-</tr>
-<tr>
-<td>连续性</td>
-<td>张量必须是 contiguous</td>
-</tr>
-<tr>
-<td>大小</td>
-<td>embedding_dim &gt; 0，keys.size() &gt; 0</td>
-</tr>
-</tbody>
-</table>
-<p>失败时抛出 <code>TORCH_CHECK</code> 异常</p>
-<h2 id="_11">编译<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
-<p>编译命令：
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nb">cd</span><span class="w"> </span>src/framework/pytorch
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>g++<span class="w"> </span>-c<span class="w"> </span>op_torch.cc<span class="w"> </span>-I/path/to/torch/include<span class="w"> </span>-I/path/to/recstore/include
-</code></pre></div></p>
-<p>生成 <code>lib_recstore_ops.so</code>，可由 Python 通过 <code>torch.ops.load_library()</code> 加载</p>
+<p><code>SparseOptimizer.step()</code> 处理后会清理 trace。跳过这一步会让下一轮 batch 混入旧梯度。</p>
+<h3 id="ebc">EBC 更新<a class="headerlink" href="#ebc" title="Permanent link">&para;</a></h3>
+<p><code>SparseSGD</code> 聚合 <code>_trace</code> 后调用 <code>kv_client.update_async(name, ids, grads)</code>。学习率和优化器公式由后端处理。local_shm / HierKV 快路径会走 <code>local_update_flat</code>。</p>
+<h3 id="distembedding_1">DistEmbedding 更新<a class="headerlink" href="#distembedding_1" title="Permanent link">&para;</a></h3>
+<p><code>SparseSGD</code> 会合并重复 id，读取 <code>mod.weight[unique_ids]</code>，在 Python 侧执行 <code>current - lr * grad</code>，再写回 <code>DistTensor</code>。这条路径没有使用后端 optimizer 状态。</p>
+<details class="note">
+<summary>后端 optimizer</summary>
+<p>后端实现位于 <code>src/optimizer/optimizer.cpp</code>。SGD 无额外状态；AdaGrad 和 RowWiseAdaGrad 的累积状态都在后端维护。EBC 的远端更新应保持这个边界。</p>
+</details>
+<h2 id="_2">修改检查<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>改 trace 结构：同步更新 <code>SparseOptimizer</code> 和相关单测。</p>
+<p>改后端 optimizer：补跑 EBC / PS 更新路径测试，确认 read-modify-write 顺序。</p>
+<p>改 <code>DistEmbedding</code>：检查 <code>DistTensor.__getitem__</code> / <code>__setitem__</code> 和 Python 侧 SGD 聚合。</p>
+<p>改本地快路径：检查 <code>local_update_flat</code> 和 RPC fallback。</p>
 
 
 
