@@ -7,7 +7,7 @@ description: Use when coordinating RecStore paper-style performance analysis acr
 
 Top-level coordinator for paper-style performance analysis. Delegate details to:
 
-- `kvengine-ycsb`: storage-only KVEngine/YCSB and storage reports.
+- `benchmark-kvengine`: storage-only KVEngine/YCSB and storage reports.
 - `benchmark-ps`: PS/network transport benchmarks.
 - `rdma-module`: RDMA correctness, RDMA code paths, and RDMA bottleneck diagnosis.
 
@@ -68,4 +68,4 @@ Use the `run_paper_e2e.py` output directory as the authoritative result root.
 - `logs/e2e/*.log`: per-run logs.
 - `outputs/<run_id>/*_main.csv`: raw per-step metrics.
 
-Keep storage-only, PS/network, and RDMA-diagnostic results in their own roots defined by `kvengine-ycsb`, `benchmark-ps`, and `rdma-module`. Do not rename those outputs into a new cross-layer format.
+Keep storage-only, PS/network, and RDMA-diagnostic results in their own roots defined by `benchmark-kvengine`, `benchmark-ps`, and `rdma-module`. Do not rename those outputs into a new cross-layer format.

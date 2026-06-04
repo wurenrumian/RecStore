@@ -58,12 +58,12 @@ cmake --build build --target ycsb -j
 
 ## 横向对比
 
-脚本：`tools/benchmarks/run_ycsb_compare.py`
+脚本：`tools/benchmarks/run_kvengine_compare.py`
 
 默认只跑 `kvdb` 和 `cceh`，workload 用 `workloada`：
 
 ```bash
-python3 tools/benchmarks/run_ycsb_compare.py \
+python3 tools/benchmarks/run_kvengine_compare.py \
   --build \
   --engines kvdb cceh \
   --workloads workloada workloadb workloadc \
@@ -115,7 +115,7 @@ ps_rdma_benchmark_report_0531.md
 通过 compare runner 运行时，对应参数是：
 
 ```bash
-python3 tools/benchmarks/run_ycsb_compare.py \
+python3 tools/benchmarks/run_kvengine_compare.py \
   --engines kvdb \
   --workloads workloadc \
   --record-count 300000 \
@@ -133,7 +133,7 @@ python3 tools/benchmarks/run_ycsb_compare.py \
 配好环境后执行：
 
 ```bash
-python3 tools/benchmarks/run_ycsb_compare.py \
+python3 tools/benchmarks/run_kvengine_compare.py \
   --engines kvdb cceh rocksdb leveldb lmdb \
   --workloads workloada workloadb workloadc \
   --record-count 100000 \
@@ -158,7 +158,7 @@ python3 tools/benchmarks/run_ycsb_compare.py \
     全局 YCSB 参数用 `--extra-prop`：
 
     ```bash
-    python3 tools/benchmarks/run_ycsb_compare.py \
+    python3 tools/benchmarks/run_kvengine_compare.py \
       --engines kvdb cceh \
       --workloads workloada \
       --extra-prop fieldcount=10 \
@@ -169,7 +169,7 @@ python3 tools/benchmarks/run_ycsb_compare.py \
     只给某个 engine 的参数用 `--engine-prop`：
 
     ```bash
-    python3 tools/benchmarks/run_ycsb_compare.py \
+    python3 tools/benchmarks/run_kvengine_compare.py \
       --engines kvdb cceh \
       --workloads workloada \
       --engine-prop kvdb:hybridkv.synthetic_bytes=1024 \
