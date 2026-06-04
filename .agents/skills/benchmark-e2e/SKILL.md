@@ -1,9 +1,9 @@
 ---
-name: performance-analysis
+name: benchmark-e2e
 description: Use when coordinating RecStore paper-style performance analysis across existing storage, PS/RDMA, and TorchRec end-to-end results, especially when aggregating outputs, producing figures, or writing a Chinese benchmark report.
 ---
 
-# Performance Analysis
+# Benchmark E2E
 
 Top-level coordinator for paper-style performance analysis. Delegate details to:
 

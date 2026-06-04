@@ -1,0 +1,4 @@
+interface:
+  display_name: "Benchmark E2E"
+  short_description: "Coordinate RecStore paper-style E2E performance reports"
+  default_prompt: "Use $benchmark-e2e to coordinate RecStore paper-style performance analysis across storage, PS/RDMA, and TorchRec end-to-end results."
