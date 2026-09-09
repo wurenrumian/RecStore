@@ -2027,6 +2027,7 @@
 
 
 <h1 id="recstore">RecStore 架构总览<a class="headerlink" href="#recstore" title="Permanent link">&para;</a></h1>
+<p>RDMA 多机部署和整理方案的设计草稿位于 <code>tmp/rdma_architecture/</code>，不纳入正式文档导航。</p>
 <p>RecStore 采用分层架构设计，旨在支撑万亿级稀疏参数的存储与高效更新。整个系统从逻辑上分为三层：<strong>计算层 (Calculation Layer)</strong>、<strong>参数服务器层 (Parameter Server Layer)</strong> 和 <strong>存储层 (Storage Layer)</strong>。</p>
 <h2 id="_1">架构简图<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <pre class="mermaid"><code>graph TD
