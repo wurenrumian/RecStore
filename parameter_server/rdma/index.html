@@ -2253,7 +2253,7 @@
 <h1 id="rdma">RDMA 模块说明<a class="headerlink" href="#rdma" title="Permanent link">&para;</a></h1>
 <p>本文档说明 RecStore Parameter Server 的 RDMA 主路径、入口边界和运行时约束。
 可执行的构建、正确性测试、benchmark 命令、默认值和报告规则统一维护在
-<code>.agents/skills/rs-benchmark-ps/SKILL.md</code>；不要在本页复制测试命令或临时性能数字。
+<code>rs-benchmark-ps</code> skill；不要在本页复制测试命令或临时性能数字。
 面向真实跨机部署的配置、IB/RoCE v1/RoCE v2 选择和改造边界，以代码中的
 <code>ResolvedRdmaDeployment</code> 配置契约和本页的稳定架构说明为准。</p>
 <p>默认工作目录为仓库根目录：</p>
@@ -2380,7 +2380,7 @@ server 通过它交换 <code>RawVerbsNodeMeta</code> 并等待 ready；控制面
 </ul>
 <h2 id="4">4. 关键参数<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
 <p>以下只保留容易影响语义或排障的参数；当前 benchmark 默认值和完整参数组合见
-<code>.agents/skills/rs-benchmark-ps/SKILL.md</code>。</p>
+<code>rs-benchmark-ps</code> skill。</p>
 <table>
 <thead>
 <tr>
@@ -2465,7 +2465,7 @@ row copy 和 response completion 可分别定位查找、清零、搬运和回�
    client/server transport mode。</li>
 </ol>
 <p>构建、RDMA verbs 检查、PetPS integration、op-layer 测试、脚本单测和最小真实 RDMA
-闭环命令见 <code>.agents/skills/rs-benchmark-ps/SKILL.md</code>。</p>
+闭环命令见 <code>rs-benchmark-ps</code> skill。</p>
 <h2 id="7">7. 维护边界<a class="headerlink" href="#7" title="Permanent link">&para;</a></h2>
 <ul>
 <li>本页维护稳定的架构事实和参数语义，不维护某次运行的吞吐数字、矩阵结果或路线图。</li>
