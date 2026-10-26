@@ -303,28 +303,28 @@
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;base/tensor.h&quot;</span></td>
+        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">"base/tensor.h"</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L21" href="#L21">21</a></td>
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;framework/op.h&quot;</span></td>
+        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">"framework/op.h"</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L22" href="#L22">22</a></td>
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;framework/pytorch/op_cuda_runtime.h&quot;</span></td>
+        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">"framework/pytorch/op_cuda_runtime.h"</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L23" href="#L23">23</a></td>
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&quot;ps/local_shm/local_shm_client.h&quot;</span></td>
+        <td class="src"><span class="cp">#include</span><span class="w"> </span><span class="cpf">"ps/local_shm/local_shm_client.h"</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L24" href="#L24">24</a></td>
@@ -359,7 +359,7 @@
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="cp">#</span><span class="w">  </span><span class="cp">include</span><span class="w"> </span><span class="cpf">&quot;framework/gpu/gpu_embedding_cache.h&quot;</span></td>
+        <td class="src"><span class="cp">#</span><span class="w">  </span><span class="cp">include</span><span class="w"> </span><span class="cpf">"framework/gpu/gpu_embedding_cache.h"</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L29" href="#L29">29</a></td>
@@ -431,7 +431,7 @@
           </details>
         </td>
         <td class="linecount uncoveredLine show_uncoveredLine pr-2 pl-2 color-fg-muted text-right">&cross;</td>
-        <td class="src uncoveredLine show_uncoveredLine"><span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">backend</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;local_shm&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">backend</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">&quot;hierkv&quot;</span><span class="p">;</span></td>
+        <td class="src uncoveredLine show_uncoveredLine"><span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">backend</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">"local_shm"</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="n">backend</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s">"hierkv"</span><span class="p">;</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L38" href="#L38">38</a></td>
@@ -771,7 +771,7 @@
           </details>
         </td>
         <td class="linecount partialCoveredLine show_partialCoveredLine pr-2 pl-2 color-fg-muted text-right">10</td>
-        <td class="src partialCoveredLine show_partialCoveredLine"><span class="w">  </span><span class="n">TORCH_CHECK</span><span class="p">(</span><span class="n">kv_op</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;storage backend is not KVClientOp&quot;</span><span class="p">);</span></td>
+        <td class="src partialCoveredLine show_partialCoveredLine"><span class="w">  </span><span class="n">TORCH_CHECK</span><span class="p">(</span><span class="n">kv_op</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="nb">nullptr</span><span class="p">,</span><span class="w"> </span><span class="s">"storage backend is not KVClientOp"</span><span class="p">);</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L75" href="#L75">75</a></td>
@@ -1685,7 +1685,7 @@
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">    </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Failed to clear GPU cache: &quot;</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">e</span><span class="p">.</span><span class="n">what</span><span class="p">();</span></td>
+        <td class="src"><span class="w">    </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">"Failed to clear GPU cache: "</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="n">e</span><span class="p">.</span><span class="n">what</span><span class="p">();</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L199" href="#L199">199</a></td>
@@ -1699,7 +1699,7 @@
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">    </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;Failed to clear GPU cache: unknown exception&quot;</span><span class="p">;</span></td>
+        <td class="src"><span class="w">    </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">"Failed to clear GPU cache: unknown exception"</span><span class="p">;</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L201" href="#L201">201</a></td>
@@ -1944,14 +1944,14 @@
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">      </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;GPU cache invalidation failed after backend update &quot;</span></td>
+        <td class="src"><span class="w">      </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">"GPU cache invalidation failed after backend update "</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L236" href="#L236">236</a></td>
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">                      </span><span class="s">&quot;succeeded; clearing cache and continuing: &quot;</span></td>
+        <td class="src"><span class="w">                      </span><span class="s">"succeeded; clearing cache and continuing: "</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L237" href="#L237">237</a></td>
@@ -1972,21 +1972,21 @@
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">      </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;GPU cache invalidation failed after backend update &quot;</span></td>
+        <td class="src"><span class="w">      </span><span class="n">LOG</span><span class="p">(</span><span class="n">WARNING</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">"GPU cache invalidation failed after backend update "</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L240" href="#L240">240</a></td>
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">                      </span><span class="s">&quot;succeeded; clearing cache and continuing: &quot;</span></td>
+        <td class="src"><span class="w">                      </span><span class="s">"succeeded; clearing cache and continuing: "</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L241" href="#L241">241</a></td>
         <td class="text-right src linenos ws-unset">
         </td>
         <td class="linecount pr-2 pl-2 color-fg-muted text-right"></td>
-        <td class="src"><span class="w">                   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">&quot;unknown exception&quot;</span><span class="p">;</span></td>
+        <td class="src"><span class="w">                   </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="s">"unknown exception"</span><span class="p">;</span></td>
       </tr>
       <tr>
         <td class="text-right src linenos"><a class="normal" id="L242" href="#L242">242</a></td>
@@ -2072,7 +2072,7 @@
         <hr class="block-separator"/>
         <footer class="text-center">
           Created using <a href="http://gcovr.com/en/8.7">GCOVR (Version 8.7)</a>
-          at 2026-10-25 01:59:26+00:00
+          at 2026-10-26 03:03:42+00:00
         </footer>
       </div>
     </div>
