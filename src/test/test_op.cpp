@@ -408,7 +408,9 @@ TEST_F(InjectedClientOpTest, NonHierKVWriteCopiesRowsAndRejectsClientFailure) {
   EXPECT_THROW(op_->EmbWrite(keys, values), std::runtime_error);
 }
 
-TEST_F(InjectedClientOpTest, NonHierKVReadClearsOutputAndChecksRows) {
+// The PS client owns miss handling: it writes every requested row and
+// zero-fills misses, so EmbRead no longer pre-zeroes the output buffer.
+TEST_F(InjectedClientOpTest, NonHierKVReadOverwritesOutputAndChecksRows) {
   client_->rows.emplace(2101, std::vector<float>{9.0f, 8.0f, 7.0f});
   std::vector<uint64_t> key_values{2101, 2102};
   std::vector<float> value_values(6, -5.0f);

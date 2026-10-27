@@ -307,29 +307,9 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
       "embread_debug|" + std::to_string(static_cast<uint64_t>(start_us));
 #  endif
 
-  LOG(INFO) << "EmbRead: keys.shape=" << keys.shape(0) << ", values.shape=["
-            << values.shape(0) << ", " << values.shape(1) << "]";
-  LOG(INFO) << "EmbRead: keys.data=" << keys.data_as<uint64_t>()
-            << ", values.data=" << values.data_as<float>();
-  if (keys.shape(0) > 0) {
-    std::ostringstream oss;
-    oss << "EmbRead: keys start with: ";
-    for (int i = 0; i < std::min((int64_t)10, keys.shape(0)); ++i)
-      oss << keys.data_as<uint64_t>()[i] << ", ";
-    LOG(INFO) << oss.str();
-  }
-  if (values.shape(0) > 0) {
-    std::ostringstream oss;
-    oss << "EmbRead: values start with: ";
-    for (int i = 0; i < std::min((int64_t)10, values.shape(0)); ++i) {
-      oss << "[";
-      for (int j = 0; j < std::min((int64_t)10, values.shape(1)); ++j) {
-        oss << values.data_as<float>()[i * values.shape(1) + j] << ", ";
-      }
-      oss << "] ";
-    }
-    LOG(INFO) << oss.str();
-  }
+  // Per-call tracing only: this runs on every embedding lookup.
+  VLOG(2) << "EmbRead: keys.shape=" << keys.shape(0) << ", values.shape=["
+          << values.shape(0) << ", " << values.shape(1) << "]";
   validate_keys(keys);
   validate_embeddings(values, "Values");
 
@@ -341,12 +321,10 @@ void KVClientOp::EmbRead(const RecTensor& keys, RecTensor& values) {
   }
   const uint64_t* keys_data = keys.data_as<uint64_t>();
   base::ConstArray<uint64_t> keys_array(keys_data, L);
-  float* values_data = values.data_as<float>();
-
-  const int64_t D    = values.shape(1);
-  const size_t total = static_cast<size_t>(L) * static_cast<size_t>(D);
-  std::fill_n(values_data, total, 0.0f);
-
+  // No pre-zeroing of `values`: every PS backend writes the whole buffer on
+  // success (RDMA merges every requested row, grpc/brpc memset up front,
+  // local_shm copies a validated full-size payload), and a failure throws
+  // below instead of leaving a half-written tensor.
   int ret = ps_client_->GetParameter(keys_array, values);
   if (!IsReadWriteSuccess(ps_client_, ret)) {
     throw std::runtime_error("Failed to read embeddings from PS client.");
