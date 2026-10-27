@@ -81,6 +81,32 @@ target_link_libraries(test_ssd_allocators PUBLIC
 )
 add_test(NAME test_ssd_allocators COMMAND test_ssd_allocators)
 
+add_executable(test_ssd_layout test_ssd_layout.cpp)
+target_link_libraries(test_ssd_layout PUBLIC
+    ssd_layout
+    gtest
+    gtest_main
+    pthread
+)
+add_test(NAME test_ssd_layout COMMAND test_ssd_layout)
+
+add_executable(test_ssd_static_layout_value_store
+    test_ssd_static_layout_value_store.cpp)
+target_link_libraries(test_ssd_static_layout_value_store PUBLIC
+    base
+    base_memory
+    ps_common
+    kv_engine
+    gtest
+    gtest_main
+    boost_context
+    boost_coroutine
+    pthread
+    TBB::tbb
+)
+add_test(NAME test_ssd_static_layout_value_store
+         COMMAND test_ssd_static_layout_value_store)
+
 add_executable(test_r2_allocator test_r2_allocator.cpp)
 target_link_libraries(test_r2_allocator PUBLIC
     base_memory
@@ -116,6 +142,19 @@ target_link_libraries(test_rectensor PUBLIC
     pthread
 )
 add_test(NAME test_rectensor COMMAND test_rectensor)
+
+add_executable(test_sparse_gradient_commit test_sparse_gradient_commit.cpp)
+target_link_libraries(test_sparse_gradient_commit PUBLIC base gtest gtest_main pthread)
+add_test(NAME test_sparse_gradient_commit COMMAND test_sparse_gradient_commit)
+
+add_executable(test_framework_op_runtime test_framework_op_runtime.cpp)
+target_link_libraries(test_framework_op_runtime PRIVATE base glog gtest gtest_main pthread)
+add_test(NAME test_framework_op_runtime COMMAND test_framework_op_runtime)
+
+# The BagPipe policy test uses only the standard library and GoogleTest.
+add_executable(test_bagpipe_metadata test_bagpipe_metadata.cpp)
+target_link_libraries(test_bagpipe_metadata PRIVATE gtest gtest_main)
+add_test(NAME test_bagpipe_metadata COMMAND test_bagpipe_metadata)
 
 add_executable(test_optimizer test_optimizer.cpp)
 target_link_libraries(test_optimizer PUBLIC
@@ -404,6 +443,7 @@ target_link_libraries(test_local_shm_ps_client PUBLIC
     gtest
     gtest_main
     pthread
+    rt
 )
 add_test(NAME test_local_shm_ps_client COMMAND test_local_shm_ps_client)
 set_tests_properties(test_local_shm_ps_client PROPERTIES
@@ -524,6 +564,16 @@ set_tests_properties(
 )
 
 add_python_unittest(
+    test_run_ssd_layout_microbench_py
+    src/test/scripts/test_run_ssd_layout_microbench.py
+)
+set_tests_properties(
+    test_run_ssd_layout_microbench_py
+    PROPERTIES
+    LABELS "storage;python"
+)
+
+add_python_unittest(
     test_hierkv_python_ops_py
     src.python.pytorch.recstore.unittest.test_kvclient_local_fast_path
     src.python.pytorch.recstore.unittest.test_embeddingbag_single_node_distributed
@@ -564,6 +614,7 @@ add_python_unittest(
     test_hierkv_rs_demo_py
     src.test.model_zoo.rs_demo.test_hybrid_dlrm
     src.test.model_zoo.rs_demo.test_recstore_runner
+    src.test.model_zoo.rs_demo.test_runner_launcher
 )
 set_tests_properties(
     test_hierkv_rs_demo_py
@@ -718,6 +769,7 @@ add_test(NAME test_ps_transport_benchmark COMMAND test_ps_transport_benchmark)
 
 add_executable(test_raw_verbs_allocator test_raw_verbs_allocator.cpp)
 target_link_libraries(test_raw_verbs_allocator PUBLIC
+    base
     gtest
     gtest_main
     pthread
