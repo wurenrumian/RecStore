@@ -211,6 +211,9 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
         for idx, config in enumerate(self._embedding_bag_configs):
             base_offset = (idx << self._fusion_k) if self._enable_fusion else 0
             if initialize_tables:
+                if self._enable_fusion and idx > 0:
+                    self._preload_fused_rows(config, base_offset)
+                    continue
                 self.kv_client.init_data(
                     name=config.name,
                     shape=(config.num_embeddings, config.embedding_dim),
@@ -249,6 +252,36 @@ class RecStoreEmbeddingBagCollection(torch.nn.Module):
                         int(config.num_embeddings),
                         int(config.embedding_dim),
                     )
+
+    def _preload_fused_rows(self, config, base_offset: int) -> None:
+        """Create one feature's rows inside the fused key space.
+
+        Fused reads and writes address every feature through the master table
+        name, so feature ``i``'s rows live at ``(i << fusion_k) | id`` under the
+        master tag. Pre-creating them under ``config.name`` instead stores rows
+        that the fused path never looks up, and every first touch then pays the
+        insert path.
+        """
+        rows = int(config.num_embeddings)
+        if rows <= 0:
+            return
+        if rows >= (1 << int(self._fusion_k)):
+            raise ValueError(
+                f"table '{config.name}' has {rows} rows, which overflows the "
+                f"fusion offset (fusion_k={self._fusion_k})"
+            )
+        self.kv_client.register_tensor_meta(
+            name=config.name,
+            shape=(rows, config.embedding_dim),
+            dtype=torch.float32,
+            base_offset=base_offset,
+            initialize_backend=True,
+        )
+        ids = torch.arange(rows, dtype=torch.int64) + int(base_offset)
+        values = torch.zeros(
+            (rows, int(config.embedding_dim)), dtype=torch.float32
+        )
+        self.kv_client.push(self._master_config.name, ids, values)
 
     def _remote_backend_requires_eager_connect(self) -> bool:
         """Whether non-initializer ranks must eagerly open the PS connection.
