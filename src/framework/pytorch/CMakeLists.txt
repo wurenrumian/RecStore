@@ -56,8 +56,6 @@ target_include_directories(recstore_torch_ops PRIVATE
     ${PROJECT_SOURCE_DIR}/src/ps/grpc
 )
 
-option(USE_PERF_REPORT "Enable performance reporting in Debug mode" OFF)
-
 if(CMAKE_BUILD_TYPE MATCHES "Debug" AND USE_PERF_REPORT)
     target_compile_definitions(recstore_torch_ops PRIVATE ENABLE_PERF_REPORT)
     target_link_libraries(recstore_torch_ops PRIVATE report_client)
@@ -85,7 +83,9 @@ if(TARGET framework_gpu_cache)
     target_link_libraries(recstore_torch_ops PRIVATE framework_gpu_cache)
 endif()
 
-target_link_options(recstore_torch_ops PRIVATE -Wl,--no-as-needed)
+# libunwind (pulled in by cpptrace) must not win the _Unwind_* symbols:
+# load libgcc_s first so C++ exceptions unwind with the libstdc++ runtime.
+target_link_options(recstore_torch_ops PRIVATE -Wl,--no-as-needed -lgcc_s)
 
 # Set the required C++ standard.
 set_target_properties(recstore_torch_ops PROPERTIES
