@@ -74,6 +74,9 @@ public:
     }
     gc_max_live_bytes_ = static_cast<uint64_t>(
         gc_utilization * static_cast<double>(segment_bytes_));
+    // Experiment knob: fold reclaimed segments back into the in-place layout
+    // instead of copying them into a free log segment.
+    fold_segments_ = log.value("fold_segments", false);
 
     const json io          = log.contains("io") ? log.at("io") : json::object();
     BaseKVConfig io_config = config;
@@ -319,6 +322,9 @@ public:
     bytes_read_.store(0, std::memory_order_relaxed);
     compactions_.store(0, std::memory_order_relaxed);
     compaction_bytes_.store(0, std::memory_order_relaxed);
+    folds_.store(0, std::memory_order_relaxed);
+    folded_entries_.store(0, std::memory_order_relaxed);
+    folded_bytes_.store(0, std::memory_order_relaxed);
     reclaimed_segments_.store(0, std::memory_order_relaxed);
   }
 
@@ -346,6 +352,11 @@ public:
         << compactions_.load(std::memory_order_relaxed)
         << " write_log_compaction_bytes="
         << compaction_bytes_.load(std::memory_order_relaxed)
+        << " write_log_folds=" << folds_.load(std::memory_order_relaxed)
+        << " write_log_folded_entries="
+        << folded_entries_.load(std::memory_order_relaxed)
+        << " write_log_folded_bytes="
+        << folded_bytes_.load(std::memory_order_relaxed)
         << " write_log_segments_reclaimed="
         << reclaimed_segments_.load(std::memory_order_relaxed)
         << " write_log_exhausted="
@@ -621,9 +632,15 @@ private:
       return false;
     }
     // Keep one free segment while the active one fills: with a single free
-    // segment left, compact a sealed segment into it instead of spending it.
-    if (!compacting_ && free_.size() == 1 && CompactIntoFreeLocked()) {
-      return true;
+    // segment left, reclaim one instead of spending it. Folding writes the
+    // live rows back to their in-place slots, which restores the 1-page read
+    // path at the cost of one page read-modify-write per row.
+    if (!compacting_ && free_.size() == 1) {
+      if (fold_segments_ && FoldSegmentLocked()) {
+        // The segment is reclaimed; the fall-through still activates a cursor.
+      } else if (CompactIntoFreeLocked()) {
+        return true;
+      }
     }
     const uint32_t dest = free_.front();
     free_.pop_front();
@@ -712,6 +729,108 @@ private:
     return true;
   }
 
+  // Folds the least-utilized sealed segment back into the in-place layout.
+  // Unlike CompactIntoFreeLocked this needs no destination segment: every live
+  // row returns to the slot it already owns, the log index entry is dropped,
+  // and later reads pay one page instead of the log's ~0.6 pages per row.
+  // Caller holds append_mu_.
+  bool FoldSegmentLocked() {
+    const int64_t victim = PickVictimLocked();
+    if (victim < 0) {
+      return false;
+    }
+    segments_[victim].state = Segment::kCompacting;
+    const uint32_t victim_epoch =
+        segments_[victim].epoch.load(std::memory_order_relaxed);
+    compacting_ = true;
+
+    char* page      = io_->AllocateBuffer();
+    uint64_t folded = 0;
+    try {
+      for (uint32_t p = 0; p < segment_pages_; ++p) {
+        io_->BatchReadPages({{AbsolutePage(victim, p), page, 1}});
+        pages_read_.fetch_add(1, std::memory_order_relaxed);
+        bytes_read_.fetch_add(PAGE_SIZE, std::memory_order_relaxed);
+        size_t offset = 0;
+        while (offset + kHeaderBytes <= PAGE_SIZE) {
+          const auto* header =
+              reinterpret_cast<const EntryHeader*>(page + offset);
+          if (header->handle == kValueHandleNone || header->size == 0 ||
+              offset + kHeaderBytes + header->size > PAGE_SIZE) {
+            break;
+          }
+          Loc old_loc;
+          old_loc.segment     = victim;
+          old_loc.page        = p;
+          old_loc.byte_offset = static_cast<uint32_t>(offset);
+          old_loc.size        = header->size;
+          old_loc.generation  = victim_epoch;
+          if (FoldIfCurrentLocked(header->handle,
+                                  old_loc,
+                                  page + offset + kHeaderBytes,
+                                  header->size)) {
+            ++folded;
+            folded_bytes_.fetch_add(
+                EntryBytes(header->size), std::memory_order_relaxed);
+          }
+          offset += EntryBytes(header->size);
+        }
+      }
+    } catch (...) {
+      io_->FreeBuffer(page);
+      compacting_             = false;
+      segments_[victim].state = Segment::kSealed;
+      throw;
+    }
+    io_->FreeBuffer(page);
+    compacting_ = false;
+
+    if (segments_[victim].live_bytes.load(std::memory_order_relaxed) != 0) {
+      // A row refused the fold (its index entry moved or the in-place write
+      // failed). Keep the segment sealed and retry on the next advance.
+      segments_[victim].state = Segment::kSealed;
+      return false;
+    }
+    segments_[victim].state = Segment::kFree;
+    free_.push_back(victim);
+    free_segments_.store(free_.size(), std::memory_order_relaxed);
+    folds_.fetch_add(1, std::memory_order_relaxed);
+    folded_entries_.fetch_add(folded, std::memory_order_relaxed);
+    reclaimed_segments_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+  }
+
+  // Writes one live entry back to its in-place slot and drops the index entry.
+  // The in-place write happens first and the erase is revalidated under the
+  // shard lock, so an update that appended a newer entry in between keeps its
+  // index entry and stays authoritative.
+  bool FoldIfCurrentLocked(
+      uint64_t handle, const Loc& expect, const char* data, size_t size) {
+    const size_t shard_id = ShardOf(handle);
+    {
+      std::lock_guard<std::mutex> lock(index_mu_[shard_id]);
+      const auto& shard = index_[shard_id];
+      const auto found  = shard.find(handle);
+      if (found == shard.end() || !SameLoc(found->second, expect)) {
+        return false;
+      }
+    }
+    try {
+      base_.Write(handle, data, size);
+    } catch (...) {
+      return false;
+    }
+    std::lock_guard<std::mutex> lock(index_mu_[shard_id]);
+    auto& shard      = index_[shard_id];
+    const auto found = shard.find(handle);
+    if (found == shard.end() || !SameLoc(found->second, expect)) {
+      return false;
+    }
+    DropLiveBytes(found->second);
+    shard.erase(found);
+    return true;
+  }
+
   int64_t PickVictimLocked() const {
     int64_t best       = -1;
     uint64_t best_live = UINT64_MAX;
@@ -793,6 +912,7 @@ private:
   uint64_t segment_pages_     = 0;
   uint64_t segment_count_     = 0;
   uint64_t gc_max_live_bytes_ = 0;
+  bool fold_segments_         = false;
 
   std::mutex append_mu_;
   // Read without the append lock so a flushed page does not serialize readers.
@@ -816,6 +936,9 @@ private:
   std::atomic<uint64_t> bytes_read_{0};
   std::atomic<uint64_t> compactions_{0};
   std::atomic<uint64_t> compaction_bytes_{0};
+  std::atomic<uint64_t> folds_{0};
+  std::atomic<uint64_t> folded_entries_{0};
+  std::atomic<uint64_t> folded_bytes_{0};
   std::atomic<uint64_t> reclaimed_segments_{0};
   std::atomic<uint64_t> free_segments_{0};
   std::atomic<bool> exhausted_{false};

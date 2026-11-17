@@ -121,6 +121,10 @@ DEFINE_int64(write_log_capacity_bytes,
 DEFINE_int64(write_log_segment_bytes,
              8LL << 20,
              "append-only update log segment size in bytes");
+DEFINE_bool(write_log_fold,
+            false,
+            "fold reclaimed write log segments back into the in-place layout "
+            "instead of copying them into a free log segment");
 
 DEFINE_int64(record_count, 100000000, "YCSB record count");
 DEFINE_string(workload,
@@ -581,6 +585,7 @@ BaseKVConfig BuildConfig() {
           {"path", FLAGS_write_log_path},
           {"capacity_bytes", FLAGS_write_log_capacity_bytes},
           {"segment_bytes", FLAGS_write_log_segment_bytes},
+          {"fold_segments", FLAGS_write_log_fold},
           {"io",
            {{"type", FLAGS_ssd_io_backend},
             {"queue_depth", FLAGS_ssd_queue_depth},

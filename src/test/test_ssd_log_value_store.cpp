@@ -276,6 +276,46 @@ TEST(SsdLogValueStoreTest, CompactionRecyclesSegmentsWithoutFallback) {
   EXPECT_EQ(FieldOf(info, " write_log_index_entries="), kRows) << info;
 }
 
+// Folding writes the live rows of a reclaimed segment back to their in-place
+// slots, drops their log index entries and frees the segment, so later reads
+// take the original one-page path again.
+TEST(SsdLogValueStoreTest, FoldReturnsRowsToTheInPlaceLayout) {
+  auto config = Config(256ULL << 10);
+  config.json_config_["value"]["write_log"]["fold_segments"] = true;
+  SsdLogValueStore store(config);
+  constexpr size_t kRows = 1000;
+  std::vector<std::string> values(kRows);
+  std::vector<uint64_t> handles(kRows, kValueHandleNone);
+  for (size_t i = 0; i < kRows; ++i) {
+    values[i]  = Value(static_cast<char>('a' + i % 26));
+    handles[i] = store.AllocAndWrite(values[i].data(), values[i].size());
+    ASSERT_NE(handles[i], kValueHandleNone) << "row=" << i;
+  }
+
+  for (size_t round = 0; round < 30; ++round) {
+    for (size_t i = 0; i < kRows; ++i) {
+      values[i] = Value(static_cast<char>('A' + (i + round) % 26));
+      store.Write(handles[i], values[i].data(), values[i].size());
+    }
+  }
+  for (size_t i = 0; i < kRows; ++i) {
+    std::string out(values[i].size(), '\0');
+    ASSERT_EQ(store.Read(handles[i], out.data(), out.size()), values[i].size())
+        << "row=" << i;
+    EXPECT_EQ(out, values[i]) << "row=" << i;
+  }
+
+  const std::string info = store.ExtraResultFields();
+  EXPECT_GT(FieldOf(info, " write_log_folds="), 0U) << info;
+  EXPECT_GT(FieldOf(info, " write_log_folded_entries="), 0U) << info;
+  EXPECT_EQ(FieldOf(info, " write_log_compactions="), 0U) << info;
+  // Folded rows left the log index; rows admitted after the last fold are
+  // still in it.
+  EXPECT_LT(FieldOf(info, " write_log_index_entries="), kRows) << info;
+  EXPECT_EQ(FieldOf(info, " write_log_fallbacks="), 0U) << info;
+  EXPECT_EQ(FieldOf(info, " write_log_exhausted="), 0U) << info;
+}
+
 // Freed rows must not come back when compaction walks the segment that still
 // holds their old bytes.
 TEST(SsdLogValueStoreTest, CompactionSkipsFreedRows) {
