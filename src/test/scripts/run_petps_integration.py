@@ -109,6 +109,17 @@ def main():
     parser.add_argument("--rdma-namespace", default="auto")
     parser.add_argument("--rdma-control-plane-host", default="127.0.0.1")
     parser.add_argument("--rdma-control-plane-port", type=int)
+    parser.add_argument("--rdma-control-plane-timeout-ms", type=int)
+    parser.add_argument(
+        "--rdma-client-control-plane-timeout-ms",
+        type=int,
+        help="client-only override for the control-plane RPC timeout",
+    )
+    parser.add_argument(
+        "--rdma-server-ready-delay-ms",
+        type=int,
+        help="test-only: delay the server's READY publication",
+    )
     parser.add_argument("--rdma-per-thread-response-limit-bytes", type=int)
     parser.add_argument("--rdma-client-receive-arena-bytes", type=int)
     parser.add_argument("--rdma-rc-server-coroutines-per-thread", type=int)
@@ -133,6 +144,16 @@ def main():
         "--rdma-lane-rebuild",
         action="store_true",
         help="enable lane/QP rebuild on both server and client",
+    )
+    parser.add_argument(
+        "--rdma-lane-rebuild-poll-ms",
+        type=int,
+        help="test-only: server interval between lane-generation checks",
+    )
+    parser.add_argument(
+        "--rdma-op-retry-max-attempts",
+        type=int,
+        help="retries for idempotent synchronous GET/PUT",
     )
     parser.add_argument("--validate-routing", action="store_true")
     parser.add_argument(
@@ -230,6 +251,11 @@ def main():
             rdma_namespace=args.rdma_namespace,
             rdma_control_plane_host=args.rdma_control_plane_host,
             rdma_control_plane_port=args.rdma_control_plane_port,
+            rdma_control_plane_timeout_ms=args.rdma_control_plane_timeout_ms,
+            rdma_client_control_plane_timeout_ms=(
+                args.rdma_client_control_plane_timeout_ms
+            ),
+            rdma_server_ready_delay_ms=args.rdma_server_ready_delay_ms,
             rdma_per_thread_response_limit_bytes=args.rdma_per_thread_response_limit_bytes,
             rdma_client_receive_arena_bytes=args.rdma_client_receive_arena_bytes,
             rdma_rc_server_coroutines_per_thread=(
@@ -240,6 +266,8 @@ def main():
                 args.rdma_rc_server_get_worker_hold_us
             ),
             rdma_lane_rebuild_enabled=args.rdma_lane_rebuild or None,
+            rdma_lane_rebuild_poll_ms=args.rdma_lane_rebuild_poll_ms,
+            rdma_op_retry_max_attempts=args.rdma_op_retry_max_attempts,
             rdma_rc_fake_get_mode=args.rdma_fake_get_mode,
             rdma_rc_server_fence_stats_interval_ms=(
                 args.fence_stats_interval_ms if args.rdma_lane_rebuild else None
